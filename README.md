@@ -1,5 +1,7 @@
 # Locorum
 
+*Note: This is a very early prototype. It is not yet ready for use.*
+
 ## About
 
 Locorum is a simple yet powerful local development environment for WordPress projects.
