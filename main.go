@@ -37,7 +37,7 @@ func main() {
 
 	defer st.Close()
 
-	sm := sites.NewSiteManager(st, app.GetClient(), d, config)
+	sm := sites.NewSiteManager(st, app.GetClient(), d, config, app.GetHomeDir())
 
 	// Create application.
 	err = wails.Run(&options.App{

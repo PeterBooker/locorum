@@ -1,5 +1,0 @@
-{{- range . }}
-upstream {{ UpstreamName . }} {
-    server {{ BackendHost . }}:{{ BackendPort }};
-}
-{{- end }}

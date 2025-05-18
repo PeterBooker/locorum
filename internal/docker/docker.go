@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	rt "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -79,7 +80,7 @@ func (d *Docker) CreateGlobalWebserver() error {
 		ContainerName: "locorum-global-webserver",
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(home, ".locorum", "config", "nginx", "snippets") + ":/etc/nginx/snippets/",
+			path.Join(home, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled/",
 			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs/",
 		},
 		PortBindings: nat.PortMap{
@@ -117,6 +118,7 @@ func (d *Docker) CreateSite(siteName string) error {
 		ContainerName: "locorum-" + siteName + "-php",
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "php", "php.ini") + ":/usr/local/etc/php/conf.d/zzz-php.ini",
+			path.Join(home, "locorum", "sites", siteName) + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
 		ExposedPorts: nat.PortSet{},
@@ -126,6 +128,13 @@ func (d *Docker) CreateSite(siteName string) error {
 	err = d.createContainer(options)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to create site container: "+err.Error())
+	}
+
+	err = d.cli.NetworkConnect(d.ctx, "locorum-"+siteName, "locorum-global-webserver", &network.EndpointSettings{
+		Aliases: []string{"nginx"},
+	})
+	if err != nil {
+		rt.LogError(d.ctx, "Failed to connect global webserver to new container: "+err.Error())
 	}
 
 	return nil

@@ -1,4 +1,4 @@
-package app
+package utils
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 )
 
 // EnsureDir checks if a directory exists at the given path. If it does not exist, it creates the directory.
-func ensureDir(path string) error {
+func EnsureDir(path string) error {
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		if err := os.MkdirAll(path, 0755); err != nil {
@@ -29,7 +29,8 @@ func ensureDir(path string) error {
 	return nil
 }
 
-func extractAssetsToDisk(fsys fs.FS, sourcePath, targetPath string) error {
+// ExtractAssetsToDisk extracts files from the given filesystem to the specified target path.
+func ExtractAssetsToDisk(fsys fs.FS, sourcePath, targetPath string) error {
 	return fs.WalkDir(fsys, sourcePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

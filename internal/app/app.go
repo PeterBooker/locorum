@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/utils"
 
 	"github.com/docker/docker/client"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -20,16 +21,19 @@ type App struct {
 	ctx         context.Context
 	cli         *client.Client
 	d           *docker.Docker
+	homeDir     string
 	configFiles embed.FS
 }
 
 // New creates a new App application struct
 func New(configFiles embed.FS, d *docker.Docker) *App {
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	home, _ := os.UserHomeDir()
 
 	return &App{
 		cli:         cli,
 		d:           d,
+		homeDir:     home,
 		configFiles: configFiles,
 	}
 }
@@ -98,26 +102,25 @@ func (a *App) GetClient() *client.Client {
 	return a.cli
 }
 
+// GetHomeDir returns the home directory for the application.
+func (a *App) GetHomeDir() string {
+	return a.homeDir
+}
+
 func (a *App) SetupFilesystem() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		rt.LogError(a.ctx, "Failed to get user home directory: "+err.Error())
-		return err
-	}
-
-	err = ensureDir(path.Join(home, ".locorum"))
+	err := utils.EnsureDir(path.Join(a.homeDir, ".locorum"))
 	if err != nil {
 		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
 		return err
 	}
 
-	err = ensureDir(path.Join(home, "locorum", "sites"))
+	err = utils.EnsureDir(path.Join(a.homeDir, "locorum", "sites"))
 	if err != nil {
 		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
 		return err
 	}
 
-	err = extractAssetsToDisk(a.configFiles, ".", path.Join(home, ".locorum"))
+	err = utils.ExtractAssetsToDisk(a.configFiles, ".", path.Join(a.homeDir, ".locorum"))
 	if err != nil {
 		rt.LogError(a.ctx, "Failed to extract assets: "+err.Error())
 		return err

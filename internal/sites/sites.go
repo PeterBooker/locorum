@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"html/template"
-	"os"
 	"path"
 
 	"github.com/docker/docker/client"
@@ -14,6 +13,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 type Site struct {
@@ -23,32 +23,29 @@ type Site struct {
 }
 
 type SiteManager struct {
-	st     *storage.Storage
-	cli    *client.Client
-	sites  map[string]Site
-	ctx    context.Context
-	d      *docker.Docker
-	config embed.FS
+	st      *storage.Storage
+	cli     *client.Client
+	sites   map[string]Site
+	ctx     context.Context
+	d       *docker.Docker
+	homeDir string
+	config  embed.FS
 }
 
-func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, config embed.FS) *SiteManager {
-	mapTpl = template.Must(
-		template.New("sites.map.tmpl").
+func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, config embed.FS, homeDir string) *SiteManager {
+	siteTpl = template.Must(
+		template.New("site.tmpl").
 			Funcs(funcMap).
-			ParseFS(config, "config/nginx/snippets/sites.map.tmpl"),
-	)
-	upsTpl = template.Must(
-		template.New("sites.upstreams.tmpl").
-			Funcs(funcMap).
-			ParseFS(config, "config/nginx/snippets/sites.upstreams.tmpl"),
+			ParseFS(config, "config/nginx/site.tmpl"),
 	)
 
 	return &SiteManager{
-		st:     st,
-		cli:    cli,
-		d:      d,
-		config: config,
-		sites:  make(map[string]Site),
+		st:      st,
+		cli:     cli,
+		d:       d,
+		config:  config,
+		homeDir: homeDir,
+		sites:   make(map[string]Site),
 	}
 }
 
@@ -63,6 +60,12 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 func (sm *SiteManager) AddSite(site types.Site) error {
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".local"
+
+	err := utils.EnsureDir(path.Join(sm.homeDir, "locorum", "sites", site.Slug))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to create site directory: "+err.Error())
+		return err
+	}
 
 	if err := sm.st.AddSite(&site); err != nil {
 		return err
@@ -86,12 +89,12 @@ func (sm *SiteManager) emitUpdate() {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-
-	err = sm.regenerateSnippets(sites, path.Join(home, ".locorum", "config", "nginx", "snippets", "sites.map.conf"), path.Join(home, ".locorum", "config", "nginx", "snippets", "sites.upstreams.conf"))
-	if err != nil {
-		rt.LogError(sm.ctx, "Failed to regenerate nginx snippets: "+err.Error())
-		return
+	for _, site := range sites {
+		err = sm.regenerateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+		if err != nil {
+			rt.LogError(sm.ctx, "Failed to regenerate nginx snippets: "+err.Error())
+			return
+		}
 	}
 
 	err = sm.d.TestGlobalNginxConfig()

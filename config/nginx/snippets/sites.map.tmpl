@@ -1,6 +1,0 @@
-map $http_host $site_upstream {
-    default "";
-{{- range . }}
-    {{ printf "%-20s" .Domain }} {{ UpstreamName . }};
-{{- end }}
-}

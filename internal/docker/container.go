@@ -6,6 +6,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -81,7 +82,12 @@ func (d *Docker) createContainer(options ContainerOptions) error {
 			NetworkMode:  container.NetworkMode(options.NetworkName),
 			ExtraHosts:   options.ExtraHosts,
 		},
-		nil,
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				"locorum-global":    {},
+				options.NetworkName: {},
+			},
+		},
 		nil,
 		options.ContainerName,
 	)

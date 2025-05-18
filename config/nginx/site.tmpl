@@ -1,0 +1,52 @@
+server {
+    listen       80;
+    listen       [::]:80;
+    server_name  {{ .Domain }};
+    return 301   https://$host$request_uri;
+}
+
+server {
+    listen              443 ssl http2;
+    listen              [::]:443 ssl http2;
+    server_name         {{ .Domain }};
+
+    root                /var/www/{{ .Domain }};
+    index               index.php index.html index.htm;
+
+    # SSL
+    ssl_certificate     /etc/nginx/certs/wildcard.local.crt;
+    ssl_certificate_key /etc/nginx/certs/wildcard.local.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options           "SAMEORIGIN"           always;
+    add_header X-Content-Type-Options    "nosniff"              always;
+
+    # Static assets
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # WordPress Rewrites
+    if (!-e $request_filename) {
+        rewrite (/wp-.*)       /wp$1      last;
+        rewrite (/.*\.php)$    /wp$1      last;
+    }
+
+    # PHP
+    location ~ \.php$ {
+        try_files $uri =404;
+        include      fastcgi.conf;
+        fastcgi_pass {{ .Upstream }};
+        include      fastcgi_params;
+        fastcgi_buffers            256 48k;
+        fastcgi_buffer_size        48k;
+        fastcgi_connect_timeout    60s;
+        fastcgi_send_timeout       60s;
+        fastcgi_read_timeout       60s;
+        fastcgi_busy_buffers_size  256k;
+        fastcgi_max_temp_file_size 0;
+        reset_timedout_connection  on;
+    }
+}

@@ -11,20 +11,19 @@ import (
 )
 
 var funcMap = template.FuncMap{
-	"UpstreamName": func(s types.Site) string {
+	"Domain": func(s types.Site) string {
+		return s.Domain
+	},
+	"DocumentRoot": func(s types.Site) string {
+		return filepath.Join("var", "www", s.Slug)
+	},
+	"Upstream": func(s types.Site) string {
 		return s.Slug + "_upstream"
-	},
-	"BackendHost": func(s types.Site) string {
-		return "locorum_" + s.Slug + "_php"
-	},
-	"BackendPort": func() int {
-		return 9000
 	},
 }
 
 var (
-	mapTpl *template.Template
-	upsTpl *template.Template
+	siteTpl *template.Template
 )
 
 // writeAtomic writes data to filename via a temp file + rename
@@ -43,23 +42,13 @@ func (sm *SiteManager) writeAtomic(filename string, data []byte) error {
 	return os.Rename(tmp.Name(), filename)
 }
 
-func (sm *SiteManager) regenerateSnippets(sites []types.Site, mapPath, upsPath string) error {
-	// render map
+func (sm *SiteManager) regenerateSiteConfig(site types.Site, dest string) error {
 	var mbuf bytes.Buffer
-	if err := mapTpl.Execute(&mbuf, sites); err != nil {
-		return fmt.Errorf("render map: %w", err)
+	if err := siteTpl.Execute(&mbuf, site); err != nil {
+		return fmt.Errorf("render site config: %w", err)
 	}
-	if err := sm.writeAtomic(mapPath, mbuf.Bytes()); err != nil {
-		return fmt.Errorf("write map: %w", err)
-	}
-
-	// render upstreams
-	var ubuf bytes.Buffer
-	if err := upsTpl.Execute(&ubuf, sites); err != nil {
-		return fmt.Errorf("render ups: %w", err)
-	}
-	if err := sm.writeAtomic(upsPath, ubuf.Bytes()); err != nil {
-		return fmt.Errorf("write ups: %w", err)
+	if err := sm.writeAtomic(dest, mbuf.Bytes()); err != nil {
+		return fmt.Errorf("write site config: %w", err)
 	}
 
 	if err := sm.d.TestGlobalNginxConfig(); err != nil {
