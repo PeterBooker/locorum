@@ -1,8 +1,12 @@
-import type { sites } from '../../../wailsjs/go/models';
+import type { types } from '../../../wailsjs/go/models';
 import { TrashIcon } from '@heroicons/react/24/solid';
 import { NavLink } from 'react-router';
 
-export default function Sites({ sites, deleteSite }: { sites: sites.Site[], deleteSite: (id: string) => void }) {
+export default function Sites({ sites, deleteSite }: { sites: types.Site[], deleteSite: (id: string) => void }) {
+    if (!sites || sites.length === 0) {
+        return null;
+    }
+
     return (
         <ul className="flex flex-col gap-4">
             { sites.map((site) => (

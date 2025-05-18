@@ -1,8 +1,8 @@
 import { useState } from 'react';
 
-import type { sites } from '../../../../wailsjs/go/models';
+import type { types } from '../../../../wailsjs/go/models';
 
-export default function NewSiteModal({ addSite }: { addSite: (site: sites.Site) => void }) {
+export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) => void }) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [projectName, setProjectName] = useState('');
 	const [phpVersion, setPhpVersion] = useState('8.3');
@@ -20,7 +20,8 @@ export default function NewSiteModal({ addSite }: { addSite: (site: sites.Site) 
 		await addSite({
 			id: "",
 			name: projectName,
-			url: "https://example.com",
+			slug: "",
+			domain: "",
 		});
 		setIsOpen(false);
 	};

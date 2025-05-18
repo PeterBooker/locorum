@@ -1,45 +1,31 @@
+// External Dependencies.
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router';
+
+// Internal Dependencies.
 import './App.css';
 import NewSiteModal from './components/modals/NewSiteModal';
 import Sites from './components/Sites';
 import Site from './components/Site';
 
-import { Greet, Initialize } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime';
-import type { sites } from '../wailsjs/go/models';
+import type { types } from '../wailsjs/go/models';
 import { GetSites, AddSite, DeleteSite } from '../wailsjs/go/sites/SiteManager';
 
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@headlessui/react'
 
 function App() {
-	const [resultText, setResultText] = useState("Please enter your name below 👇");
-
-	function greet() {
-		Initialize();
-		Greet('Peter').then((result: string) => setResultText(result));
-	}
-
-	const [sites, setSites] = useState<sites.Site[]>([]);
+	const [sites, setSites] = useState<types.Site[]>([]);
 
 	useEffect(() => {
 		GetSites().then(setSites);
 
 		EventsOn("sitesUpdated", (sites) => {
 			setSites(sites);
-			console.log("Updated sites:", sites);
 		});
 
 		return () => EventsOff("sitesUpdated");
 	}, []);
-
-	const handleAddSite = async () => {
-		await AddSite({
-			id: "",
-			name: "Example Site",
-			url: "https://example.com",
-		});
-	};
 
 	return (
 		<Router>

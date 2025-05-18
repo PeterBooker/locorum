@@ -17,3 +17,7 @@ export function GetSites() {
 export function SetContext(arg1) {
   return window['go']['sites']['SiteManager']['SetContext'](arg1);
 }
+
+export function StartSite(arg1) {
+  return window['go']['sites']['SiteManager']['StartSite'](arg1);
+}

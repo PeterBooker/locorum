@@ -1,9 +1,10 @@
-export namespace sites {
+export namespace types {
 	
 	export class Site {
 	    id: string;
 	    name: string;
-	    url: string;
+	    slug: string;
+	    domain: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Site(source);
@@ -13,7 +14,8 @@ export namespace sites {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
-	        this.url = source["url"];
+	        this.slug = source["slug"];
+	        this.domain = source["domain"];
 	    }
 	}
 

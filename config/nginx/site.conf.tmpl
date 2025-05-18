@@ -1,0 +1,40 @@
+server {
+    listen       80;
+    server_name  example.com www.example.com;
+
+    root   /var/www/example.com;
+    index  index.php index.html;
+
+    client_max_body_size 100m;
+
+    # ---- Static files ----
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 30d;
+        access_log off;
+    }
+
+    # ---- Main WP entrypoint ----
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # ---- PHP via PHP-FPM ----
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        include               fastcgi_params;
+        fastcgi_param         SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass          php-fpm:9000;
+        fastcgi_read_timeout  300;
+
+        fastcgi_cache         example_cache;
+        fastcgi_cache_key     "$scheme$request_method$host$request_uri";
+        fastcgi_cache_use_stale error timeout invalid_header http_500;
+        fastcgi_cache_valid   200 301 302 60m;
+        add_header            X-FastCGI-Cache $upstream_cache_status;
+    }
+
+    add_header X-Frame-Options           "SAMEORIGIN" always;
+    add_header X-Content-Type-Options    "nosniff"     always;
+    add_header X-XSS-Protection          "1; mode=block" always;
+}
