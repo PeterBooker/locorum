@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/PeterBooker/locorum/internal/types"
 )
@@ -28,7 +28,11 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 	appDataDir := filepath.Join(cwd, ".locorum")
 	dbPath := filepath.Join(appDataDir, "storage.db")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
