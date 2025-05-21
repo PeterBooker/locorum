@@ -6,11 +6,12 @@ server {
 }
 
 server {
-    listen              443 ssl http2;
-    listen              [::]:443 ssl http2;
+    listen              443 ssl;
+    listen              [::]:443 ssl;
+    http2               on;
     server_name         {{ .Domain }};
 
-    root                /var/www/{{ .Domain }};
+    root                /var/www/html/{{ .Slug }};
     index               index.php index.html index.htm;
 
     # SSL
@@ -22,6 +23,23 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options           "SAMEORIGIN"           always;
     add_header X-Content-Type-Options    "nosniff"              always;
+
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+    }
+
+    location = /robots.txt {
+        allow all;
+        log_not_found off;
+        access_log off;
+    }
+
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|woff|woff2|ttf|svg|eot)$ {
+        try_files $uri =404;
+        access_log off;
+        log_not_found off;
+    }
 
     # Static assets
     location / {
@@ -38,7 +56,7 @@ server {
     location ~ \.php$ {
         try_files $uri =404;
         include      fastcgi.conf;
-        fastcgi_pass {{ .Upstream }};
+        fastcgi_pass locorum-{{ .Slug }}-php:9000;
         include      fastcgi_params;
         fastcgi_buffers            256 48k;
         fastcgi_buffer_size        48k;

@@ -89,13 +89,13 @@ func (sm *SiteManager) emitUpdate() {
 		return
 	}
 
-	for _, site := range sites {
-		err = sm.regenerateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
-		if err != nil {
-			rt.LogError(sm.ctx, "Failed to regenerate nginx snippets: "+err.Error())
-			return
-		}
-	}
+	// for _, site := range sites {
+	// 	err = sm.regenerateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+	// 	if err != nil {
+	// 		rt.LogError(sm.ctx, "Failed to regenerate nginx snippets: "+err.Error())
+	// 		return
+	// 	}
+	// }
 
 	err = sm.d.TestGlobalNginxConfig()
 	if err != nil {
@@ -119,6 +119,12 @@ func (sm *SiteManager) StartSite(id string) error {
 	}
 
 	sm.d.CreateSite(site.Slug)
+
+	err = sm.regenerateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to add nginx config: "+err.Error())
+		return err
+	}
 
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 )
 
 type ContainerOptions struct {
+	SiteName      string
 	NetworkName   string
 	ImageName     string
 	ContainerName string
@@ -62,42 +63,27 @@ func (d *Docker) containerExists(containerName string) (bool, error) {
 }
 
 // createContainer creates a Docker container with the given name and image.
-func (d *Docker) createContainer(options ContainerOptions) error {
-	_, err := d.cli.ImagePull(d.ctx, options.ImageName, image.PullOptions{})
+func (d *Docker) createContainer(containerName string, imageName string, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig) error {
+	_, err := d.cli.ImagePull(d.ctx, imageName, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("image pull failed: %w", err)
 	}
 
 	resp, err := d.cli.ContainerCreate(
 		d.ctx,
-		&container.Config{
-			Image: options.ImageName,
-			Tty:   true,
-			//Cmd:   options.Cmd,
-			ExposedPorts: options.ExposedPorts,
-		},
-		&container.HostConfig{
-			Binds:        options.Binds,
-			PortBindings: options.PortBindings,
-			NetworkMode:  container.NetworkMode(options.NetworkName),
-			ExtraHosts:   options.ExtraHosts,
-		},
-		&network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				"locorum-global":    {},
-				options.NetworkName: {},
-			},
-		},
+		config,
+		hostConfig,
+		networkingConfig,
 		nil,
-		options.ContainerName,
+		containerName,
 	)
 	if err != nil {
-		return fmt.Errorf("creating container %q failed: %w", options.ContainerName, err)
+		return fmt.Errorf("creating container %q failed: %w", containerName, err)
 	}
 
 	err = d.cli.ContainerStart(d.ctx, resp.ID, container.StartOptions{})
 	if err != nil {
-		return fmt.Errorf("starting container %q failed: %w", options.ContainerName, err)
+		return fmt.Errorf("starting container %q failed: %w", containerName, err)
 	}
 
 	return nil

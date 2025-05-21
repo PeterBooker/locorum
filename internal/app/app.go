@@ -126,6 +126,12 @@ func (a *App) SetupFilesystem() error {
 		return err
 	}
 
+	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites-enabled"))
+	if err != nil {
+		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
+		return err
+	}
+
 	return nil
 }
 

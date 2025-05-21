@@ -44,9 +44,11 @@ func (sm *SiteManager) writeAtomic(filename string, data []byte) error {
 
 func (sm *SiteManager) regenerateSiteConfig(site types.Site, dest string) error {
 	var mbuf bytes.Buffer
+
 	if err := siteTpl.Execute(&mbuf, site); err != nil {
 		return fmt.Errorf("render site config: %w", err)
 	}
+
 	if err := sm.writeAtomic(dest, mbuf.Bytes()); err != nil {
 		return fmt.Errorf("write site config: %w", err)
 	}
