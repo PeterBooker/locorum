@@ -60,3 +60,33 @@ func ExtractAssetsToDisk(fsys fs.FS, sourcePath, targetPath string) error {
 		return os.WriteFile(targetFilePath, data, 0644)
 	})
 }
+
+// DeleteDirFiles deletes all files in the specified directory.
+func DeleteDirFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading %q: %w", dir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("removing file %q: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// DeleteFile deletes a file.
+func DeleteFile(path string) error {
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("removing file %q: %w", path, err)
+	}
+
+	return nil
+}

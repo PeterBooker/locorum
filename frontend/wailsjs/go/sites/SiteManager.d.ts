@@ -12,3 +12,5 @@ export function GetSites():Promise<Array<types.Site>>;
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function StartSite(arg1:string):Promise<void>;
+
+export function StopSite(arg1:string):Promise<void>;

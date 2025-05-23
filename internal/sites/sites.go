@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"html/template"
+	"os"
 	"path"
 
 	"github.com/docker/docker/client"
@@ -70,6 +71,7 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	if err := sm.st.AddSite(&site); err != nil {
 		return err
 	}
+
 	sm.emitUpdate()
 	return nil
 }
@@ -89,14 +91,6 @@ func (sm *SiteManager) emitUpdate() {
 		return
 	}
 
-	// for _, site := range sites {
-	// 	err = sm.regenerateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
-	// 	if err != nil {
-	// 		rt.LogError(sm.ctx, "Failed to regenerate nginx snippets: "+err.Error())
-	// 		return
-	// 	}
-	// }
-
 	err = sm.d.TestGlobalNginxConfig()
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to test nginx config: "+err.Error())
@@ -115,14 +109,41 @@ func (sm *SiteManager) emitUpdate() {
 func (sm *SiteManager) StartSite(id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
+		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
 		return err
 	}
 
-	sm.d.CreateSite(site.Slug)
+	err = sm.d.CreateSite(site.Slug)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to create containers: "+err.Error())
+		return err
+	}
 
-	err = sm.regenerateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+	err = sm.generateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to add nginx config: "+err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func (sm *SiteManager) StopSite(id string) error {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		return err
+	}
+
+	err = sm.d.RemoveSite(site.Slug)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to remove containers: "+err.Error())
+		return err
+	}
+
+	err = os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to delete nginx config: "+err.Error())
 		return err
 	}
 

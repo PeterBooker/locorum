@@ -1,6 +1,6 @@
 import type { types } from '../../../wailsjs/go/models';
-import { StartSite } from '../../../wailsjs/go/sites/SiteManager';
-import { PlayIcon } from '@heroicons/react/24/solid';
+import { StartSite, StopSite } from '../../../wailsjs/go/sites/SiteManager';
+import { PlayIcon, StopIcon } from '@heroicons/react/24/solid';
 
 import { useParams } from 'react-router';
 
@@ -16,8 +16,13 @@ export default function Site({ sites }: { sites: types.Site[] }) {
     return (
         <div className="site">
             <PlayIcon
-                className="h-5 w-5 text-gray-500"
+                className="h-5 w-5 text-gray-500 cursor-pointer"
                 onClick={() => StartSite(site.id)}
+            />
+
+            <StopIcon
+                className="h-5 w-5 text-gray-500 cursor-pointer"
+                onClick={() => StopSite(site.id)}
             />
 
             <h1>{ site.name }</h1>

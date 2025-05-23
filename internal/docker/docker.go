@@ -2,12 +2,14 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -131,6 +133,13 @@ func (d *Docker) CreateSite(siteName string) error {
 	})
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to connect global webserver to new container: "+err.Error())
+		return err
+	}
+
+	err = d.cli.NetworkDisconnect(d.ctx, "locorum-"+siteName, "locorum-global-webserver", false)
+	if err != nil {
+		rt.LogError(d.ctx, fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+siteName, err))
+		return err
 	}
 
 	home, _ := os.UserHomeDir()
@@ -151,6 +160,52 @@ func (d *Docker) CreateSite(siteName string) error {
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add Redis container: "+err.Error())
 		return err
+	}
+
+	return nil
+}
+
+// CreateSite creates a new site with the given name.
+func (d *Docker) RemoveSite(siteName string) error {
+	networkName := "locorum-" + siteName
+
+	containerNames := []string{
+		"locorum-" + siteName + "-redis",
+		"locorum-" + siteName + "-database",
+		"locorum-" + siteName + "-php",
+	}
+
+	timeout := 10
+
+	for _, cname := range containerNames {
+		rt.LogInfo(d.ctx, fmt.Sprintf("Stopping container %s", cname))
+		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
+			Timeout: &timeout,
+		}); err != nil {
+			if !errdefs.IsNotFound(err) {
+				rt.LogError(d.ctx,
+					fmt.Sprintf("failed to stop container %s: %v", cname, err))
+			}
+		}
+
+		if err := d.cli.ContainerRemove(d.ctx, cname, container.RemoveOptions{
+			RemoveVolumes: false,
+			Force:         true,
+		}); err != nil {
+			if !errdefs.IsNotFound(err) {
+				rt.LogError(d.ctx,
+					fmt.Sprintf("failed to remove container %s: %v", cname, err))
+			}
+		}
+	}
+
+	// Remove the network.
+	if err := d.cli.NetworkRemove(d.ctx, networkName); err != nil {
+		if !errdefs.IsNotFound(err) {
+			rt.LogError(d.ctx,
+				fmt.Sprintf("failed to remove network %s: %v", networkName, err))
+			return err
+		}
 	}
 
 	return nil

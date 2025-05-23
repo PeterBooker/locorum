@@ -42,7 +42,7 @@ func (sm *SiteManager) writeAtomic(filename string, data []byte) error {
 	return os.Rename(tmp.Name(), filename)
 }
 
-func (sm *SiteManager) regenerateSiteConfig(site types.Site, dest string) error {
+func (sm *SiteManager) generateSiteConfig(site types.Site, dest string) error {
 	var mbuf bytes.Buffer
 
 	if err := siteTpl.Execute(&mbuf, site); err != nil {

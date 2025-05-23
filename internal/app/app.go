@@ -74,7 +74,12 @@ func (a *App) Initialize() error {
 }
 
 func (a *App) Shutdown() error {
-	err := a.d.RemoveContainers("locorum")
+	err := utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites-enabled"))
+	if err != nil {
+		return err
+	}
+
+	err = a.d.RemoveContainers("locorum")
 	if err != nil {
 		return err
 	}
