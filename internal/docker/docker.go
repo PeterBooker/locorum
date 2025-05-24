@@ -78,7 +78,7 @@ func (d *Docker) CreateGlobalWebserver() error {
 	home, _ := os.UserHomeDir()
 
 	containerName := "locorum-global-webserver"
-	imageName := "nginx:1-alpine"
+	imageName := "nginx:1.28-alpine"
 	networkName := "locorum-global"
 
 	config := &container.Config{
@@ -93,9 +93,9 @@ func (d *Docker) CreateGlobalWebserver() error {
 	hostConfig := &container.HostConfig{
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(home, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled/",
-			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs/",
-			path.Join(home, "locorum", "sites") + ":/var/www/html/",
+			path.Join(home, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled:ro",
+			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
+			path.Join(home, "locorum", "sites") + ":/var/www/html:ro",
 		},
 		PortBindings: nat.PortMap{
 			"80/tcp":  {{HostIP: "0.0.0.0", HostPort: "80"}},
@@ -213,11 +213,10 @@ func (d *Docker) RemoveSite(siteName string) error {
 
 func (d *Docker) addPhpContainer(siteName string, home string) error {
 	containerName := "locorum-" + siteName + "-php"
-	imageName := "devilbox/php-fpm:8.2-work"
+	imageName := "wodby/php:8.4"
 	networkName := "locorum-" + siteName
 
 	config := &container.Config{
-		//Hostname:     "php",
 		Image:        imageName,
 		Tty:          true,
 		WorkingDir:   "/var/www/html/" + siteName,
@@ -240,7 +239,7 @@ func (d *Docker) addPhpContainer(siteName string, home string) error {
 		},
 		PortBindings: nat.PortMap{},
 		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{siteName + ".local:host-gateway"},
+		ExtraHosts:   []string{siteName + ".localhost:host-gateway"},
 	}
 
 	networkingConfig := &network.NetworkingConfig{
@@ -262,7 +261,7 @@ func (d *Docker) addPhpContainer(siteName string, home string) error {
 
 func (d *Docker) addDatabaseContainer(siteName string, home string) error {
 	containerName := "locorum-" + siteName + "-database"
-	imageName := "mariadb:10.4"
+	imageName := "mysql:8.4"
 	networkName := "locorum-" + siteName
 	volumeName := "locorum-" + siteName + "-dbdata"
 
@@ -272,7 +271,6 @@ func (d *Docker) addDatabaseContainer(siteName string, home string) error {
 	}
 
 	config := &container.Config{
-		//Hostname:     "database",
 		Image:        imageName,
 		Tty:          true,
 		Cmd:          []string{"mysqld", "--innodb-flush-method=fsync"},
@@ -313,11 +311,10 @@ func (d *Docker) addDatabaseContainer(siteName string, home string) error {
 
 func (d *Docker) addRedisContainer(siteName string, home string) error {
 	containerName := "locorum-" + siteName + "-redis"
-	imageName := "redis:alpine"
+	imageName := "redis:7.4-alpine"
 	networkName := "locorum-" + siteName
 
 	config := &container.Config{
-		//Hostname:     "redis",
 		Image:        imageName,
 		Tty:          true,
 		Cmd:          []string{"redis-server", "--appendonly", "yes"},

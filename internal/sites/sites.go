@@ -60,7 +60,7 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 
 func (sm *SiteManager) AddSite(site types.Site) error {
 	site.Slug = slug.Make(site.Name)
-	site.Domain = slug.Make(site.Name) + ".local"
+	site.Domain = slug.Make(site.Name) + ".localhost"
 
 	err := utils.EnsureDir(path.Join(sm.homeDir, "locorum", "sites", site.Slug))
 	if err != nil {

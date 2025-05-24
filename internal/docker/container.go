@@ -2,6 +2,7 @@ package docker
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -64,9 +65,16 @@ func (d *Docker) containerExists(containerName string) (bool, error) {
 
 // createContainer creates a Docker container with the given name and image.
 func (d *Docker) createContainer(containerName string, imageName string, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig) error {
-	_, err := d.cli.ImagePull(d.ctx, imageName, image.PullOptions{})
+	out, err := d.cli.ImagePull(d.ctx, imageName, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("image pull failed: %w", err)
+	}
+	defer out.Close()
+
+	// Wait for image pull to complete.
+	_, err = io.Copy(io.Discard, out)
+	if err != nil {
+		return fmt.Errorf("reading image pull stream failed: %w", err)
 	}
 
 	resp, err := d.cli.ContainerCreate(
