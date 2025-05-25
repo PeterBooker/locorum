@@ -17,16 +17,10 @@ import (
 	"github.com/PeterBooker/locorum/internal/utils"
 )
 
-type Site struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
-
 type SiteManager struct {
 	st      *storage.Storage
 	cli     *client.Client
-	sites   map[string]Site
+	sites   map[string]types.Site
 	ctx     context.Context
 	d       *docker.Docker
 	homeDir string
@@ -46,7 +40,7 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, c
 		d:       d,
 		config:  config,
 		homeDir: homeDir,
-		sites:   make(map[string]Site),
+		sites:   make(map[string]types.Site),
 	}
 }
 
@@ -125,6 +119,14 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
+	site.Started = true
+
+	// err = sm.st.UpdateSite(site)
+	// if err != nil {
+	// 	rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
+	// 	return err
+	// }
+
 	return nil
 }
 
@@ -144,6 +146,23 @@ func (sm *SiteManager) StopSite(id string) error {
 	err = os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to delete nginx config: "+err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// OpenSiteFilesDir opens the directory for the specified site.
+func (sm *SiteManager) OpenSiteFilesDir(id string) error {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		return err
+	}
+
+	err = utils.OpenDirectory(path.Join(sm.homeDir, "locorum", "sites", site.Slug))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to open site files directory: "+err.Error())
 		return err
 	}
 

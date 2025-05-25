@@ -22,6 +22,7 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 			name: projectName,
 			slug: "",
 			domain: "",
+			started: false,
 		});
 		setIsOpen(false);
 	};

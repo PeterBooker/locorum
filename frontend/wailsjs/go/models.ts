@@ -5,6 +5,7 @@ export namespace types {
 	    name: string;
 	    slug: string;
 	    domain: string;
+	    started: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Site(source);
@@ -16,6 +17,7 @@ export namespace types {
 	        this.name = source["name"];
 	        this.slug = source["slug"];
 	        this.domain = source["domain"];
+	        this.started = source["started"];
 	    }
 	}
 

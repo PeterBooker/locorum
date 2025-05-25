@@ -55,7 +55,7 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	err = a.d.CheckDockerRunning()
+	err = a.d.CheckDockerAvailable()
 	if err != nil {
 		return err
 	}
@@ -86,6 +86,17 @@ func (a *App) Shutdown() error {
 
 	err = a.d.RemoveNetworks("locorum")
 	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// IsDockerAvailable checks if Docker is available and running.
+func (a *App) IsDockerAvailable() error {
+	err := a.d.CheckDockerAvailable()
+	if err != nil {
+		rt.LogError(a.ctx, "Docker is not running or not accessible: "+err.Error())
 		return err
 	}
 

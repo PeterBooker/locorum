@@ -105,6 +105,15 @@ func (s *Storage) AddSite(site *types.Site) error {
 	return err
 }
 
+func (s *Storage) UpdateSite(site *types.Site) error {
+	_, err := s.db.Exec(
+		"UPDATE sites SET name = ?, slug = ?, domain = ?, started = ? WHERE id = ?",
+		site.Name, site.Slug, site.Domain, site.Started, site.ID,
+	)
+
+	return err
+}
+
 // DeleteSite removes the Site with the given ID from the database.
 func (s *Storage) DeleteSite(id string) error {
 	_, err := s.db.Exec("DELETE FROM sites WHERE id = ?", id)

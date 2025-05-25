@@ -9,6 +9,8 @@ export function DeleteSite(arg1:string):Promise<void>;
 
 export function GetSites():Promise<Array<types.Site>>;
 
+export function OpenSiteFilesDir(arg1:string):Promise<void>;
+
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function StartSite(arg1:string):Promise<void>;

@@ -14,6 +14,10 @@ export function GetSites() {
   return window['go']['sites']['SiteManager']['GetSites']();
 }
 
+export function OpenSiteFilesDir(arg1) {
+  return window['go']['sites']['SiteManager']['OpenSiteFilesDir'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['sites']['SiteManager']['SetContext'](arg1);
 }

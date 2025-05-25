@@ -24,7 +24,7 @@ var config embed.FS
 func main() {
 	d := docker.New()
 
-	// Create an instance of the app structure
+	// Create an instance of the app structure.
 	app := app.New(config, d)
 
 	t := types.NewType()

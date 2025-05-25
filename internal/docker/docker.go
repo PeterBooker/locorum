@@ -33,8 +33,8 @@ func (d *Docker) SetClient(cli *client.Client) {
 	d.cli = cli
 }
 
-// CheckDockerRunning checks if Docker is running and accessible.
-func (d *Docker) CheckDockerRunning() error {
+// CheckDockerAvailable checks if Docker is running and accessible.
+func (d *Docker) CheckDockerAvailable() error {
 	_, err := d.cli.Ping(d.ctx)
 	if err != nil {
 		rt.LogError(d.ctx, "docker is not running or not accessible: "+err.Error())
