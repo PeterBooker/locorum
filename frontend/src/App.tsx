@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router';
 
 // Internal Dependencies.
-import './App.css';
 import NewSiteModal from './components/modals/NewSiteModal';
 import Sites from './components/Sites';
 import Site from './components/Site';
