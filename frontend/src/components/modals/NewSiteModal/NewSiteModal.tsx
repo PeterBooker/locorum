@@ -22,7 +22,15 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 			name: projectName,
 			slug: "",
 			domain: "",
+			filesDir: "",
 			started: false,
+
+			phpVersion: "8.4",
+			mysqlVersion: "",
+			redisVersion: "",
+
+			createdAt: "",
+			updatedAt: "",
 		});
 		setIsOpen(false);
 	};

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -37,17 +38,9 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 		return nil, err
 	}
 
-	// Create table if it doesn't exist
-	const schema = `
-	CREATE TABLE IF NOT EXISTS sites (
-		id   TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		slug  TEXT NOT NULL,
-		domain  TEXT NOT NULL
-	);`
-	if _, err := db.Exec(schema); err != nil {
+	if err := applyMigrations(db); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
 	return &Storage{db: db, ctx: ctx}, nil
@@ -105,6 +98,7 @@ func (s *Storage) AddSite(site *types.Site) error {
 	return err
 }
 
+// UpdateSite updates an existing Site in the database.
 func (s *Storage) UpdateSite(site *types.Site) error {
 	_, err := s.db.Exec(
 		"UPDATE sites SET name = ?, slug = ?, domain = ?, started = ? WHERE id = ?",

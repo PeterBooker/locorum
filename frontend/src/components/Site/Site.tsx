@@ -38,7 +38,9 @@ export default function Site({ sites }: { sites: types.Site[] }) {
 
     return (
         <div className="site">
-            <div className="block">
+            <h1>{ site.name }</h1>
+
+            <div className="site_meta">
                 { toggling
                     ? (
                         <ArrowPathIcon
@@ -58,8 +60,6 @@ export default function Site({ sites }: { sites: types.Site[] }) {
                 }
             </div>
 
-            <h1>{ site.name }</h1>
-
             <button
                 className="block text-sm text-gray-500 hover:text-gray-700"
                 onClick={() => OpenSiteFilesDir(site.id)}
@@ -72,7 +72,7 @@ export default function Site({ sites }: { sites: types.Site[] }) {
             </button>
 
             <p>Slug: { site.slug }</p>
-            <p>URL: https://{ site.domain }</p>
+            <p>URL: <a target="_blank" href={'https://' + site.domain }>https://{ site.domain }</a></p>
 
         </div>
     )

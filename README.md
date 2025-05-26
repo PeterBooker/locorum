@@ -19,3 +19,18 @@ to this in your browser, and you can call your Go code from devtools.
 ## Building
 
 To build a redistributable, production mode package, use `wails build`.
+
+
+## Migrations
+
+You first need to install the migrations tool:
+
+```bash
+go install -tags 'sqlite' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```
+
+Then you can run create migrations with:
+
+```bash
+migrate create -ext sql -dir migrations create_{table_name}_table
+```

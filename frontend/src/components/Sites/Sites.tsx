@@ -20,7 +20,7 @@ export default function Sites({ sites, deleteSite }: { sites: types.Site[], dele
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
             </div>
-            { sites.length > 0 ? (
+            { sites && sites.length > 0 ? (
                 <ul className="flex flex-col gap-4">
                     { sites.map((site) => (
                         <li key={site.id} className="flex items-center justify-between bg-white shadow-md rounded-lg p-4">
