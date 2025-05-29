@@ -1,20 +1,32 @@
 import { useState } from 'react';
 
 import type { types } from '../../../../wailsjs/go/models';
+import { PickDirectory } from '../../../../wailsjs/go/sites/SiteManager';
 
 export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) => void }) {
 	const [isOpen, setIsOpen] = useState(false);
-	const [projectName, setProjectName] = useState('');
-	const [phpVersion, setPhpVersion] = useState('8.3');
-	const [dbVersion, setDbVersion] = useState('8.4');
-	const [redisVersion, setRedisVersion] = useState('8.0');
-	const [nodeVersion, setNodeVersion] = useState('22');
-	const [composerVersion, setComposerVersion] = useState('2');
+	const [projectName, setProjectName] = useState<string>('');
+	const [filesDir, setFilesDir] = useState<string>('');
+	const [publicDir, setPublicDir] = useState<string>('public');
+	const [phpVersion, setPhpVersion] = useState<string>('8.3');
+	const [dbVersion, setDbVersion] = useState<string>('8.4');
+	const [redisVersion, setRedisVersion] = useState<string>('8.0');
+	const [nodeVersion, setNodeVersion] = useState<string>('22');
+	const [composerVersion, setComposerVersion] = useState<string>('2');
 
 	const handleSubmit = () => {
 		console.log({ projectName, phpVersion, dbVersion, redisVersion, nodeVersion, composerVersion });
 		setIsOpen(false);
 	};
+
+	const pickDirectory = async () => {
+		try {
+			const dir = await PickDirectory();
+			setFilesDir(dir);
+		} catch (err) {
+			console.error('Directory pick cancelled or failed:', err);
+		}
+	}
 
 	const handleAddSite = async () => {
 		await addSite({
@@ -22,12 +34,13 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 			name: projectName,
 			slug: "",
 			domain: "",
-			filesDir: "",
+			filesDir: filesDir,
+			publicDir: publicDir,
 			started: false,
 
 			phpVersion: "8.4",
-			mysqlVersion: "",
-			redisVersion: "",
+			mysqlVersion: "8.0",
+			redisVersion: "8.0",
 
 			createdAt: "",
 			updatedAt: "",
@@ -54,7 +67,24 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 									value={projectName}
 									onChange={(e) => setProjectName(e.target.value)}
 									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
-									placeholder="e.g. MyAwesomeSite"
+								/>
+							</div>
+							<div className="flex flex-col">
+								<label className="mb-1 font-medium">Files Dir</label>
+								<button
+									onClick={pickDirectory}
+									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
+								>
+									{filesDir ? `Selected: ${filesDir}` : 'Choose directory...'}
+								</button>
+							</div>
+							<div className="flex flex-col">
+								<label className="mb-1 font-medium">Public Dir</label>
+								<input
+									type="text"
+									value={publicDir}
+									onChange={(e) => setPublicDir(e.target.value)}
+									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
 								/>
 							</div>
 							<div className="flex flex-col">

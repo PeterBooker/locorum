@@ -1,12 +1,13 @@
 package types
 
 type Site struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Slug     string `json:"slug"`
-	Domain   string `json:"domain"`
-	FilesDir string `json:"filesDir"`
-	Started  bool   `json:"started"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	Domain    string `json:"domain"`
+	FilesDir  string `json:"filesDir"`
+	PublicDir string `json:"publicDir"`
+	Started   bool   `json:"started"`
 
 	PHPVersion   string `json:"phpVersion"`
 	MySQLVersion string `json:"mysqlVersion"`

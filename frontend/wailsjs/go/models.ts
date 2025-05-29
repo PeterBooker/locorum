@@ -6,6 +6,7 @@ export namespace types {
 	    slug: string;
 	    domain: string;
 	    filesDir: string;
+	    publicDir: string;
 	    started: boolean;
 	    phpVersion: string;
 	    mysqlVersion: string;
@@ -24,6 +25,7 @@ export namespace types {
 	        this.slug = source["slug"];
 	        this.domain = source["domain"];
 	        this.filesDir = source["filesDir"];
+	        this.publicDir = source["publicDir"];
 	        this.started = source["started"];
 	        this.phpVersion = source["phpVersion"];
 	        this.mysqlVersion = source["mysqlVersion"];

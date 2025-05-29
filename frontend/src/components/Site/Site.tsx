@@ -16,6 +16,10 @@ export default function Site({ sites }: { sites: types.Site[] }) {
     const [started, setStarted] = useState(false);
     const [toggling, setToggling] = useState(false);
 
+    if (!sites) {
+        return null;
+    }
+
     const site = sites.find((site) => site.id === siteId);
 
     const handleStartSite = async (id: string) => {
@@ -71,8 +75,23 @@ export default function Site({ sites }: { sites: types.Site[] }) {
                 />
             </button>
 
+            <h3 className="text-lg font-semibold mt-4">Site</h3>
+            <p>ID: { site.id }</p>
             <p>Slug: { site.slug }</p>
             <p>URL: <a target="_blank" href={'https://' + site.domain }>https://{ site.domain }</a></p>
+            <p>Files Dir: { site.filesDir }</p>
+            <p>Public Dir: { site.publicDir }</p>
+
+            <h3 className="text-lg font-semibold mt-4">Versions</h3>
+            <p>PHP: { site.phpVersion }</p>
+            <p>MySQL: { site.mysqlVersion }</p>
+            <p>Redis: { site.redisVersion }</p>
+
+            <h3 className="text-lg font-semibold mt-4">Database</h3>
+            <p>Hostname: <code>database</code></p>
+            <p>Name: <code>wordpress</code></p>
+            <p>User: <code>wordpress</code></p>
+            <p>Pass: <code>password</code></p>
 
         </div>
     )

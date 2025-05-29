@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"github.com/PeterBooker/locorum/internal/types"
@@ -53,7 +52,7 @@ func (s *Storage) Close() error {
 
 // GetSites returns all sites stored in SQLite.
 func (s *Storage) GetSites() ([]types.Site, error) {
-	rows, err := s.db.Query("SELECT id, name, slug, domain FROM sites")
+	rows, err := s.db.Query("SELECT id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion FROM sites")
 	if err != nil {
 		return nil, err
 	}
@@ -62,20 +61,21 @@ func (s *Storage) GetSites() ([]types.Site, error) {
 	var result []types.Site
 	for rows.Next() {
 		var site types.Site
-		if err := rows.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain); err != nil {
+		if err := rows.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion); err != nil {
 			return nil, err
 		}
 		result = append(result, site)
 	}
+
 	return result, rows.Err()
 }
 
 // GetSite returns a single Site by ID.
 func (s *Storage) GetSite(id string) (*types.Site, error) {
-	row := s.db.QueryRow("SELECT id, name, slug, domain FROM sites WHERE id = ?", id)
+	row := s.db.QueryRow("SELECT id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion FROM sites WHERE id = ?", id)
 	var site types.Site
 
-	if err := row.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain); err != nil {
+	if err := row.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -88,28 +88,36 @@ func (s *Storage) GetSite(id string) (*types.Site, error) {
 
 // AddSite inserts a new Site into the database, generating an ID if none is set.
 func (s *Storage) AddSite(site *types.Site) error {
-	if site.ID == "" {
-		site.ID = uuid.NewString()
-	}
 	_, err := s.db.Exec(
-		"INSERT INTO sites (id, name, slug, domain) VALUES (?, ?, ?, ?)",
-		site.ID, site.Name, site.Slug, site.Domain,
+		"INSERT INTO sites (id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // UpdateSite updates an existing Site in the database.
 func (s *Storage) UpdateSite(site *types.Site) error {
 	_, err := s.db.Exec(
-		"UPDATE sites SET name = ?, slug = ?, domain = ?, started = ? WHERE id = ?",
-		site.Name, site.Slug, site.Domain, site.Started, site.ID,
+		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ? WHERE id = ?",
+		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.ID,
 	)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // DeleteSite removes the Site with the given ID from the database.
 func (s *Storage) DeleteSite(id string) error {
 	_, err := s.db.Exec("DELETE FROM sites WHERE id = ?", id)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

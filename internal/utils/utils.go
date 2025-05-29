@@ -95,6 +95,25 @@ func DeleteFile(path string) error {
 	return nil
 }
 
+// GetUserHomeDir returns the user's home directory. On Windows, it handles WSL paths correctly.
+func GetUserHomeDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("getting user home directory: %w", err)
+	}
+
+	if runtime.GOOS == "windows" && strings.HasPrefix(homeDir, `C:\Users\`) {
+		out, err := exec.Command("wslpath", "-w", "$HOME").Output()
+		if err != nil {
+			return homeDir, fmt.Errorf("wslpath failed: %w", err)
+		}
+
+		homeDir = strings.TrimSpace(string(out))
+	}
+
+	return homeDir, nil
+}
+
 // OpenDirectory opens the specified directory in the system's file explorer.
 func OpenDirectory(path string) error {
 	switch runtime.GOOS {

@@ -3,8 +3,12 @@ CREATE TABLE sites (
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     domain TEXT NOT NULL,
+    filesDir TEXT NOT NULL,
+    publicDir TEXT NOT NULL,
     started BOOLEAN NOT NULL DEFAULT FALSE,
-    php_version TEXT,
-    mysql_version TEXT,
-    redis_version TEXT
+    phpVersion TEXT,
+    mysqlVersion TEXT,
+    redisVersion TEXT,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -11,7 +11,7 @@ server {
     http2               on;
     server_name         {{ .Domain }};
 
-    root                /var/www/html/{{ .Slug }};
+    root                /var/www/html/{{ .Slug }}/{{ .PublicDir }};
     index               index.php index.html index.htm;
 
     # SSL

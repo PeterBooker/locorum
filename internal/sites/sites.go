@@ -8,6 +8,7 @@ import (
 	"path"
 
 	"github.com/docker/docker/client"
+	"github.com/google/uuid"
 	"github.com/gosimple/slug"
 	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -53,10 +54,11 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 }
 
 func (sm *SiteManager) AddSite(site types.Site) error {
+	site.ID = uuid.NewString()
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
 
-	err := utils.EnsureDir(path.Join(sm.homeDir, "locorum", "sites", site.Slug))
+	err := utils.EnsureDir(site.FilesDir)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to create site directory: "+err.Error())
 		return err
@@ -74,6 +76,7 @@ func (sm *SiteManager) DeleteSite(id string) error {
 	if err := sm.st.DeleteSite(id); err != nil {
 		return err
 	}
+
 	sm.emitUpdate()
 	return nil
 }
@@ -167,4 +170,17 @@ func (sm *SiteManager) OpenSiteFilesDir(id string) error {
 	}
 
 	return nil
+}
+
+// PickDirectory opens a native folder-picker and returns the selected path.
+func (sm *SiteManager) PickDirectory() (string, error) {
+	dir, err := rt.OpenDirectoryDialog(sm.ctx, rt.OpenDialogOptions{
+		Title:            "Select a folder",
+		DefaultDirectory: sm.homeDir,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return dir, nil
 }

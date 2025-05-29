@@ -18,6 +18,10 @@ export function OpenSiteFilesDir(arg1) {
   return window['go']['sites']['SiteManager']['OpenSiteFilesDir'](arg1);
 }
 
+export function PickDirectory() {
+  return window['go']['sites']['SiteManager']['PickDirectory']();
+}
+
 export function SetContext(arg1) {
   return window['go']['sites']['SiteManager']['SetContext'](arg1);
 }

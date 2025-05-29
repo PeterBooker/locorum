@@ -6,8 +6,8 @@ import { NavLink } from 'react-router';
 export default function Sites({ sites, deleteSite }: { sites: types.Site[], deleteSite: (id: string) => void }) {
     const [searchTerm, setSearchTerm] = useState('');
 
-    if (searchTerm !== '') {
-        sites = sites.filter((site) => site.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    if (sites && searchTerm !== '') {
+        sites = sites.filter((site) => site?.name?.toLowerCase()?.includes(searchTerm?.toLowerCase()));
     }
 
     return (
