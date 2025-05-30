@@ -64,7 +64,7 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	err = a.d.CreateGlobalWebserver()
+	err = a.d.CreateGlobalWebserver(a.homeDir)
 	if err != nil {
 		return err
 	}

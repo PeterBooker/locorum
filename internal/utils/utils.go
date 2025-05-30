@@ -102,7 +102,7 @@ func GetUserHomeDir() (string, error) {
 		return "", fmt.Errorf("getting user home directory: %w", err)
 	}
 
-	if runtime.GOOS == "windows" && strings.HasPrefix(homeDir, `C:\Users\`) {
+	if runtime.GOOS == "windows" && hasWSL() {
 		out, err := exec.Command("wslpath", "-w", "$HOME").Output()
 		if err != nil {
 			return homeDir, fmt.Errorf("wslpath failed: %w", err)
@@ -150,4 +150,16 @@ func isWSL() bool {
 		return false
 	}
 	return bytes.Contains(bytes.ToLower(data), []byte("microsoft"))
+}
+
+func hasWSL() bool {
+	cmd := exec.Command("wsl.exe", "echo", "wsl-test")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(out.String()) == "wsl-test"
 }

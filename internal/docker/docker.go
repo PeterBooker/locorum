@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"os"
 	"path"
 
 	"github.com/docker/docker/api/types/container"
@@ -64,7 +63,7 @@ func (d *Docker) CreateGlobalNetwork() error {
 	return nil
 }
 
-func (d *Docker) CreateGlobalWebserver() error {
+func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	exists, err := d.containerExists("locorum-global-webserver")
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to check if global container exists: "+err.Error())
@@ -74,8 +73,6 @@ func (d *Docker) CreateGlobalWebserver() error {
 		rt.LogInfo(d.ctx, "Global network already exists")
 		return nil
 	}
-
-	home, _ := os.UserHomeDir()
 
 	containerName := "locorum-global-webserver"
 	imageName := "nginx:1.28-alpine"
@@ -92,10 +89,10 @@ func (d *Docker) CreateGlobalWebserver() error {
 
 	hostConfig := &container.HostConfig{
 		Binds: []string{
-			path.Join(home, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(home, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled:ro",
-			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
-			path.Join(home, "locorum", "sites") + ":/var/www/html:ro",
+			path.Join(homeDir, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
+			path.Join(homeDir, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled:ro",
+			path.Join(homeDir, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
+			path.Join(homeDir, "locorum", "sites") + ":/var/www/html:ro",
 		},
 		PortBindings: nat.PortMap{
 			"80/tcp":  {{HostIP: "0.0.0.0", HostPort: "80"}},
@@ -122,7 +119,7 @@ func (d *Docker) CreateGlobalWebserver() error {
 }
 
 // CreateSite creates a new site with the given name.
-func (d *Docker) CreateSite(siteName string) error {
+func (d *Docker) CreateSite(siteName string, homeDir string) error {
 	err := d.createNetwork("locorum-"+siteName, true)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to create site network: "+err.Error())
@@ -142,21 +139,19 @@ func (d *Docker) CreateSite(siteName string) error {
 		return err
 	}
 
-	home, _ := os.UserHomeDir()
-
-	err = d.addPhpContainer(siteName, home)
+	err = d.addPhpContainer(siteName, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add PHP container: "+err.Error())
 		return err
 	}
 
-	err = d.addDatabaseContainer(siteName, home)
+	err = d.addDatabaseContainer(siteName, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add Database container: "+err.Error())
 		return err
 	}
 
-	err = d.addRedisContainer(siteName, home)
+	err = d.addRedisContainer(siteName, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add Redis container: "+err.Error())
 		return err
@@ -206,6 +201,54 @@ func (d *Docker) RemoveSite(siteName string) error {
 				fmt.Sprintf("failed to remove network %s: %v", networkName, err))
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (d *Docker) addWebContainer(siteName string, home string) error {
+	containerName := "locorum-" + siteName + "-web"
+	imageName := "wodby/php:8.4"
+	networkName := "locorum-" + siteName
+
+	config := &container.Config{
+		Image:        imageName,
+		Tty:          true,
+		WorkingDir:   "/var/www/html/" + siteName,
+		ExposedPorts: nat.PortSet{},
+		Env: []string{
+			"MYSQL_HOST=database",
+			"MYSQL_DATABASE=wordpress",
+			"MYSQL_USER=wordpress",
+			"MYSQL_PASSWORD=password",
+			"WP_CLI_ALLOW_ROOT=true",
+			"NEW_UID=1000",
+			"NEW_GID=1000",
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds: []string{
+			path.Join(home, ".locorum", "config", "php", "php.ini") + ":/usr/local/etc/php/conf.d/zzz-php.ini",
+			path.Join(home, "locorum", "sites", siteName) + ":/var/www/html/" + siteName,
+		},
+		PortBindings: nat.PortMap{},
+		NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts:   []string{siteName + ".localhost:host-gateway"},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"locorum-global": {},
+			networkName: {
+				Aliases: []string{"php"},
+			},
+		},
+	}
+
+	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
+	if err != nil {
+		return err
 	}
 
 	return nil

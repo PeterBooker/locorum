@@ -110,7 +110,7 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
-	err = sm.d.CreateSite(site.Slug)
+	err = sm.d.CreateSite(site.Slug, sm.homeDir)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to create containers: "+err.Error())
 		return err
