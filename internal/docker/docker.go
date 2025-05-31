@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/PeterBooker/locorum/internal/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -75,7 +76,7 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	}
 
 	containerName := "locorum-global-webserver"
-	imageName := "nginx:1.28-alpine"
+	imageName := "nginx:1.28"
 	networkName := "locorum-global"
 
 	config := &container.Config{
@@ -119,13 +120,13 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 }
 
 // CreateSite creates a new site with the given name.
-func (d *Docker) CreateSite(siteName string, homeDir string) error {
-	err := d.createNetwork("locorum-"+siteName, true)
+func (d *Docker) CreateSite(site *types.Site, homeDir string) error {
+	err := d.createNetwork("locorum-"+site.Slug, true)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to create site network: "+err.Error())
 	}
 
-	err = d.cli.NetworkConnect(d.ctx, "locorum-"+siteName, "locorum-global-webserver", &network.EndpointSettings{
+	err = d.cli.NetworkConnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", &network.EndpointSettings{
 		Aliases: []string{"nginx"},
 	})
 	if err != nil {
@@ -133,25 +134,31 @@ func (d *Docker) CreateSite(siteName string, homeDir string) error {
 		return err
 	}
 
-	err = d.cli.NetworkDisconnect(d.ctx, "locorum-"+siteName, "locorum-global-webserver", false)
+	err = d.cli.NetworkDisconnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", false)
 	if err != nil {
-		rt.LogError(d.ctx, fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+siteName, err))
+		rt.LogError(d.ctx, fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+site.Slug, err))
 		return err
 	}
 
-	err = d.addPhpContainer(siteName, homeDir)
+	err = d.addWebContainer(site, homeDir)
+	if err != nil {
+		rt.LogError(d.ctx, "Failed to add Web Server container: "+err.Error())
+		return err
+	}
+
+	err = d.addPhpContainer(site, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add PHP container: "+err.Error())
 		return err
 	}
 
-	err = d.addDatabaseContainer(siteName, homeDir)
+	err = d.addDatabaseContainer(site, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add Database container: "+err.Error())
 		return err
 	}
 
-	err = d.addRedisContainer(siteName, homeDir)
+	err = d.addRedisContainer(site, homeDir)
 	if err != nil {
 		rt.LogError(d.ctx, "Failed to add Redis container: "+err.Error())
 		return err
@@ -161,13 +168,14 @@ func (d *Docker) CreateSite(siteName string, homeDir string) error {
 }
 
 // CreateSite creates a new site with the given name.
-func (d *Docker) RemoveSite(siteName string) error {
-	networkName := "locorum-" + siteName
+func (d *Docker) RemoveSite(site *types.Site) error {
+	networkName := "locorum-" + site.Slug
 
 	containerNames := []string{
-		"locorum-" + siteName + "-redis",
-		"locorum-" + siteName + "-database",
-		"locorum-" + siteName + "-php",
+		"locorum-" + site.Slug + "-redis",
+		"locorum-" + site.Slug + "-database",
+		"locorum-" + site.Slug + "-php",
+		"locorum-" + site.Slug + "-web",
 	}
 
 	timeout := 10
@@ -206,15 +214,59 @@ func (d *Docker) RemoveSite(siteName string) error {
 	return nil
 }
 
-func (d *Docker) addWebContainer(siteName string, home string) error {
-	containerName := "locorum-" + siteName + "-web"
+func (d *Docker) addWebContainer(site *types.Site, home string) error {
+	containerName := "locorum-" + site.Slug + "-web"
+	imageName := "nginx:1.28-alpine"
+	networkName := "locorum-" + site.Slug
+
+	config := &container.Config{
+		Image: imageName,
+		Tty:   true,
+		ExposedPorts: nat.PortSet{
+			"80/tcp":  struct{}{},
+			"443/tcp": struct{}{},
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds: []string{
+			path.Join(home, ".locorum", "config", "nginx", "site.conf") + ":/etc/nginx/nginx.conf:ro",
+			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
+			site.FilesDir + ":/var/www/html:ro",
+		},
+		PortBindings: nat.PortMap{},
+		NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts:   []string{},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"locorum-global": {
+				Aliases: []string{"locorum-" + site.Slug + "-web"},
+			},
+			networkName: {
+				Aliases: []string{"web"},
+			},
+		},
+	}
+
+	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *Docker) addPhpContainer(site *types.Site, home string) error {
+	containerName := "locorum-" + site.Slug + "-php"
 	imageName := "wodby/php:8.4"
-	networkName := "locorum-" + siteName
+	networkName := "locorum-" + site.Slug
 
 	config := &container.Config{
 		Image:        imageName,
 		Tty:          true,
-		WorkingDir:   "/var/www/html/" + siteName,
+		WorkingDir:   "/var/www/html",
 		ExposedPorts: nat.PortSet{},
 		Env: []string{
 			"MYSQL_HOST=database",
@@ -222,24 +274,23 @@ func (d *Docker) addWebContainer(siteName string, home string) error {
 			"MYSQL_USER=wordpress",
 			"MYSQL_PASSWORD=password",
 			"WP_CLI_ALLOW_ROOT=true",
-			"NEW_UID=1000",
-			"NEW_GID=1000",
+			// "NEW_UID=1000",
+			// "NEW_GID=1000",
 		},
 	}
 
 	hostConfig := &container.HostConfig{
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "php", "php.ini") + ":/usr/local/etc/php/conf.d/zzz-php.ini",
-			path.Join(home, "locorum", "sites", siteName) + ":/var/www/html/" + siteName,
+			site.FilesDir + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
 		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{siteName + ".localhost:host-gateway"},
+		ExtraHosts:   []string{site.Name + ".localhost:host-gateway"},
 	}
 
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
 			networkName: {
 				Aliases: []string{"php"},
 			},
@@ -254,59 +305,11 @@ func (d *Docker) addWebContainer(siteName string, home string) error {
 	return nil
 }
 
-func (d *Docker) addPhpContainer(siteName string, home string) error {
-	containerName := "locorum-" + siteName + "-php"
-	imageName := "wodby/php:8.4"
-	networkName := "locorum-" + siteName
-
-	config := &container.Config{
-		Image:        imageName,
-		Tty:          true,
-		WorkingDir:   "/var/www/html/" + siteName,
-		ExposedPorts: nat.PortSet{},
-		Env: []string{
-			"MYSQL_HOST=database",
-			"MYSQL_DATABASE=wordpress",
-			"MYSQL_USER=wordpress",
-			"MYSQL_PASSWORD=password",
-			"WP_CLI_ALLOW_ROOT=true",
-			"NEW_UID=1000",
-			"NEW_GID=1000",
-		},
-	}
-
-	hostConfig := &container.HostConfig{
-		Binds: []string{
-			path.Join(home, ".locorum", "config", "php", "php.ini") + ":/usr/local/etc/php/conf.d/zzz-php.ini",
-			path.Join(home, "locorum", "sites", siteName) + ":/var/www/html/" + siteName,
-		},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{siteName + ".localhost:host-gateway"},
-	}
-
-	networkingConfig := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
-			networkName: {
-				Aliases: []string{"php"},
-			},
-		},
-	}
-
-	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (d *Docker) addDatabaseContainer(siteName string, home string) error {
-	containerName := "locorum-" + siteName + "-database"
+func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
+	containerName := "locorum-" + site.Slug + "-database"
 	imageName := "mysql:8.4"
-	networkName := "locorum-" + siteName
-	volumeName := "locorum-" + siteName + "-dbdata"
+	networkName := "locorum-" + site.Slug
+	volumeName := "locorum-" + site.Slug + "-dbdata"
 
 	err := d.createVolume(volumeName)
 	if err != nil {
@@ -352,10 +355,10 @@ func (d *Docker) addDatabaseContainer(siteName string, home string) error {
 	return nil
 }
 
-func (d *Docker) addRedisContainer(siteName string, home string) error {
-	containerName := "locorum-" + siteName + "-redis"
+func (d *Docker) addRedisContainer(site *types.Site, home string) error {
+	containerName := "locorum-" + site.Slug + "-redis"
 	imageName := "redis:7.4-alpine"
-	networkName := "locorum-" + siteName
+	networkName := "locorum-" + site.Slug
 
 	config := &container.Config{
 		Image:        imageName,

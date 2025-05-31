@@ -1,70 +1,89 @@
-server {
-    listen       80;
-    listen       [::]:80;
-    server_name  {{ .Domain }};
-    return 301   https://$host$request_uri;
+user  nginx;
+worker_processes  auto;
+error_log  /var/log/nginx/error.log warn;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
 }
 
-server {
-    listen              443 ssl;
-    listen              [::]:443 ssl;
-    http2               on;
-    server_name         {{ .Domain }};
+http {
+    log_format  main  '$remote_addr - $remote_user [$time_local] '
+                      '"$request" $status $body_bytes_sent '
+                      '"$http_referer" "$http_user_agent"';
 
-    root                /var/www/html/{{ .Slug }}/{{ .PublicDir }};
-    index               index.php index.html index.htm;
+    access_log  /var/log/nginx/access.log  main;
 
-    # SSL
-    ssl_certificate     /etc/nginx/certs/wildcard.localhost.crt;
-    ssl_certificate_key /etc/nginx/certs/wildcard.localhost.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
+    include mime.types;
 
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options           "SAMEORIGIN"           always;
-    add_header X-Content-Type-Options    "nosniff"              always;
-
-    location = /favicon.ico {
-        log_not_found off;
-        access_log off;
+    server {
+        listen       80;
+        listen       [::]:80;
+        server_name  {{ .Domain }};
+        return 301   https://$host$request_uri;
     }
 
-    location = /robots.txt {
-        allow all;
-        log_not_found off;
-        access_log off;
-    }
+    server {
+        listen              443 ssl;
+        listen              [::]:443 ssl;
+        http2               on;
+        server_name         {{ .Domain }};
 
-    location ~* \.(css|js|png|jpg|jpeg|gif|ico|woff|woff2|ttf|svg|eot)$ {
-        try_files $uri =404;
-        access_log off;
-        log_not_found off;
-    }
+        root                /var/www/html/{{ .PublicDir }};
+        index               index.php index.html index.htm;
 
-    # Static assets
-    location / {
-        try_files $uri $uri/ /index.php?$args;
-    }
+        # SSL
+        ssl_certificate     /etc/nginx/certs/wildcard.localhost.crt;
+        ssl_certificate_key /etc/nginx/certs/wildcard.localhost.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
 
-    # WordPress Rewrites
-    if (!-e $request_filename) {
-        rewrite (/wp-.*)       /wp$1      last;
-        rewrite (/.*\.php)$    /wp$1      last;
-    }
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Frame-Options           "SAMEORIGIN"           always;
+        add_header X-Content-Type-Options    "nosniff"              always;
 
-    # PHP
-    location ~ \.php$ {
-        try_files $uri =404;
-        include      fastcgi.conf;
-        fastcgi_pass locorum-{{ .Slug }}-php:9000;
-        include      fastcgi_params;
-        fastcgi_buffers            256 48k;
-        fastcgi_buffer_size        48k;
-        fastcgi_connect_timeout    60s;
-        fastcgi_send_timeout       60s;
-        fastcgi_read_timeout       60s;
-        fastcgi_busy_buffers_size  256k;
-        fastcgi_max_temp_file_size 0;
-        reset_timedout_connection  on;
+        location = /favicon.ico {
+            log_not_found off;
+            access_log off;
+        }
+
+        location = /robots.txt {
+            allow all;
+            log_not_found off;
+            access_log off;
+        }
+
+        location ~* \.(css|js|png|jpg|jpeg|gif|ico|woff|woff2|ttf|svg|eot)$ {
+            try_files $uri =404;
+            access_log off;
+            log_not_found off;
+        }
+
+        # Static assets
+        location / {
+            try_files $uri $uri/ /index.php?$args;
+        }
+
+        # WordPress Rewrites
+        if (!-e $request_filename) {
+            rewrite (/wp-.*)       /wp$1      last;
+            rewrite (/.*\.php)$    /wp$1      last;
+        }
+
+        # PHP
+        location ~ \.php$ {
+            try_files $uri =404;
+            include      fastcgi.conf;
+            fastcgi_pass locorum-{{ .Slug }}-php:9000;
+            include      fastcgi_params;
+            fastcgi_buffers            256 48k;
+            fastcgi_buffer_size        48k;
+            fastcgi_connect_timeout    60s;
+            fastcgi_send_timeout       60s;
+            fastcgi_read_timeout       60s;
+            fastcgi_busy_buffers_size  256k;
+            fastcgi_max_temp_file_size 0;
+            reset_timedout_connection  on;
+        }
     }
 }

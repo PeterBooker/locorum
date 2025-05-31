@@ -110,25 +110,25 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
-	err = sm.d.CreateSite(site.Slug, sm.homeDir)
+	err = sm.generateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to add new sites nginx config: "+err.Error())
+		return err
+	}
+
+	err = sm.d.CreateSite(site, sm.homeDir)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to create containers: "+err.Error())
 		return err
 	}
 
-	err = sm.generateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
-	if err != nil {
-		rt.LogError(sm.ctx, "Failed to add nginx config: "+err.Error())
-		return err
-	}
-
 	site.Started = true
 
-	// err = sm.st.UpdateSite(site)
-	// if err != nil {
-	// 	rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
-	// 	return err
-	// }
+	err = sm.st.UpdateSite(site)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
+		return err
+	}
 
 	return nil
 }
@@ -140,7 +140,7 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
-	err = sm.d.RemoveSite(site.Slug)
+	err = sm.d.RemoveSite(site)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to remove containers: "+err.Error())
 		return err
