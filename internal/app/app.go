@@ -68,6 +68,11 @@ func (a *App) Initialize() error {
 		return err
 	}
 
+	err = a.d.CreateGlobalMailserver()
+	if err != nil {
+		return err
+	}
+
 	err = a.d.CreateGlobalWebserver(a.homeDir)
 	if err != nil {
 		return err

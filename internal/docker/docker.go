@@ -71,7 +71,7 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	}
 
 	if exists {
-		rt.LogInfo(d.ctx, "Global network already exists")
+		rt.LogInfo(d.ctx, "Global webserver already exists")
 		return nil
 	}
 
@@ -91,9 +91,6 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	hostConfig := &container.HostConfig{
 		Binds: []string{
 			path.Join(homeDir, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(homeDir, ".locorum", "config", "nginx", "sites-enabled") + ":/etc/nginx/sites-enabled:ro",
-			path.Join(homeDir, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
-			path.Join(homeDir, "locorum", "sites") + ":/var/www/html:ro",
 		},
 		PortBindings: nat.PortMap{
 			"80/tcp":  {{HostIP: "0.0.0.0", HostPort: "80"}},
@@ -105,8 +102,7 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
-			networkName:      {},
+			networkName: {},
 		},
 	}
 
@@ -116,6 +112,55 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	}
 
 	rt.LogInfo(d.ctx, "Global webserver container created successfully.")
+	return nil
+}
+
+func (d *Docker) CreateGlobalMailserver() error {
+	exists, err := d.containerExists("locorum-global-mail")
+	if err != nil {
+		rt.LogError(d.ctx, "Failed to check if global mail container exists: "+err.Error())
+	}
+
+	if exists {
+		rt.LogInfo(d.ctx, "Global mail server already exists")
+		return nil
+	}
+
+	containerName := "locorum-global-mail"
+	imageName := "mailhog/mailhog"
+	networkName := "locorum-global"
+
+	config := &container.Config{
+		Image: imageName,
+		Tty:   true,
+		ExposedPorts: nat.PortSet{
+			"1025/tcp": struct{}{},
+			"8025/tcp": struct{}{},
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds:        []string{},
+		PortBindings: nat.PortMap{},
+		NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts:   []string{},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			networkName: {
+				Aliases: []string{"mail"},
+			},
+		},
+	}
+
+	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
+	if err != nil {
+		return err
+	}
+
+	rt.LogInfo(d.ctx, "Global mail container created successfully.")
+
 	return nil
 }
 
@@ -230,7 +275,7 @@ func (d *Docker) addWebContainer(site *types.Site, home string) error {
 
 	hostConfig := &container.HostConfig{
 		Binds: []string{
-			path.Join(home, ".locorum", "config", "nginx", "site.conf") + ":/etc/nginx/nginx.conf:ro",
+			path.Join(home, ".locorum", "config", "nginx", "sites", site.Slug+".conf") + ":/etc/nginx/nginx.conf:ro",
 			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
 			site.FilesDir + ":/var/www/html:ro",
 		},
@@ -285,12 +330,13 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			site.FilesDir + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{site.Name + ".localhost:host-gateway"},
+		//NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts: []string{site.Name + ".localhost:host-gateway"},
 	}
 
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
+			"locorum-global": {},
 			networkName: {
 				Aliases: []string{"php"},
 			},

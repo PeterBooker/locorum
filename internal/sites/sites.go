@@ -146,7 +146,7 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
-	err = os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites-enabled", site.Slug+".conf"))
+	err = os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to delete nginx config: "+err.Error())
 		return err
