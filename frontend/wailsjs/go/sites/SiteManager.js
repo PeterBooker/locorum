@@ -26,6 +26,10 @@ export function SetContext(arg1) {
   return window['go']['sites']['SiteManager']['SetContext'](arg1);
 }
 
+export function SetupWebMap() {
+  return window['go']['sites']['SiteManager']['SetupWebMap']();
+}
+
 export function StartSite(arg1) {
   return window['go']['sites']['SiteManager']['StartSite'](arg1);
 }

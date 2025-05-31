@@ -24,6 +24,7 @@ var funcMap = template.FuncMap{
 
 var (
 	siteTpl *template.Template
+	mapTpl  *template.Template
 )
 
 // writeAtomic writes data to filename via a temp file + rename
@@ -42,7 +43,7 @@ func (sm *SiteManager) writeAtomic(filename string, data []byte) error {
 	return os.Rename(tmp.Name(), filename)
 }
 
-func (sm *SiteManager) generateSiteConfig(site types.Site, dest string) error {
+func (sm *SiteManager) generateSiteConfig(site *types.Site, dest string) error {
 	var mbuf bytes.Buffer
 
 	if err := siteTpl.Execute(&mbuf, site); err != nil {
@@ -51,6 +52,20 @@ func (sm *SiteManager) generateSiteConfig(site types.Site, dest string) error {
 
 	if err := sm.writeAtomic(dest, mbuf.Bytes()); err != nil {
 		return fmt.Errorf("write site config: %w", err)
+	}
+
+	return nil
+}
+
+func (sm *SiteManager) generateMapConfig(sites []types.Site, dest string) error {
+	var mbuf bytes.Buffer
+
+	if err := mapTpl.Execute(&mbuf, sites); err != nil {
+		return fmt.Errorf("render map config: %w", err)
+	}
+
+	if err := sm.writeAtomic(dest, mbuf.Bytes()); err != nil {
+		return fmt.Errorf("write map config: %w", err)
 	}
 
 	if err := sm.d.TestGlobalNginxConfig(); err != nil {

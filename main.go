@@ -55,6 +55,7 @@ func main() {
 			d.SetContext(ctx)
 			sm.SetContext(ctx)
 			d.SetClient(app.GetClient())
+			sm.SetupWebMap()
 			err := app.Initialize()
 			if err != nil {
 				println("Error:", err.Error())

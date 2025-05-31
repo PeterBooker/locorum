@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"html/template"
-	"os"
 	"path"
 
 	"github.com/docker/docker/client"
@@ -35,6 +34,12 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, c
 			ParseFS(config, "config/nginx/site.tmpl"),
 	)
 
+	mapTpl = template.Must(
+		template.New("map.tmpl").
+			Funcs(funcMap).
+			ParseFS(config, "config/nginx/map.tmpl"),
+	)
+
 	return &SiteManager{
 		st:      st,
 		cli:     cli,
@@ -43,6 +48,22 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, c
 		homeDir: homeDir,
 		sites:   make(map[string]types.Site),
 	}
+}
+
+func (sm *SiteManager) SetupWebMap() error {
+	sites, err := sm.GetSites()
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to get sites: "+err.Error())
+		return err
+	}
+
+	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to create global nginx map: "+err.Error())
+		return err
+	}
+
+	return nil
 }
 
 func (sm *SiteManager) SetContext(ctx context.Context) {
@@ -110,7 +131,19 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
-	err = sm.generateSiteConfig(*site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
+	sites, err := sm.st.GetSites()
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to fetch sites: "+err.Error())
+		return err
+	}
+
+	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"))
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to add global nginx map config: "+err.Error())
+		return err
+	}
+
+	err = sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to add new sites nginx config: "+err.Error())
 		return err
@@ -143,12 +176,6 @@ func (sm *SiteManager) StopSite(id string) error {
 	err = sm.d.RemoveSite(site)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to remove containers: "+err.Error())
-		return err
-	}
-
-	err = os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
-	if err != nil {
-		rt.LogError(sm.ctx, "Failed to delete nginx config: "+err.Error())
 		return err
 	}
 

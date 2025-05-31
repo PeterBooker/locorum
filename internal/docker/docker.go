@@ -91,6 +91,7 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	hostConfig := &container.HostConfig{
 		Binds: []string{
 			path.Join(homeDir, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
+			path.Join(homeDir, ".locorum", "config", "nginx", "map.conf") + ":/etc/nginx/map.conf:ro",
 		},
 		PortBindings: nat.PortMap{
 			"80/tcp":  {{HostIP: "0.0.0.0", HostPort: "80"}},
@@ -330,8 +331,7 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			site.FilesDir + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
-		//NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts: []string{site.Name + ".localhost:host-gateway"},
+		ExtraHosts:   []string{site.Name + ".localhost:host-gateway"},
 	}
 
 	networkingConfig := &network.NetworkingConfig{
