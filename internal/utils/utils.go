@@ -103,7 +103,7 @@ func GetUserHomeDir() (string, error) {
 	}
 
 	if runtime.GOOS == "windows" && hasWSL() {
-		out, err := exec.Command("wslpath", "-w", "$HOME").Output()
+		out, err := exec.Command("wsl", "wslpath", "-w", "$HOME").Output()
 		if err != nil {
 			return homeDir, fmt.Errorf("wslpath failed: %w", err)
 		}
@@ -118,6 +118,10 @@ func GetUserHomeDir() (string, error) {
 func OpenDirectory(path string) error {
 	switch runtime.GOOS {
 	case "windows":
+		if hasWSL() && strings.Contains(path, "\\wsl") {
+			return exec.Command("cmd.exe", "/C", "start", "", path).Start()
+		}
+
 		return exec.Command("explorer.exe", path).Start()
 	case "darwin":
 		return exec.Command("open", path).Start()

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"embed"
+	"log"
 	"path"
 	"runtime"
 
@@ -27,7 +28,10 @@ type App struct {
 // New creates a new App application struct
 func New(configFiles embed.FS, d *docker.Docker) *App {
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	homeDir, _ := utils.GetUserHomeDir()
+	homeDir, err := utils.GetUserHomeDir()
+	if err != nil {
+		log.Fatalln("error getting home dir:", err)
+	}
 
 	return &App{
 		cli:         cli,
