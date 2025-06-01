@@ -1,6 +1,7 @@
 // External Dependencies.
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router';
+import { useParams } from 'react-router';
 
 // Internal Dependencies.
 import NewSiteModal from './components/modals/NewSiteModal';
@@ -54,13 +55,24 @@ function App() {
 
 						<Routes>
 							<Route path="/" element={<>Home Page</>} />
-							<Route path="sites/:siteId" element={<Site sites={sites} />} />
+							<Route path="sites/:siteId" element={<SiteWrapper sites={sites} />} />
 						</Routes>
 					</div>
 				</main>
 			</div>
 		</Router>
 	)
+}
+
+function SiteWrapper({ sites }: { sites: types.Site[] }) {
+	const { siteId } = useParams();
+	const site = sites.find((site) => site.id === siteId);
+
+	if (!site) {
+		return <div>Site not found</div>;
+	}
+
+	return <Site key={siteId} siteData={site} siteId={siteId ?? ''} />;
 }
 
 export default App

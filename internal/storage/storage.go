@@ -100,16 +100,16 @@ func (s *Storage) AddSite(site *types.Site) error {
 }
 
 // UpdateSite updates an existing Site in the database.
-func (s *Storage) UpdateSite(site *types.Site) error {
+func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	_, err := s.db.Exec(
 		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ? WHERE id = ?",
 		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.ID,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return site, nil
 }
 
 // DeleteSite removes the Site with the given ID from the database.

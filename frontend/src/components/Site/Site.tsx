@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { types } from '../../../wailsjs/go/models';
-import { StartSite, StopSite, OpenSiteFilesDir } from '../../../wailsjs/go/sites/SiteManager';
+import { GetSite, StartSite, StopSite, OpenSiteFilesDir } from '../../../wailsjs/go/sites/SiteManager';
+import { EventsOn, EventsOff } from '../../../wailsjs/runtime';
 import {
     PlayIcon,
     StopIcon,
@@ -8,23 +9,30 @@ import {
     ArrowPathIcon,
 } from '@heroicons/react/24/solid';
 
-import { useParams } from 'react-router';
-
-export default function Site({ sites }: { sites: types.Site[] }) {
-    let { siteId } = useParams();
-
+export default function Site({ siteData, siteId }: { siteData: types.Site, siteId: string }) {
+    const [site, setSite] = useState<types.Site>(siteData);
     const [started, setStarted] = useState(false);
     const [toggling, setToggling] = useState(false);
 
     useEffect(() => {
-        setStarted(false)
+        GetSite(siteId).then(setSite);
+
+        EventsOn("siteUpdated", (site) => {
+            if (site.id !== siteId) {
+                return;
+            }
+
+            console.log("Site updated:", site);
+
+            setSite(site);
+        });
+
+        return () => EventsOff("siteUpdated");
     }, []);
 
-    if (!sites) {
-        return null;
-    }
-
-    const site = sites.find((site) => site.id === siteId);
+    useEffect(() => {
+        setStarted(false)
+    }, []);
 
     const handleStartSite = async (id: string) => {
         setToggling(true);
@@ -40,10 +48,6 @@ export default function Site({ sites }: { sites: types.Site[] }) {
         setToggling(false);
     };
 
-    if (!site) {
-        return null;
-    }
-
     return (
         <div className="site">
             <h1>{ site.name }</h1>
@@ -54,7 +58,7 @@ export default function Site({ sites }: { sites: types.Site[] }) {
                         <ArrowPathIcon
                             className="size-5 animate-spin text-gray-500"
                         />
-                    ) : started ? (
+                    ) : site.started ? (
                         <StopIcon
                             className="size-5 text-gray-500 cursor-pointer"
                             onClick={() => handleStopSite(site.id)}
@@ -75,7 +79,6 @@ export default function Site({ sites }: { sites: types.Site[] }) {
                 View site files
                 <FolderOpenIcon
                     className="h-5 w-5 text-gray-500 cursor-pointer"
-                    
                 />
             </button>
 

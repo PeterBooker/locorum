@@ -10,6 +10,10 @@ export function DeleteSite(arg1) {
   return window['go']['sites']['SiteManager']['DeleteSite'](arg1);
 }
 
+export function GetSite(arg1) {
+  return window['go']['sites']['SiteManager']['GetSite'](arg1);
+}
+
 export function GetSites() {
   return window['go']['sites']['SiteManager']['GetSites']();
 }

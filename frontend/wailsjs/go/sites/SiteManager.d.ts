@@ -7,6 +7,8 @@ export function AddSite(arg1:types.Site):Promise<void>;
 
 export function DeleteSite(arg1:string):Promise<void>;
 
+export function GetSite(arg1:string):Promise<types.Site>;
+
 export function GetSites():Promise<Array<types.Site>>;
 
 export function OpenSiteFilesDir(arg1:string):Promise<void>;

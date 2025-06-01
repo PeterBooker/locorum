@@ -74,10 +74,21 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 	return sm.st.GetSites()
 }
 
+func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		return nil, err
+	}
+
+	return site, nil
+}
+
 func (sm *SiteManager) AddSite(site types.Site) error {
 	site.ID = uuid.NewString()
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
+	site.Started = false
 
 	err := utils.EnsureDir(site.FilesDir)
 	if err != nil {
@@ -151,11 +162,13 @@ func (sm *SiteManager) StartSite(id string) error {
 
 	site.Started = true
 
-	err = sm.st.UpdateSite(site)
+	_, err = sm.st.UpdateSite(site)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
 		return err
 	}
+
+	rt.EventsEmit(sm.ctx, "siteUpdated", site)
 
 	return nil
 }
@@ -175,7 +188,7 @@ func (sm *SiteManager) StopSite(id string) error {
 
 	site.Started = false
 
-	err = sm.st.UpdateSite(site)
+	_, err = sm.st.UpdateSite(site)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
 		return err

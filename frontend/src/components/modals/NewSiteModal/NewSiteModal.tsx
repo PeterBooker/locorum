@@ -11,13 +11,6 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 	const [phpVersion, setPhpVersion] = useState<string>('8.3');
 	const [dbVersion, setDbVersion] = useState<string>('8.4');
 	const [redisVersion, setRedisVersion] = useState<string>('8.0');
-	const [nodeVersion, setNodeVersion] = useState<string>('22');
-	const [composerVersion, setComposerVersion] = useState<string>('2');
-
-	const handleSubmit = () => {
-		console.log({ projectName, phpVersion, dbVersion, redisVersion, nodeVersion, composerVersion });
-		setIsOpen(false);
-	};
 
 	const pickDirectory = async () => {
 		try {
@@ -94,12 +87,12 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 									onChange={(e) => setPhpVersion(e.target.value)}
 									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
 								>
-									<option value="7.4">7.4</option>
-									<option value="8.0">8.0</option>
-									<option value="8.1">8.1</option>
-									<option value="8.2">8.2</option>
-									<option value="8.3">8.3</option>
 									<option value="8.4">8.4</option>
+									<option value="8.3">8.3</option>
+									<option value="8.2">8.2</option>
+									<option value="8.1">8.1</option>
+									<option value="8.0">8.0</option>
+									<option value="7.4">7.4</option>
 								</select>
 							</div>
 							<div className="flex flex-col">
@@ -109,8 +102,8 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 									onChange={(e) => setDbVersion(e.target.value)}
 									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
 								>
-									<option value="5.7">5.7</option>
 									<option value="8.4">8.4</option>
+									<option value="8.0">8.0</option>
 								</select>
 							</div>
 							<div className="flex flex-col">
@@ -120,39 +113,13 @@ export default function NewSiteModal({ addSite }: { addSite: (site: types.Site) 
 									onChange={(e) => setRedisVersion(e.target.value)}
 									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
 								>
-									<option value="7.4">7.4</option>
 									<option value="8.0">8.0</option>
+									<option value="7.4">7.4</option>
+									<option value="7.2">7.2</option>
 								</select>
 							</div>
-							<div className="flex flex-col">
-								<label className="mb-1 font-medium">Node / NPM Version</label>
-								<select
-									value={nodeVersion}
-									onChange={(e) => setNodeVersion(e.target.value)}
-									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
-								>
-									<option value="22">22</option>
-									<option value="21">21</option>
-									<option value="20">20</option>
-									<option value="19">19</option>
-									<option value="18">18</option>
-									<option value="17">17</option>
-									<option value="16">16</option>
-								</select>
-							</div>
-							<div className="flex flex-col">
-								<label className="mb-1 font-medium">Composer Version</label>
-								<select
-									value={composerVersion}
-									onChange={(e) => setComposerVersion(e.target.value)}
-									className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring focus:border-blue-300"
-								>
-									<option value="1">1.x</option>
-									<option value="2">2.x</option>
-								</select>
-							</div>
-							</div>
-							<div className="mt-6 flex justify-end space-x-2">
+						</div>
+						<div className="mt-6 flex justify-end space-x-2">
 							<button
 								onClick={() => setIsOpen(false)}
 								className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-100 focus:outline-none focus:ring"
