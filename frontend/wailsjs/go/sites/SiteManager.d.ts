@@ -13,9 +13,9 @@ export function OpenSiteFilesDir(arg1:string):Promise<void>;
 
 export function PickDirectory():Promise<string>;
 
-export function SetContext(arg1:context.Context):Promise<void>;
+export function RegenerateGlobalNginxMap(arg1:boolean):Promise<void>;
 
-export function SetupWebMap():Promise<void>;
+export function SetContext(arg1:context.Context):Promise<void>;
 
 export function StartSite(arg1:string):Promise<void>;
 

@@ -82,7 +82,7 @@ func (a *App) Initialize() error {
 }
 
 func (a *App) Shutdown() error {
-	err := utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites-enabled"))
+	err := utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites"))
 	if err != nil {
 		return err
 	}
@@ -147,6 +147,12 @@ func (a *App) SetupFilesystem() error {
 	err = utils.ExtractAssetsToDisk(a.configFiles, ".", path.Join(a.homeDir, ".locorum"))
 	if err != nil {
 		rt.LogError(a.ctx, "Failed to extract assets: "+err.Error())
+		return err
+	}
+
+	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "nginx"))
+	if err != nil {
+		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
 		return err
 	}
 

@@ -22,12 +22,12 @@ export function PickDirectory() {
   return window['go']['sites']['SiteManager']['PickDirectory']();
 }
 
-export function SetContext(arg1) {
-  return window['go']['sites']['SiteManager']['SetContext'](arg1);
+export function RegenerateGlobalNginxMap(arg1) {
+  return window['go']['sites']['SiteManager']['RegenerateGlobalNginxMap'](arg1);
 }
 
-export function SetupWebMap() {
-  return window['go']['sites']['SiteManager']['SetupWebMap']();
+export function SetContext(arg1) {
+  return window['go']['sites']['SiteManager']['SetContext'](arg1);
 }
 
 export function StartSite(arg1) {

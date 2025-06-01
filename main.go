@@ -55,8 +55,12 @@ func main() {
 			d.SetContext(ctx)
 			sm.SetContext(ctx)
 			d.SetClient(app.GetClient())
-			sm.SetupWebMap()
-			err := app.Initialize()
+			err := sm.RegenerateGlobalNginxMap(false)
+			if err != nil {
+				println("Error:", err.Error())
+				return
+			}
+			err = app.Initialize()
 			if err != nil {
 				println("Error:", err.Error())
 				return

@@ -16,6 +16,10 @@ export default function Site({ sites }: { sites: types.Site[] }) {
     const [started, setStarted] = useState(false);
     const [toggling, setToggling] = useState(false);
 
+    useEffect(() => {
+        setStarted(false)
+    }, []);
+
     if (!sites) {
         return null;
     }

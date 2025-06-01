@@ -50,14 +50,14 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, c
 	}
 }
 
-func (sm *SiteManager) SetupWebMap() error {
+func (sm *SiteManager) RegenerateGlobalNginxMap(testConfig bool) error {
 	sites, err := sm.GetSites()
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to get sites: "+err.Error())
 		return err
 	}
 
-	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"))
+	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"), testConfig)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to create global nginx map: "+err.Error())
 		return err
@@ -131,15 +131,9 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
-	sites, err := sm.st.GetSites()
+	err = sm.RegenerateGlobalNginxMap(true)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to fetch sites: "+err.Error())
-		return err
-	}
-
-	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"))
-	if err != nil {
-		rt.LogError(sm.ctx, "Failed to add global nginx map config: "+err.Error())
+		rt.LogError(sm.ctx, "Error regenerating global nginx map: "+err.Error())
 		return err
 	}
 
@@ -179,6 +173,14 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
+	site.Started = false
+
+	err = sm.st.UpdateSite(site)
+	if err != nil {
+		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
+		return err
+	}
+
 	return nil
 }
 
@@ -190,7 +192,7 @@ func (sm *SiteManager) OpenSiteFilesDir(id string) error {
 		return err
 	}
 
-	err = utils.OpenDirectory(path.Join(sm.homeDir, "locorum", "sites", site.Slug))
+	err = utils.OpenDirectory(site.FilesDir)
 	if err != nil {
 		rt.LogError(sm.ctx, "Failed to open site files directory: "+err.Error())
 		return err

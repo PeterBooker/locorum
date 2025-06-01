@@ -76,5 +76,7 @@ func (d *Docker) ReloadGlobalNginx() error {
 		return fmt.Errorf("nginx reload failed (exit %d)", insp.ExitCode)
 	}
 
+	fmt.Println("nginx reload OK")
+
 	return nil
 }
