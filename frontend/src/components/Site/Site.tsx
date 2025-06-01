@@ -22,8 +22,6 @@ export default function Site({ siteData, siteId }: { siteData: types.Site, siteI
                 return;
             }
 
-            console.log("Site updated:", site);
-
             setSite(site);
         });
 
