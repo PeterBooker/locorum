@@ -1,24 +1,19 @@
 package app
 
 import (
-	"context"
 	"embed"
 	"log"
+	"log/slog"
 	"path"
-	"runtime"
 
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/utils"
 
 	"github.com/docker/docker/client"
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx         context.Context
 	cli         *client.Client
 	d           *docker.Docker
 	homeDir     string
@@ -104,21 +99,11 @@ func (a *App) Shutdown() error {
 func (a *App) IsDockerAvailable() error {
 	err := a.d.CheckDockerAvailable()
 	if err != nil {
-		rt.LogError(a.ctx, "Docker is not running or not accessible: "+err.Error())
+		slog.Error("Docker is not running or not accessible: " + err.Error())
 		return err
 	}
 
 	return nil
-}
-
-// SetContext sets the context for the application.
-func (a *App) SetContext(ctx context.Context) {
-	a.ctx = ctx
-}
-
-// GetContext returns the context for the application.
-func (a *App) GetContext() context.Context {
-	return a.ctx
 }
 
 // GetClient returns the Docker client for the application.
@@ -134,59 +119,33 @@ func (a *App) GetHomeDir() string {
 func (a *App) SetupFilesystem() error {
 	err := utils.EnsureDir(path.Join(a.homeDir, ".locorum"))
 	if err != nil {
-		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
+		slog.Error("Failed to create directory: " + err.Error())
 		return err
 	}
 
 	err = utils.EnsureDir(path.Join(a.homeDir, "locorum", "sites"))
 	if err != nil {
-		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
+		slog.Error("Failed to create directory: " + err.Error())
 		return err
 	}
 
 	err = utils.ExtractAssetsToDisk(a.configFiles, ".", path.Join(a.homeDir, ".locorum"))
 	if err != nil {
-		rt.LogError(a.ctx, "Failed to extract assets: "+err.Error())
+		slog.Error("Failed to extract assets: " + err.Error())
 		return err
 	}
 
 	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "nginx"))
 	if err != nil {
-		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
+		slog.Error("Failed to create directory: " + err.Error())
 		return err
 	}
 
 	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites"))
 	if err != nil {
-		rt.LogError(a.ctx, "Failed to create directory: "+err.Error())
+		slog.Error("Failed to create directory: " + err.Error())
 		return err
 	}
 
 	return nil
-}
-
-// ApplicationMenu creates the application menu.
-func (a *App) ApplicationMenu() *menu.Menu {
-	AppMenu := menu.NewMenu()
-	if runtime.GOOS == "darwin" {
-		// On macOS platform, this must be done right after `NewMenu()`.
-		AppMenu.Append(menu.AppMenu())
-	}
-
-	FileMenu := AppMenu.AddSubmenu("File")
-	FileMenu.AddText("Open", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
-		// Action.
-	})
-
-	FileMenu.AddSeparator()
-	FileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		rt.Quit(a.ctx)
-	})
-
-	if runtime.GOOS == "darwin" {
-		// On macOS platform, EditMenu should be appended to enable Cmd+C, Cmd+V, Cmd+Z... shortcuts.
-		AppMenu.Append(menu.EditMenu())
-	}
-
-	return AppMenu
 }

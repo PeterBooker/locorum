@@ -3,80 +3,105 @@ package main
 import (
 	"context"
 	"embed"
+	"log"
+	"log/slog"
+	"os"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"gioui.org/app"
+	"gioui.org/op"
+	"gioui.org/unit"
 
-	"github.com/PeterBooker/locorum/internal/app"
+	application "github.com/PeterBooker/locorum/internal/app"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
-	"github.com/PeterBooker/locorum/internal/types"
+	"github.com/PeterBooker/locorum/internal/ui"
 )
-
-//go:embed all:frontend/dist
-var assets embed.FS
 
 //go:embed all:config
 var config embed.FS
 
 func main() {
+	// On WSL2, force the X11 backend. WSLg's Wayland compositor does not
+	// fully support window-management actions (minimize/maximize).
+	// Unsetting WAYLAND_DISPLAY makes Gio fall back to X11 via XWayland,
+	// where these actions work correctly.
+	if _, ok := os.LookupEnv("WSL_DISTRO_NAME"); ok {
+		os.Unsetenv("WAYLAND_DISPLAY")
+	}
+
 	d := docker.New()
 
 	// Create an instance of the app structure.
-	app := app.New(config, d)
+	a := application.New(config, d)
 
-	t := types.NewType()
-
-	st, err := storage.NewSQLiteStorage(app.GetContext())
+	st, err := storage.NewSQLiteStorage(context.Background())
 	if err != nil {
-		println("Error:", err.Error())
-		return
+		log.Fatalln("Error:", err)
 	}
-
 	defer st.Close()
 
-	sm := sites.NewSiteManager(st, app.GetClient(), d, config, app.GetHomeDir())
+	sm := sites.NewSiteManager(st, a.GetClient(), d, config, a.GetHomeDir())
 
-	// Create application.
-	err = wails.Run(&options.App{
-		Title:     "Locorum",
-		Width:     1024,
-		Height:    768,
-		Frameless: false,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		Menu:             app.ApplicationMenu(),
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.SetContext(ctx)
-			d.SetContext(ctx)
-			sm.SetContext(ctx)
-			d.SetClient(app.GetClient())
-			err := sm.RegenerateGlobalNginxMap(false)
-			if err != nil {
-				println("Error:", err.Error())
-				return
-			}
-			err = app.Initialize()
-			if err != nil {
-				println("Error:", err.Error())
-				return
-			}
-		},
-		OnShutdown: func(ctx context.Context) {
-			app.Shutdown()
-			st.Close()
-		},
-		Bind: []interface{}{
-			t,
-			sm,
-		},
-	})
+	// Initialize Docker infrastructure in background.
+	go func() {
+		d.SetContext(context.Background())
+		d.SetClient(a.GetClient())
 
-	if err != nil {
-		println("Error:", err.Error())
+		if err := sm.RegenerateGlobalNginxMap(false); err != nil {
+			slog.Error("Error regenerating nginx map: " + err.Error())
+		}
+		if err := a.Initialize(); err != nil {
+			slog.Error("Error initializing: " + err.Error())
+		}
+	}()
+
+	// Create UI.
+	userInterface := ui.New(sm)
+
+	// Load initial sites.
+	go func() {
+		loadedSites, err := sm.GetSites()
+		if err == nil {
+			userInterface.State.Sites = loadedSites
+			userInterface.State.Invalidate()
+		}
+	}()
+
+	// Create and run window.
+	go func() {
+		w := &app.Window{}
+		w.Option(
+			app.Title("Locorum"),
+			app.Size(unit.Dp(1024), unit.Dp(768)),
+		)
+
+		userInterface.State.Window = w
+
+		if err := eventLoop(w, userInterface); err != nil {
+			slog.Error("Window error: " + err.Error())
+		}
+
+		// Window closed — shut down.
+		_ = a.Shutdown()
+		st.Close()
+		os.Exit(0)
+	}()
+
+	app.Main()
+}
+
+func eventLoop(w *app.Window, u *ui.UI) error {
+	var ops op.Ops
+
+	for {
+		switch e := w.Event().(type) {
+		case app.DestroyEvent:
+			return e.Err
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
+			u.Layout(gtx)
+			e.Frame(gtx.Ops)
+		}
 	}
 }

@@ -16,10 +16,3 @@ type Site struct {
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
-
-type Type struct {
-}
-
-func NewType() *Type {
-	return &Type{}
-}

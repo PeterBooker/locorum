@@ -3,13 +3,13 @@ package docker
 import (
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type ContainerOptions struct {
@@ -38,7 +38,7 @@ func (d *Docker) RemoveContainers(prefix string) error {
 	}
 
 	for _, c := range containers {
-		rt.LogInfo(d.ctx, "Removing container: "+c.Names[0])
+		slog.Info("Removing container: " + c.Names[0])
 		if err := d.cli.ContainerRemove(d.ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
 			return err
 		}

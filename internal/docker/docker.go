@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path"
 
 	"github.com/PeterBooker/locorum/internal/types"
@@ -11,7 +12,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type Docker struct {
@@ -37,7 +37,7 @@ func (d *Docker) SetClient(cli *client.Client) {
 func (d *Docker) CheckDockerAvailable() error {
 	_, err := d.cli.Ping(d.ctx)
 	if err != nil {
-		rt.LogError(d.ctx, "docker is not running or not accessible: "+err.Error())
+		slog.Error("docker is not running or not accessible: " + err.Error())
 		return err
 	}
 
@@ -47,17 +47,17 @@ func (d *Docker) CheckDockerAvailable() error {
 func (d *Docker) CreateGlobalNetwork() error {
 	exists, err := d.networkExists("locorum-global")
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to check if global network exists: "+err.Error())
+		slog.Error("Failed to check if global network exists: " + err.Error())
 	}
 
 	if exists {
-		rt.LogInfo(d.ctx, "Global network already exists")
+		slog.Info("Global network already exists")
 		return nil
 	}
 
 	err = d.createNetwork("locorum-global", false)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to create global network: "+err.Error())
+		slog.Error("Failed to create global network: " + err.Error())
 		return err
 	}
 
@@ -67,11 +67,11 @@ func (d *Docker) CreateGlobalNetwork() error {
 func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 	exists, err := d.containerExists("locorum-global-webserver")
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to check if global container exists: "+err.Error())
+		slog.Error("Failed to check if global container exists: " + err.Error())
 	}
 
 	if exists {
-		rt.LogInfo(d.ctx, "Global webserver already exists")
+		slog.Info("Global webserver already exists")
 		return nil
 	}
 
@@ -112,18 +112,18 @@ func (d *Docker) CreateGlobalWebserver(homeDir string) error {
 		return err
 	}
 
-	rt.LogInfo(d.ctx, "Global webserver container created successfully.")
+	slog.Info("Global webserver container created successfully.")
 	return nil
 }
 
 func (d *Docker) CreateGlobalMailserver() error {
 	exists, err := d.containerExists("locorum-global-mail")
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to check if global mail container exists: "+err.Error())
+		slog.Error("Failed to check if global mail container exists: " + err.Error())
 	}
 
 	if exists {
-		rt.LogInfo(d.ctx, "Global mail server already exists")
+		slog.Info("Global mail server already exists")
 		return nil
 	}
 
@@ -160,7 +160,7 @@ func (d *Docker) CreateGlobalMailserver() error {
 		return err
 	}
 
-	rt.LogInfo(d.ctx, "Global mail container created successfully.")
+	slog.Info("Global mail container created successfully.")
 
 	return nil
 }
@@ -169,51 +169,51 @@ func (d *Docker) CreateGlobalMailserver() error {
 func (d *Docker) CreateSite(site *types.Site, homeDir string) error {
 	err := d.createNetwork("locorum-"+site.Slug, true)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to create site network: "+err.Error())
+		slog.Error("Failed to create site network: " + err.Error())
 	}
 
 	err = d.cli.NetworkConnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", &network.EndpointSettings{
 		Aliases: []string{"nginx"},
 	})
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to connect global webserver to new container: "+err.Error())
+		slog.Error("Failed to connect global webserver to new container: " + err.Error())
 		return err
 	}
 
 	err = d.cli.NetworkDisconnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", false)
 	if err != nil {
-		rt.LogError(d.ctx, fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+site.Slug, err))
+		slog.Error(fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+site.Slug, err))
 		return err
 	}
 
 	err = d.addWebContainer(site, homeDir)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to add Web Server container: "+err.Error())
+		slog.Error("Failed to add Web Server container: " + err.Error())
 		return err
 	}
 
 	err = d.addPhpContainer(site, homeDir)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to add PHP container: "+err.Error())
+		slog.Error("Failed to add PHP container: " + err.Error())
 		return err
 	}
 
 	err = d.addDatabaseContainer(site, homeDir)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to add Database container: "+err.Error())
+		slog.Error("Failed to add Database container: " + err.Error())
 		return err
 	}
 
 	err = d.addRedisContainer(site, homeDir)
 	if err != nil {
-		rt.LogError(d.ctx, "Failed to add Redis container: "+err.Error())
+		slog.Error("Failed to add Redis container: " + err.Error())
 		return err
 	}
 
 	return nil
 }
 
-// CreateSite creates a new site with the given name.
+// RemoveSite removes all containers and the network for the given site.
 func (d *Docker) RemoveSite(site *types.Site) error {
 	networkName := "locorum-" + site.Slug
 
@@ -227,13 +227,12 @@ func (d *Docker) RemoveSite(site *types.Site) error {
 	timeout := 10
 
 	for _, cname := range containerNames {
-		rt.LogInfo(d.ctx, fmt.Sprintf("Stopping container %s", cname))
+		slog.Info(fmt.Sprintf("Stopping container %s", cname))
 		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
 			Timeout: &timeout,
 		}); err != nil {
 			if !errdefs.IsNotFound(err) {
-				rt.LogError(d.ctx,
-					fmt.Sprintf("failed to stop container %s: %v", cname, err))
+				slog.Error(fmt.Sprintf("failed to stop container %s: %v", cname, err))
 			}
 		}
 
@@ -242,8 +241,7 @@ func (d *Docker) RemoveSite(site *types.Site) error {
 			Force:         true,
 		}); err != nil {
 			if !errdefs.IsNotFound(err) {
-				rt.LogError(d.ctx,
-					fmt.Sprintf("failed to remove container %s: %v", cname, err))
+				slog.Error(fmt.Sprintf("failed to remove container %s: %v", cname, err))
 			}
 		}
 	}
@@ -251,8 +249,7 @@ func (d *Docker) RemoveSite(site *types.Site) error {
 	// Remove the network.
 	if err := d.cli.NetworkRemove(d.ctx, networkName); err != nil {
 		if !errdefs.IsNotFound(err) {
-			rt.LogError(d.ctx,
-				fmt.Sprintf("failed to remove network %s: %v", networkName, err))
+			slog.Error(fmt.Sprintf("failed to remove network %s: %v", networkName, err))
 			return err
 		}
 	}
@@ -320,8 +317,6 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			"MYSQL_USER=wordpress",
 			"MYSQL_PASSWORD=password",
 			"WP_CLI_ALLOW_ROOT=true",
-			// "NEW_UID=1000",
-			// "NEW_GID=1000",
 		},
 	}
 

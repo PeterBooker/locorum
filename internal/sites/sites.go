@@ -1,15 +1,15 @@
 package sites
 
 import (
-	"context"
 	"embed"
 	"html/template"
+	"log/slog"
 	"path"
 
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/sqweek/dialog"
 
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -21,10 +21,14 @@ type SiteManager struct {
 	st      *storage.Storage
 	cli     *client.Client
 	sites   map[string]types.Site
-	ctx     context.Context
 	d       *docker.Docker
 	homeDir string
 	config  embed.FS
+
+	// Callbacks invoked when sites data changes.
+	// The UI layer sets these to trigger redraws.
+	OnSitesUpdated func(sites []types.Site)
+	OnSiteUpdated  func(site *types.Site)
 }
 
 func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, config embed.FS, homeDir string) *SiteManager {
@@ -53,21 +57,17 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, c
 func (sm *SiteManager) RegenerateGlobalNginxMap(testConfig bool) error {
 	sites, err := sm.GetSites()
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to get sites: "+err.Error())
+		slog.Error("Failed to get sites: " + err.Error())
 		return err
 	}
 
 	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"), testConfig)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to create global nginx map: "+err.Error())
+		slog.Error("Failed to create global nginx map: " + err.Error())
 		return err
 	}
 
 	return nil
-}
-
-func (sm *SiteManager) SetContext(ctx context.Context) {
-	sm.ctx = ctx
 }
 
 func (sm *SiteManager) GetSites() ([]types.Site, error) {
@@ -77,7 +77,7 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		slog.Error("Failed to fetch site: " + err.Error())
 		return nil, err
 	}
 
@@ -92,7 +92,7 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 
 	err := utils.EnsureDir(site.FilesDir)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to create site directory: "+err.Error())
+		slog.Error("Failed to create site directory: " + err.Error())
 		return err
 	}
 
@@ -116,47 +116,49 @@ func (sm *SiteManager) DeleteSite(id string) error {
 func (sm *SiteManager) emitUpdate() {
 	sites, err := sm.st.GetSites()
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to get sites: "+err.Error())
+		slog.Error("Failed to get sites: " + err.Error())
 		return
 	}
 
 	err = sm.d.TestGlobalNginxConfig()
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to test nginx config: "+err.Error())
+		slog.Error("Failed to test nginx config: " + err.Error())
 		return
 	}
 
 	err = sm.d.ReloadGlobalNginx()
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to reload nginx config: "+err.Error())
+		slog.Error("Failed to reload nginx config: " + err.Error())
 		return
 	}
 
-	rt.EventsEmit(sm.ctx, "sitesUpdated", sites)
+	if sm.OnSitesUpdated != nil {
+		sm.OnSitesUpdated(sites)
+	}
 }
 
 func (sm *SiteManager) StartSite(id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		slog.Error("Failed to fetch site: " + err.Error())
 		return err
 	}
 
 	err = sm.RegenerateGlobalNginxMap(true)
 	if err != nil {
-		rt.LogError(sm.ctx, "Error regenerating global nginx map: "+err.Error())
+		slog.Error("Error regenerating global nginx map: " + err.Error())
 		return err
 	}
 
 	err = sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to add new sites nginx config: "+err.Error())
+		slog.Error("Failed to add new sites nginx config: " + err.Error())
 		return err
 	}
 
 	err = sm.d.CreateSite(site, sm.homeDir)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to create containers: "+err.Error())
+		slog.Error("Failed to create containers: " + err.Error())
 		return err
 	}
 
@@ -164,11 +166,13 @@ func (sm *SiteManager) StartSite(id string) error {
 
 	_, err = sm.st.UpdateSite(site)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
+		slog.Error("Failed to update site: " + err.Error())
 		return err
 	}
 
-	rt.EventsEmit(sm.ctx, "siteUpdated", site)
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
 
 	return nil
 }
@@ -176,13 +180,13 @@ func (sm *SiteManager) StartSite(id string) error {
 func (sm *SiteManager) StopSite(id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		slog.Error("Failed to fetch site: " + err.Error())
 		return err
 	}
 
 	err = sm.d.RemoveSite(site)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to remove containers: "+err.Error())
+		slog.Error("Failed to remove containers: " + err.Error())
 		return err
 	}
 
@@ -190,8 +194,12 @@ func (sm *SiteManager) StopSite(id string) error {
 
 	_, err = sm.st.UpdateSite(site)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to update site: "+err.Error())
+		slog.Error("Failed to update site: " + err.Error())
 		return err
+	}
+
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
 	}
 
 	return nil
@@ -201,13 +209,13 @@ func (sm *SiteManager) StopSite(id string) error {
 func (sm *SiteManager) OpenSiteFilesDir(id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to fetch site: "+err.Error())
+		slog.Error("Failed to fetch site: " + err.Error())
 		return err
 	}
 
 	err = utils.OpenDirectory(site.FilesDir)
 	if err != nil {
-		rt.LogError(sm.ctx, "Failed to open site files directory: "+err.Error())
+		slog.Error("Failed to open site files directory: " + err.Error())
 		return err
 	}
 
@@ -216,10 +224,7 @@ func (sm *SiteManager) OpenSiteFilesDir(id string) error {
 
 // PickDirectory opens a native folder-picker and returns the selected path.
 func (sm *SiteManager) PickDirectory() (string, error) {
-	dir, err := rt.OpenDirectoryDialog(sm.ctx, rt.OpenDialogOptions{
-		Title:            "Select a folder",
-		DefaultDirectory: sm.homeDir,
-	})
+	dir, err := dialog.Directory().Title("Select a folder").Browse()
 	if err != nil {
 		return "", err
 	}

@@ -2,9 +2,9 @@ package docker
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/docker/docker/api/types/container"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // StartContainer starts a stopped container by name or ID.
@@ -14,7 +14,7 @@ func (d *Docker) StartContainer(containerName string) error {
 		return fmt.Errorf("starting container %q failed: %w", containerName, err)
 	}
 
-	rt.LogInfo(d.ctx, fmt.Sprintf("Container %q started successfully.", containerName))
+	slog.Info(fmt.Sprintf("Container %q started successfully.", containerName))
 	return nil
 }
 
@@ -25,6 +25,6 @@ func (d *Docker) StopContainer(containerName string) error {
 		return fmt.Errorf("stopping container %q failed: %w", containerName, err)
 	}
 
-	rt.LogInfo(d.ctx, fmt.Sprintf("Container %q stopped successfully.", containerName))
+	slog.Info(fmt.Sprintf("Container %q stopped successfully.", containerName))
 	return nil
 }

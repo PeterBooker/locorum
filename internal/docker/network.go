@@ -2,10 +2,10 @@ package docker
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // RemoveNetworks removes Docker networks with names matching the given prefix.
@@ -19,7 +19,7 @@ func (d *Docker) RemoveNetworks(prefix string) error {
 	}
 
 	for _, n := range networks {
-		rt.LogInfo(d.ctx, "Removing network: "+n.Name)
+		slog.Info("Removing network: " + n.Name)
 		if err := d.cli.NetworkRemove(d.ctx, n.ID); err != nil {
 			return err
 		}

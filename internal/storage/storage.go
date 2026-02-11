@@ -17,8 +17,8 @@ type Storage struct {
 	ctx context.Context
 }
 
-// NewSQLiteStorage opens (or creates) the SQLite DB located in the Wails AppData folder,
-// ensures the sites table exists, and returns a Storage instance.
+// NewSQLiteStorage opens (or creates) the SQLite DB located in ~/.locorum/,
+// applies migrations, and returns a Storage instance.
 func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 	cwd, err := os.UserHomeDir()
 	if err != nil {
