@@ -167,6 +167,12 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
+	// Download WordPress if the public directory is empty.
+	if err := sm.ensureWordPress(site); err != nil {
+		slog.Error("Failed to ensure WordPress: " + err.Error())
+		return err
+	}
+
 	// Generate per-site nginx config.
 	err = sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
 	if err != nil {

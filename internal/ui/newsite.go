@@ -43,7 +43,7 @@ func NewNewSiteModal(ui *UI) *NewSiteModal {
 	}
 	m.nameEditor.SingleLine = true
 	m.publicEditor.SingleLine = true
-	m.publicEditor.SetText("public")
+	m.publicEditor.SetText("/")
 	return m
 }
 
@@ -75,31 +75,40 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 		mysqlVer := mysqlVersions[m.mysqlDropdown.Selected]
 		redisVer := redisVersions[m.redisDropdown.Selected]
 
-		go func() {
-			site := types.Site{
-				Name:         name,
-				FilesDir:     filesDir,
-				PublicDir:    publicDir,
-				PHPVersion:   phpVer,
-				MySQLVersion: mysqlVer,
-				RedisVersion: redisVer,
-			}
-			_ = m.ui.SM.AddSite(site)
+		if name == "" {
+			m.ui.State.ShowError("Site name is required")
+		} else if filesDir == "" {
+			m.ui.State.ShowError("Files directory is required")
+		} else {
+			go func() {
+				site := types.Site{
+					Name:         name,
+					FilesDir:     filesDir,
+					PublicDir:    publicDir,
+					PHPVersion:   phpVer,
+					MySQLVersion: mysqlVer,
+					RedisVersion: redisVer,
+				}
+				if err := m.ui.SM.AddSite(site); err != nil {
+					m.ui.State.ShowError("Failed to create site: " + err.Error())
+					return
+				}
 
-			m.ui.State.mu.Lock()
-			m.ui.State.ShowNewSiteModal = false
-			m.ui.State.mu.Unlock()
+				m.ui.State.mu.Lock()
+				m.ui.State.ShowNewSiteModal = false
+				m.ui.State.mu.Unlock()
 
-			// Reset form
-			m.nameEditor.SetText("")
-			m.filesDirVal = ""
-			m.publicEditor.SetText("public")
-			m.phpDropdown.Selected = 0
-			m.mysqlDropdown.Selected = 0
-			m.redisDropdown.Selected = 0
+				// Reset form
+				m.nameEditor.SetText("")
+				m.filesDirVal = ""
+				m.publicEditor.SetText("/")
+				m.phpDropdown.Selected = 0
+				m.mysqlDropdown.Selected = 0
+				m.redisDropdown.Selected = 0
 
-			m.ui.State.Invalidate()
-		}()
+				m.ui.State.Invalidate()
+			}()
+		}
 	}
 
 	return ModalOverlay(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -129,7 +138,7 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 		// Public Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return LabeledInput(gtx, th, "Public Dir", &m.publicEditor, "public")
+				return LabeledInput(gtx, th, "Public Dir", &m.publicEditor, "/")
 			})
 		}),
 		// PHP Version

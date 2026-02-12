@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/PeterBooker/locorum/internal/types"
@@ -19,6 +20,9 @@ var funcMap = template.FuncMap{
 	},
 	"Upstream": func(s types.Site) string {
 		return s.Slug + "_upstream"
+	},
+	"NginxRoot": func(s *types.Site) string {
+		return path.Clean("/var/www/html/" + s.PublicDir)
 	},
 }
 

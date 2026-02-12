@@ -29,7 +29,7 @@ http {
         http2               on;
         server_name         {{ .Domain }};
 
-        root                /var/www/html/{{ .PublicDir }};
+        root                {{ NginxRoot . }};
         index               index.php index.html index.htm;
 
         # SSL

@@ -60,7 +60,9 @@ func (sd *SiteDetail) handleClicks(gtx layout.Context, site *types.Site) {
 		sd.ui.State.Invalidate()
 
 		go func() {
-			_ = sd.ui.SM.StartSite(siteID)
+			if err := sd.ui.SM.StartSite(siteID); err != nil {
+				sd.ui.State.ShowError("Failed to start site: " + err.Error())
+			}
 			sd.ui.State.mu.Lock()
 			sd.ui.State.SiteToggling[siteID] = false
 			sd.ui.State.mu.Unlock()
@@ -76,7 +78,9 @@ func (sd *SiteDetail) handleClicks(gtx layout.Context, site *types.Site) {
 		sd.ui.State.Invalidate()
 
 		go func() {
-			_ = sd.ui.SM.StopSite(siteID)
+			if err := sd.ui.SM.StopSite(siteID); err != nil {
+				sd.ui.State.ShowError("Failed to stop site: " + err.Error())
+			}
 			sd.ui.State.mu.Lock()
 			sd.ui.State.SiteToggling[siteID] = false
 			sd.ui.State.mu.Unlock()
@@ -86,7 +90,11 @@ func (sd *SiteDetail) handleClicks(gtx layout.Context, site *types.Site) {
 
 	if sd.openFiles.Clicked(gtx) {
 		siteID := site.ID
-		go sd.ui.SM.OpenSiteFilesDir(siteID)
+		go func() {
+			if err := sd.ui.SM.OpenSiteFilesDir(siteID); err != nil {
+				sd.ui.State.ShowError("Failed to open files directory: " + err.Error())
+			}
+		}()
 	}
 }
 
@@ -115,6 +123,8 @@ func (sd *SiteDetail) layoutContent(gtx layout.Context, th *material.Theme, site
 				{"URL", "https://" + site.Domain},
 				{"Files Dir", site.FilesDir},
 				{"Public Dir", site.PublicDir},
+				{"Created", site.CreatedAt},
+				{"Updated", site.UpdatedAt},
 			})
 		}),
 		// Versions section

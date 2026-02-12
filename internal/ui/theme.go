@@ -24,6 +24,7 @@ var (
 	ColorGreen600  = color.NRGBA{R: 22, G: 163, B: 74, A: 255}
 	ColorBlack50   = color.NRGBA{R: 0, G: 0, B: 0, A: 128} // modal overlay
 	ColorBorder    = color.NRGBA{R: 209, G: 213, B: 219, A: 255}
+	ColorRed700    = color.NRGBA{R: 185, G: 28, B: 28, A: 255} // error banner
 )
 
 func NewTheme() *material.Theme {

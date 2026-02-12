@@ -147,7 +147,11 @@ func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.
 		}
 		if s.deleteClicks[i].Clicked(gtx) {
 			id := site.ID
-			go s.ui.SM.DeleteSite(id)
+			go func() {
+				if err := s.ui.SM.DeleteSite(id); err != nil {
+					s.ui.State.ShowError("Failed to delete site: " + err.Error())
+				}
+			}()
 		}
 
 		isSelected := site.ID == selectedID
