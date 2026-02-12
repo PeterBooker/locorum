@@ -2,10 +2,12 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -20,7 +22,7 @@ type Sidebar struct {
 	list        widget.List
 
 	// Per-site clickables (grown dynamically)
-	siteClicks  []widget.Clickable
+	siteClicks   []widget.Clickable
 	deleteClicks []widget.Clickable
 }
 
@@ -146,23 +148,23 @@ func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.
 			s.ui.State.mu.Unlock()
 		}
 		if s.deleteClicks[i].Clicked(gtx) {
-			id := site.ID
-			go func() {
-				if err := s.ui.SM.DeleteSite(id); err != nil {
-					s.ui.State.ShowError("Failed to delete site: " + err.Error())
-				}
-			}()
+			// Open delete confirmation modal instead of deleting directly.
+			s.ui.State.mu.Lock()
+			s.ui.State.ShowDeleteConfirmModal = true
+			s.ui.State.DeleteTargetID = site.ID
+			s.ui.State.DeleteTargetName = site.Name
+			s.ui.State.mu.Unlock()
 		}
 
 		isSelected := site.ID == selectedID
 
 		return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return s.layoutSiteItem(gtx, th, &s.siteClicks[i], &s.deleteClicks[i], site.Name, isSelected)
+			return s.layoutSiteItem(gtx, th, &s.siteClicks[i], &s.deleteClicks[i], site.Name, isSelected, site.Started)
 		})
 	})
 }
 
-func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *widget.Clickable, deleteClick *widget.Clickable, name string, selected bool) layout.Dimensions {
+func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *widget.Clickable, deleteClick *widget.Clickable, name string, selected, started bool) layout.Dimensions {
 	bgColor := ColorGray900
 	if selected {
 		bgColor = ColorGray700
@@ -177,12 +179,18 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 		}.Push(gtx.Ops).Pop()
 
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			// Status indicator dot
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layoutStatusDot(gtx, started)
+				})
+			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, click, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
 						Top:    unit.Dp(8),
 						Bottom: unit.Dp(8),
-						Left:   unit.Dp(10),
+						Left:   unit.Dp(6),
 						Right:  unit.Dp(4),
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, name)
@@ -209,4 +217,23 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 			}),
 		)
 	})
+}
+
+// layoutStatusDot draws a small filled circle as a status indicator.
+func layoutStatusDot(gtx layout.Context, started bool) layout.Dimensions {
+	size := gtx.Dp(unit.Dp(8))
+	var col color.NRGBA
+	if started {
+		col = ColorGreen600
+	} else {
+		col = ColorGray400
+	}
+
+	defer clip.Ellipse{
+		Min: image.Point{},
+		Max: image.Point{X: size, Y: size},
+	}.Push(gtx.Ops).Pop()
+	paint.Fill(gtx.Ops, col)
+
+	return layout.Dimensions{Size: image.Point{X: size, Y: size}}
 }

@@ -43,17 +43,21 @@ func main() {
 
 	sm := sites.NewSiteManager(st, a.GetClient(), d, config, a.GetHomeDir())
 
-	// Initialize Docker infrastructure in background.
-	go func() {
+	// Create UI.
+	userInterface := ui.New(sm)
+
+	// initFunc performs Docker initialization and state reconciliation.
+	initFunc := func() {
 		d.SetContext(context.Background())
 		d.SetClient(a.GetClient())
 
 		if err := a.Initialize(); err != nil {
 			slog.Error("Error initializing: " + err.Error())
+			userInterface.State.SetInitError(err.Error())
+			return
 		}
 
-		// All containers were cleaned up during Initialize, so mark all
-		// sites as stopped to match actual Docker state.
+		// Reconcile site state with actual Docker state.
 		if err := sm.ReconcileState(); err != nil {
 			slog.Error("Error reconciling site state: " + err.Error())
 		}
@@ -61,17 +65,24 @@ func main() {
 		if err := sm.RegenerateGlobalNginxMap(false); err != nil {
 			slog.Error("Error regenerating nginx map: " + err.Error())
 		}
-	}()
 
-	// Create UI.
-	userInterface := ui.New(sm)
+		userInterface.State.SetInitDone()
+	}
+
+	// Set up retry callback for the UI.
+	userInterface.State.SetRetryInit(func() {
+		userInterface.State.ClearInitError()
+		initFunc()
+	})
+
+	// Initialize Docker infrastructure in background.
+	go initFunc()
 
 	// Load initial sites.
 	go func() {
 		loadedSites, err := sm.GetSites()
 		if err == nil {
-			userInterface.State.Sites = loadedSites
-			userInterface.State.Invalidate()
+			userInterface.State.SetSites(loadedSites)
 		}
 	}()
 

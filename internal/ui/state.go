@@ -27,6 +27,28 @@ type UIState struct {
 	ErrorMessage string
 	ErrorExpiry  time.Time
 
+	// Delete confirmation modal
+	ShowDeleteConfirmModal bool
+	DeleteTargetID         string
+	DeleteTargetName       string
+
+	// Container log viewer
+	LogService string
+	LogOutput  string
+	LogLoading bool
+
+	// WP-CLI
+	WPCLIOutput  string
+	WPCLILoading bool
+
+	// Site export
+	ExportLoading bool
+
+	// Initialization state
+	InitDone    bool
+	InitError   string
+	OnRetryInit func()
+
 	// Window reference for triggering invalidation from background goroutines
 	Window *app.Window
 }
@@ -79,4 +101,45 @@ func (s *UIState) ActiveError() string {
 		return ""
 	}
 	return s.ErrorMessage
+}
+
+// SetInitError records an initialization failure (thread-safe, for use from main).
+func (s *UIState) SetInitError(msg string) {
+	s.mu.Lock()
+	s.InitError = msg
+	s.InitDone = false
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// SetInitDone marks initialization as complete (thread-safe, for use from main).
+func (s *UIState) SetInitDone() {
+	s.mu.Lock()
+	s.InitDone = true
+	s.InitError = ""
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// ClearInitError clears the init error (thread-safe, for use from main).
+func (s *UIState) ClearInitError() {
+	s.mu.Lock()
+	s.InitError = ""
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// SetRetryInit sets the retry callback (thread-safe, for use from main).
+func (s *UIState) SetRetryInit(fn func()) {
+	s.mu.Lock()
+	s.OnRetryInit = fn
+	s.mu.Unlock()
+}
+
+// SetSites replaces the site list (thread-safe, for use from main).
+func (s *UIState) SetSites(sites []types.Site) {
+	s.mu.Lock()
+	s.Sites = sites
+	s.mu.Unlock()
+	s.Invalidate()
 }

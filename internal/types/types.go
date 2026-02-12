@@ -12,6 +12,7 @@ type Site struct {
 	PHPVersion   string `json:"phpVersion"`
 	MySQLVersion string `json:"mysqlVersion"`
 	RedisVersion string `json:"redisVersion"`
+	DBPassword   string `json:"dbPassword"`
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`

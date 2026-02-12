@@ -1,11 +1,15 @@
 package sites
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
@@ -93,11 +97,22 @@ func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 	return site, nil
 }
 
+// generatePassword returns a cryptographically random hex string of n bytes (2n hex chars).
+func generatePassword(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback should never happen; crypto/rand reads from OS.
+		return "password"
+	}
+	return hex.EncodeToString(b)
+}
+
 func (sm *SiteManager) AddSite(site types.Site) error {
 	site.ID = uuid.NewString()
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
 	site.Started = false
+	site.DBPassword = generatePassword(16)
 
 	err := utils.EnsureDir(site.FilesDir)
 	if err != nil {
@@ -302,4 +317,38 @@ func (sm *SiteManager) PickDirectory() (string, error) {
 	}
 
 	return dir, nil
+}
+
+// GetContainerLogs returns the last N lines of logs for a site's service container.
+// Service should be one of: web, php, database, redis.
+func (sm *SiteManager) GetContainerLogs(siteID, service string, lines int) (string, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return "", fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return "", fmt.Errorf("site %q not found", siteID)
+	}
+
+	containerName := "locorum-" + site.Slug + "-" + service
+	return sm.d.ContainerLogs(containerName, lines)
+}
+
+// ExecWPCLI runs a WP-CLI command inside the site's PHP container.
+func (sm *SiteManager) ExecWPCLI(siteID string, args []string) (string, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return "", fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return "", fmt.Errorf("site %q not found", siteID)
+	}
+
+	containerName := "locorum-" + site.Slug + "-php"
+	cmd := append([]string{"wp"}, args...)
+	output, err := sm.d.ExecInContainer(containerName, cmd)
+	if err != nil {
+		return output, fmt.Errorf("wp-cli: %w", err)
+	}
+	return strings.TrimRight(output, "\n"), nil
 }

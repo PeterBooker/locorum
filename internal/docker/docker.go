@@ -1,10 +1,13 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"path"
+	"strconv"
 
 	"github.com/PeterBooker/locorum/internal/types"
 	"github.com/docker/docker/api/types/container"
@@ -352,7 +355,7 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			"MYSQL_HOST=database",
 			"MYSQL_DATABASE=wordpress",
 			"MYSQL_USER=wordpress",
-			"MYSQL_PASSWORD=password",
+			"MYSQL_PASSWORD=" + site.DBPassword,
 			"WP_CLI_ALLOW_ROOT=true",
 		},
 	}
@@ -400,10 +403,10 @@ func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
 		Cmd:          []string{"mysqld", "--innodb-flush-method=fsync"},
 		ExposedPorts: nat.PortSet{},
 		Env: []string{
-			"MYSQL_ROOT_PASSWORD=password",
+			"MYSQL_ROOT_PASSWORD=" + site.DBPassword,
 			"MYSQL_DATABASE=wordpress",
 			"MYSQL_USER=wordpress",
-			"MYSQL_PASSWORD=password",
+			"MYSQL_PASSWORD=" + site.DBPassword,
 		},
 	}
 
@@ -467,5 +470,146 @@ func (d *Docker) addRedisContainer(site *types.Site, home string) error {
 		return err
 	}
 
+	return nil
+}
+
+func (d *Docker) CreateGlobalAdminer() error {
+	exists, err := d.containerExists("locorum-global-adminer")
+	if err != nil {
+		slog.Error("Failed to check if global adminer container exists: " + err.Error())
+	}
+
+	if exists {
+		slog.Info("Global adminer already exists")
+		return nil
+	}
+
+	containerName := "locorum-global-adminer"
+	imageName := "adminer:latest"
+	networkName := "locorum-global"
+
+	config := &container.Config{
+		Image: imageName,
+		Tty:   true,
+		ExposedPorts: nat.PortSet{
+			"8080/tcp": struct{}{},
+		},
+		Env: []string{
+			"ADMINER_DEFAULT_SERVER=database",
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds:        []string{},
+		PortBindings: nat.PortMap{},
+		NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts:   []string{},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			networkName: {
+				Aliases: []string{"adminer"},
+			},
+		},
+	}
+
+	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("Global adminer container created successfully.")
+	return nil
+}
+
+// ContainerLogs returns the last N lines of logs from the named container.
+func (d *Docker) ContainerLogs(containerName string, lines int) (string, error) {
+	opts := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       strconv.Itoa(lines),
+	}
+
+	reader, err := d.cli.ContainerLogs(d.ctx, containerName, opts)
+	if err != nil {
+		return "", fmt.Errorf("fetching logs for %q: %w", containerName, err)
+	}
+	defer reader.Close()
+
+	// Containers use Tty: true, so output is plain text (no stdcopy demux needed).
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, reader); err != nil {
+		return "", fmt.Errorf("reading logs for %q: %w", containerName, err)
+	}
+
+	return buf.String(), nil
+}
+
+// ExecInContainer runs a command inside a running container and returns the output.
+func (d *Docker) ExecInContainer(containerName string, cmd []string) (string, error) {
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+	}
+
+	execIDResp, err := d.cli.ContainerExecCreate(d.ctx, containerName, execConfig)
+	if err != nil {
+		return "", fmt.Errorf("creating exec in %q: %w", containerName, err)
+	}
+
+	attachResp, err := d.cli.ContainerExecAttach(d.ctx, execIDResp.ID, container.ExecAttachOptions{
+		Tty: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("attaching to exec in %q: %w", containerName, err)
+	}
+	defer attachResp.Close()
+
+	var outputBuf bytes.Buffer
+	if _, err := io.Copy(&outputBuf, attachResp.Reader); err != nil {
+		return "", fmt.Errorf("reading exec output from %q: %w", containerName, err)
+	}
+
+	inspectResp, err := d.cli.ContainerExecInspect(d.ctx, execIDResp.ID)
+	if err != nil {
+		return outputBuf.String(), fmt.Errorf("inspecting exec in %q: %w", containerName, err)
+	}
+
+	if inspectResp.ExitCode != 0 {
+		return outputBuf.String(), fmt.Errorf("command exited with code %d", inspectResp.ExitCode)
+	}
+
+	return outputBuf.String(), nil
+}
+
+// ContainerIsRunning checks if a container exists and is running.
+func (d *Docker) ContainerIsRunning(name string) (bool, error) {
+	info, err := d.cli.ContainerInspect(d.ctx, name)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.State.Running, nil
+}
+
+// ContainerExists checks if a Docker container with the specified name exists (exported).
+func (d *Docker) ContainerExists(name string) (bool, error) {
+	return d.containerExists(name)
+}
+
+// RemoveContainer force-removes a single container by name.
+func (d *Docker) RemoveContainer(name string) error {
+	timeout := 10
+	_ = d.cli.ContainerStop(d.ctx, name, container.StopOptions{Timeout: &timeout})
+	if err := d.cli.ContainerRemove(d.ctx, name, container.RemoveOptions{Force: true}); err != nil {
+		if !errdefs.IsNotFound(err) {
+			return err
+		}
+	}
 	return nil
 }

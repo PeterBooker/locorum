@@ -3,6 +3,7 @@ package ui
 import (
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/PeterBooker/locorum/internal/sites"
@@ -18,6 +19,10 @@ type UI struct {
 	Sidebar    *Sidebar
 	SiteDetail *SiteDetail
 	NewSite    *NewSiteModal
+
+	// Delete confirmation modal
+	deleteConfirmBtn widget.Clickable
+	deleteCancelBtn  widget.Clickable
 }
 
 func New(sm *sites.SiteManager) *UI {
@@ -62,6 +67,9 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 	errMsg := ui.State.ActiveError()
 	ui.State.mu.Unlock()
 
+	// Handle delete confirmation clicks
+	ui.handleDeleteConfirm(gtx)
+
 	return layout.Stack{}.Layout(gtx,
 		// Base layer: error banner + sidebar/content
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -88,18 +96,85 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				}),
 			)
 		}),
-		// Modal overlay layer (conditional)
+		// Modal overlay layer
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			ui.State.mu.Lock()
-			showModal := ui.State.ShowNewSiteModal
+			showNewSite := ui.State.ShowNewSiteModal
+			showDelete := ui.State.ShowDeleteConfirmModal
+			deleteName := ui.State.DeleteTargetName
 			ui.State.mu.Unlock()
 
-			if showModal {
+			if showNewSite {
 				return ui.NewSite.Layout(gtx, ui.Theme)
+			}
+			if showDelete {
+				return ui.layoutDeleteConfirmModal(gtx, ui.Theme, deleteName)
 			}
 			return layout.Dimensions{}
 		}),
 	)
+}
+
+func (ui *UI) handleDeleteConfirm(gtx layout.Context) {
+	if ui.deleteCancelBtn.Clicked(gtx) {
+		ui.State.mu.Lock()
+		ui.State.ShowDeleteConfirmModal = false
+		ui.State.DeleteTargetID = ""
+		ui.State.DeleteTargetName = ""
+		ui.State.mu.Unlock()
+	}
+
+	if ui.deleteConfirmBtn.Clicked(gtx) {
+		ui.State.mu.Lock()
+		id := ui.State.DeleteTargetID
+		ui.State.ShowDeleteConfirmModal = false
+		ui.State.DeleteTargetID = ""
+		ui.State.DeleteTargetName = ""
+		ui.State.mu.Unlock()
+
+		if id != "" {
+			go func() {
+				if err := ui.SM.DeleteSite(id); err != nil {
+					ui.State.ShowError("Failed to delete site: " + err.Error())
+				}
+			}()
+		}
+	}
+}
+
+func (ui *UI) layoutDeleteConfirmModal(gtx layout.Context, th *material.Theme, siteName string) layout.Dimensions {
+	return ModalOverlay(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Title
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.H6(th, "Delete Site")
+				return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, lbl.Layout)
+			}),
+			// Message
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, "Are you sure you want to delete \""+siteName+"\"? This will remove all containers and configuration for this site.")
+				return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
+			}),
+			// Buttons
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return SecondaryButton(gtx, th, &ui.deleteCancelBtn, "Cancel")
+						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						b := material.Button(th, &ui.deleteConfirmBtn, "Delete")
+						b.Background = ColorRed600
+						b.Color = ColorWhite
+						b.CornerRadius = unit.Dp(6)
+						b.TextSize = unit.Sp(14)
+						return b.Layout(gtx)
+					}),
+				)
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutErrorBanner(gtx layout.Context, msg string) layout.Dimensions {
