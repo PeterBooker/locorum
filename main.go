@@ -48,11 +48,18 @@ func main() {
 		d.SetContext(context.Background())
 		d.SetClient(a.GetClient())
 
-		if err := sm.RegenerateGlobalNginxMap(false); err != nil {
-			slog.Error("Error regenerating nginx map: " + err.Error())
-		}
 		if err := a.Initialize(); err != nil {
 			slog.Error("Error initializing: " + err.Error())
+		}
+
+		// All containers were cleaned up during Initialize, so mark all
+		// sites as stopped to match actual Docker state.
+		if err := sm.ReconcileState(); err != nil {
+			slog.Error("Error reconciling site state: " + err.Error())
+		}
+
+		if err := sm.RegenerateGlobalNginxMap(false); err != nil {
+			slog.Error("Error regenerating nginx map: " + err.Error())
 		}
 	}()
 

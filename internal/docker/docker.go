@@ -165,24 +165,11 @@ func (d *Docker) CreateGlobalMailserver() error {
 	return nil
 }
 
-// CreateSite creates a new site with the given name.
+// CreateSite creates all containers and the network for a new site.
 func (d *Docker) CreateSite(site *types.Site, homeDir string) error {
 	err := d.createNetwork("locorum-"+site.Slug, true)
 	if err != nil {
 		slog.Error("Failed to create site network: " + err.Error())
-	}
-
-	err = d.cli.NetworkConnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", &network.EndpointSettings{
-		Aliases: []string{"nginx"},
-	})
-	if err != nil {
-		slog.Error("Failed to connect global webserver to new container: " + err.Error())
-		return err
-	}
-
-	err = d.cli.NetworkDisconnect(d.ctx, "locorum-"+site.Slug, "locorum-global-webserver", false)
-	if err != nil {
-		slog.Error(fmt.Sprintf("Failed to disconnect %s from %s: %v", "locorum-global-webserver", "locorum-"+site.Slug, err))
 		return err
 	}
 
@@ -213,8 +200,58 @@ func (d *Docker) CreateSite(site *types.Site, homeDir string) error {
 	return nil
 }
 
-// RemoveSite removes all containers and the network for the given site.
-func (d *Docker) RemoveSite(site *types.Site) error {
+// SiteContainersExist checks if the containers for a site already exist.
+func (d *Docker) SiteContainersExist(site *types.Site) (bool, error) {
+	return d.containerExists("locorum-" + site.Slug + "-web")
+}
+
+// StartExistingSite starts all existing containers for a site.
+func (d *Docker) StartExistingSite(site *types.Site) error {
+	containerNames := []string{
+		"locorum-" + site.Slug + "-database",
+		"locorum-" + site.Slug + "-redis",
+		"locorum-" + site.Slug + "-php",
+		"locorum-" + site.Slug + "-web",
+	}
+
+	for _, cname := range containerNames {
+		if err := d.cli.ContainerStart(d.ctx, cname, container.StartOptions{}); err != nil {
+			return fmt.Errorf("starting container %q failed: %w", cname, err)
+		}
+		slog.Info(fmt.Sprintf("Container %q started", cname))
+	}
+
+	return nil
+}
+
+// StopSite stops all containers for a site without removing them.
+func (d *Docker) StopSite(site *types.Site) error {
+	containerNames := []string{
+		"locorum-" + site.Slug + "-redis",
+		"locorum-" + site.Slug + "-database",
+		"locorum-" + site.Slug + "-php",
+		"locorum-" + site.Slug + "-web",
+	}
+
+	timeout := 10
+
+	for _, cname := range containerNames {
+		slog.Info(fmt.Sprintf("Stopping container %s", cname))
+		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
+			Timeout: &timeout,
+		}); err != nil {
+			if !errdefs.IsNotFound(err) {
+				slog.Error(fmt.Sprintf("failed to stop container %s: %v", cname, err))
+			}
+		}
+	}
+
+	return nil
+}
+
+// DeleteSite stops and removes all containers and the network for the given site.
+// Volumes are preserved so database data persists.
+func (d *Docker) DeleteSite(site *types.Site) error {
 	networkName := "locorum-" + site.Slug
 
 	containerNames := []string{
@@ -227,7 +264,7 @@ func (d *Docker) RemoveSite(site *types.Site) error {
 	timeout := 10
 
 	for _, cname := range containerNames {
-		slog.Info(fmt.Sprintf("Stopping container %s", cname))
+		slog.Info(fmt.Sprintf("Removing container %s", cname))
 		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
 			Timeout: &timeout,
 		}); err != nil {
@@ -275,7 +312,7 @@ func (d *Docker) addWebContainer(site *types.Site, home string) error {
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "nginx", "sites", site.Slug+".conf") + ":/etc/nginx/nginx.conf:ro",
 			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
-			site.FilesDir + ":/var/www/html:ro",
+			site.FilesDir + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
 		NetworkMode:  container.NetworkMode(networkName),
@@ -303,7 +340,7 @@ func (d *Docker) addWebContainer(site *types.Site, home string) error {
 
 func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-php"
-	imageName := "wodby/php:8.4"
+	imageName := "wodby/php:" + site.PHPVersion
 	networkName := "locorum-" + site.Slug
 
 	config := &container.Config{
@@ -326,7 +363,7 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			site.FilesDir + ":/var/www/html",
 		},
 		PortBindings: nat.PortMap{},
-		ExtraHosts:   []string{site.Name + ".localhost:host-gateway"},
+		ExtraHosts:   []string{site.Domain + ":host-gateway"},
 	}
 
 	networkingConfig := &network.NetworkingConfig{
@@ -348,7 +385,7 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 
 func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-database"
-	imageName := "mysql:8.4"
+	imageName := "mysql:" + site.MySQLVersion
 	networkName := "locorum-" + site.Slug
 	volumeName := "locorum-" + site.Slug + "-dbdata"
 
@@ -373,6 +410,7 @@ func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
 	hostConfig := &container.HostConfig{
 		Binds: []string{
 			volumeName + ":/var/lib/mysql",
+			path.Join(home, ".locorum", "config", "db", "db.cnf") + ":/etc/mysql/conf.d/locorum.cnf:ro",
 		},
 		PortBindings: nat.PortMap{},
 		NetworkMode:  container.NetworkMode(networkName),
@@ -398,7 +436,7 @@ func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
 
 func (d *Docker) addRedisContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-redis"
-	imageName := "redis:7.4-alpine"
+	imageName := "redis:" + site.RedisVersion + "-alpine"
 	networkName := "locorum-" + site.Slug
 
 	config := &container.Config{

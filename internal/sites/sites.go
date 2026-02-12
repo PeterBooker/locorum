@@ -4,6 +4,7 @@ import (
 	"embed"
 	"html/template"
 	"log/slog"
+	"os"
 	"path"
 
 	"github.com/docker/docker/client"
@@ -61,7 +62,15 @@ func (sm *SiteManager) RegenerateGlobalNginxMap(testConfig bool) error {
 		return err
 	}
 
-	err = sm.generateMapConfig(sites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"), testConfig)
+	// Only include started sites in the nginx map.
+	var startedSites []types.Site
+	for _, s := range sites {
+		if s.Started {
+			startedSites = append(startedSites, s)
+		}
+	}
+
+	err = sm.generateMapConfig(startedSites, path.Join(sm.homeDir, ".locorum", "config", "nginx", "map.conf"), testConfig)
 	if err != nil {
 		slog.Error("Failed to create global nginx map: " + err.Error())
 		return err
@@ -100,35 +109,49 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 		return err
 	}
 
-	sm.emitUpdate()
+	sm.emitSitesUpdate()
 	return nil
 }
 
 func (sm *SiteManager) DeleteSite(id string) error {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		slog.Error("Failed to fetch site: " + err.Error())
+		return err
+	}
+
+	// Clean up Docker resources if they exist.
+	if site != nil {
+		exists, _ := sm.d.SiteContainersExist(site)
+		if exists {
+			if err := sm.d.DeleteSite(site); err != nil {
+				slog.Error("Failed to remove site containers: " + err.Error())
+			}
+		}
+
+		// Remove site nginx config file.
+		configPath := path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf")
+		os.Remove(configPath)
+	}
+
 	if err := sm.st.DeleteSite(id); err != nil {
 		return err
 	}
 
-	sm.emitUpdate()
+	// Regenerate nginx map and reload to remove the deleted site's routing.
+	if err := sm.RegenerateGlobalNginxMap(true); err != nil {
+		slog.Error("Failed to regenerate nginx map after delete: " + err.Error())
+	}
+
+	sm.emitSitesUpdate()
 	return nil
 }
 
-func (sm *SiteManager) emitUpdate() {
+// emitSitesUpdate notifies the UI that the site list has changed.
+func (sm *SiteManager) emitSitesUpdate() {
 	sites, err := sm.st.GetSites()
 	if err != nil {
 		slog.Error("Failed to get sites: " + err.Error())
-		return
-	}
-
-	err = sm.d.TestGlobalNginxConfig()
-	if err != nil {
-		slog.Error("Failed to test nginx config: " + err.Error())
-		return
-	}
-
-	err = sm.d.ReloadGlobalNginx()
-	if err != nil {
-		slog.Error("Failed to reload nginx config: " + err.Error())
 		return
 	}
 
@@ -144,22 +167,34 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
-	err = sm.RegenerateGlobalNginxMap(true)
-	if err != nil {
-		slog.Error("Error regenerating global nginx map: " + err.Error())
-		return err
-	}
-
+	// Generate per-site nginx config.
 	err = sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
 	if err != nil {
-		slog.Error("Failed to add new sites nginx config: " + err.Error())
+		slog.Error("Failed to generate site nginx config: " + err.Error())
 		return err
 	}
 
-	err = sm.d.CreateSite(site, sm.homeDir)
+	// Check if containers already exist (e.g., from a previous start in this session).
+	exists, err := sm.d.SiteContainersExist(site)
 	if err != nil {
-		slog.Error("Failed to create containers: " + err.Error())
+		slog.Error("Failed to check if site containers exist: " + err.Error())
 		return err
+	}
+
+	if exists {
+		// Containers exist, just start them.
+		err = sm.d.StartExistingSite(site)
+		if err != nil {
+			slog.Error("Failed to start existing containers: " + err.Error())
+			return err
+		}
+	} else {
+		// First start — create containers.
+		err = sm.d.CreateSite(site, sm.homeDir)
+		if err != nil {
+			slog.Error("Failed to create containers: " + err.Error())
+			return err
+		}
 	}
 
 	site.Started = true
@@ -167,6 +202,12 @@ func (sm *SiteManager) StartSite(id string) error {
 	_, err = sm.st.UpdateSite(site)
 	if err != nil {
 		slog.Error("Failed to update site: " + err.Error())
+		return err
+	}
+
+	// Regenerate nginx map to include this site and reload.
+	if err := sm.RegenerateGlobalNginxMap(true); err != nil {
+		slog.Error("Error regenerating global nginx map: " + err.Error())
 		return err
 	}
 
@@ -184,9 +225,9 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
-	err = sm.d.RemoveSite(site)
+	err = sm.d.StopSite(site)
 	if err != nil {
-		slog.Error("Failed to remove containers: " + err.Error())
+		slog.Error("Failed to stop containers: " + err.Error())
 		return err
 	}
 
@@ -198,8 +239,33 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
+	// Regenerate nginx map to remove this site's routing and reload.
+	if err := sm.RegenerateGlobalNginxMap(true); err != nil {
+		slog.Error("Error regenerating global nginx map: " + err.Error())
+	}
+
 	if sm.OnSiteUpdated != nil {
 		sm.OnSiteUpdated(site)
+	}
+
+	return nil
+}
+
+// ReconcileState marks all sites as stopped in the database.
+// Called on startup after Initialize() has cleaned up all containers.
+func (sm *SiteManager) ReconcileState() error {
+	sites, err := sm.st.GetSites()
+	if err != nil {
+		return err
+	}
+
+	for i := range sites {
+		if sites[i].Started {
+			sites[i].Started = false
+			if _, err := sm.st.UpdateSite(&sites[i]); err != nil {
+				slog.Error("Failed to reconcile site state: " + err.Error())
+			}
+		}
 	}
 
 	return nil
