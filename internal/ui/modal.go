@@ -8,7 +8,6 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/unit"
 )
 
 // modalTag is a unique tag for the modal overlay pointer events.
@@ -29,11 +28,19 @@ func ModalOverlay(gtx layout.Context, content layout.Widget) layout.Dimensions {
 	// Center the modal content
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		// Constrain modal width
-		gtx.Constraints.Max.X = gtx.Dp(unit.Dp(500))
-		gtx.Constraints.Min.X = gtx.Dp(unit.Dp(500))
+		w := gtx.Dp(ModalWidth)
+		gtx.Constraints.Max.X = w
+		gtx.Constraints.Min.X = w
 
+		// Rounded white background
 		return FillBackground(gtx, ColorWhite, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(24)).Layout(gtx, content)
+			rr := gtx.Dp(RadiusLG)
+			defer clip.RRect{
+				Rect: image.Rectangle{Max: gtx.Constraints.Min},
+				NE:   rr, NW: rr, SE: rr, SW: rr,
+			}.Push(gtx.Ops).Pop()
+
+			return layout.UniformInset(SpaceXL).Layout(gtx, content)
 		})
 	})
 }

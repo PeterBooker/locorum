@@ -6,6 +6,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -16,7 +17,9 @@ var (
 )
 
 type NewSiteModal struct {
-	ui *UI
+	state  *UIState
+	sm     *sites.SiteManager
+	toasts *ToastManager
 
 	// Form fields
 	nameEditor   widget.Editor
@@ -34,9 +37,11 @@ type NewSiteModal struct {
 	cancelBtn    widget.Clickable
 }
 
-func NewNewSiteModal(ui *UI) *NewSiteModal {
+func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *NewSiteModal {
 	m := &NewSiteModal{
-		ui:            ui,
+		state:         state,
+		sm:            sm,
+		toasts:        toasts,
 		phpDropdown:   NewDropdown(phpVersions),
 		mysqlDropdown: NewDropdown(mysqlVersions),
 		redisDropdown: NewDropdown(redisVersions),
@@ -50,19 +55,17 @@ func NewNewSiteModal(ui *UI) *NewSiteModal {
 func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	// Handle button clicks
 	if m.cancelBtn.Clicked(gtx) {
-		m.ui.State.mu.Lock()
-		m.ui.State.ShowNewSiteModal = false
-		m.ui.State.mu.Unlock()
+		m.state.SetShowNewSiteModal(false)
 	}
 
 	if m.browseDirBtn.Clicked(gtx) {
 		go func() {
-			dir, err := m.ui.SM.PickDirectory()
+			dir, err := m.sm.PickDirectory()
 			if err == nil && dir != "" {
-				m.ui.State.mu.Lock()
+				m.state.mu.Lock()
 				m.filesDirVal = dir
-				m.ui.State.mu.Unlock()
-				m.ui.State.Invalidate()
+				m.state.mu.Unlock()
+				m.state.Invalidate()
 			}
 		}()
 	}
@@ -76,9 +79,9 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 		redisVer := redisVersions[m.redisDropdown.Selected]
 
 		if name == "" {
-			m.ui.State.ShowError("Site name is required")
+			m.state.ShowError("Site name is required")
 		} else if filesDir == "" {
-			m.ui.State.ShowError("Files directory is required")
+			m.state.ShowError("Files directory is required")
 		} else {
 			go func() {
 				site := types.Site{
@@ -89,14 +92,12 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 					MySQLVersion: mysqlVer,
 					RedisVersion: redisVer,
 				}
-				if err := m.ui.SM.AddSite(site); err != nil {
-					m.ui.State.ShowError("Failed to create site: " + err.Error())
+				if err := m.sm.AddSite(site); err != nil {
+					m.state.ShowError("Failed to create site: " + err.Error())
 					return
 				}
 
-				m.ui.State.mu.Lock()
-				m.ui.State.ShowNewSiteModal = false
-				m.ui.State.mu.Unlock()
+				m.state.SetShowNewSiteModal(false)
 
 				// Reset form
 				m.nameEditor.SetText("")
@@ -106,7 +107,7 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 				m.mysqlDropdown.Selected = 0
 				m.redisDropdown.Selected = 0
 
-				m.ui.State.Invalidate()
+				m.state.Invalidate()
 			}()
 		}
 	}
@@ -125,31 +126,31 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 		}),
 		// Site Name
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return LabeledInput(gtx, th, "Site Name", &m.nameEditor, "My WordPress Site")
 			})
 		}),
 		// Files Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.layoutDirPicker(gtx, th)
 			})
 		}),
 		// Public Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return LabeledInput(gtx, th, "Public Dir", &m.publicEditor, "/")
 			})
 		}),
 		// PHP Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.phpDropdown.Layout(gtx, th, "PHP Version")
 			})
 		}),
 		// Database Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.mysqlDropdown.Layout(gtx, th, "Database Version")
 			})
 		}),
@@ -163,7 +164,7 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceStart}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return SecondaryButton(gtx, th, &m.cancelBtn, "Cancel")
 					})
 				}),
@@ -180,12 +181,12 @@ func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *material.Theme) l
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, "Files Dir")
 			lbl.Color = ColorGray700
-			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+			return layout.Inset{Bottom: SpaceXS}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return SecondaryButton(gtx, th, &m.browseDirBtn, "Choose directory...")
 					})
 				}),

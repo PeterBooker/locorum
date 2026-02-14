@@ -53,6 +53,9 @@ func (sm *SiteManager) ensureWordPress(site *types.Site) error {
 		return fmt.Errorf("extracting WordPress: %w", err)
 	}
 
+	// Ensure the target directory itself is writable by container processes.
+	_ = os.Chmod(targetDir, 0777)
+
 	slog.Info("WordPress installed successfully")
 	return nil
 }
@@ -105,14 +108,19 @@ func extractTarGz(r io.Reader, destDir string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
+			if err := os.MkdirAll(target, 0777); err != nil {
 				return fmt.Errorf("mkdir %q: %w", target, err)
 			}
+			// Force permissions — MkdirAll is subject to umask.
+			if err := os.Chmod(target, 0777); err != nil {
+				return fmt.Errorf("chmod dir %q: %w", target, err)
+			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0777); err != nil {
 				return fmt.Errorf("mkdir parent %q: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			_ = os.Chmod(filepath.Dir(target), 0777)
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err != nil {
 				return fmt.Errorf("create %q: %w", target, err)
 			}
@@ -125,4 +133,18 @@ func extractTarGz(r io.Reader, destDir string) error {
 	}
 
 	return nil
+}
+
+// ensureWritable makes all directories under root world-writable so that
+// container processes (which may run as a different UID) can create files.
+func ensureWritable(root string) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			_ = os.Chmod(path, 0777)
+		}
+		return nil
+	})
 }

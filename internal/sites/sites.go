@@ -182,6 +182,9 @@ func (sm *SiteManager) StartSite(id string) error {
 		return err
 	}
 
+	// Ensure the site files directory is writable by container processes.
+	ensureWritable(site.FilesDir)
+
 	// Download WordPress if the public directory is empty.
 	if err := sm.ensureWordPress(site); err != nil {
 		slog.Error("Failed to ensure WordPress: " + err.Error())

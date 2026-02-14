@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path"
 	"strconv"
 
@@ -348,6 +349,7 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 
 	config := &container.Config{
 		Image:        imageName,
+		User:         fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		Tty:          true,
 		WorkingDir:   "/var/www/html",
 		ExposedPorts: nat.PortSet{},

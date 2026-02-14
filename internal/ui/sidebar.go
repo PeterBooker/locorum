@@ -12,11 +12,15 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
 type Sidebar struct {
-	ui          *UI
+	state  *UIState
+	sm     *sites.SiteManager
+	toasts *ToastManager
+
 	searchField widget.Editor
 	newSiteBtn  widget.Clickable
 	list        widget.List
@@ -26,8 +30,8 @@ type Sidebar struct {
 	deleteClicks []widget.Clickable
 }
 
-func NewSidebar(ui *UI) *Sidebar {
-	s := &Sidebar{ui: ui}
+func NewSidebar(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *Sidebar {
+	s := &Sidebar{state: state, sm: sm, toasts: toasts}
 	s.searchField.SingleLine = true
 	s.list.List.Axis = layout.Vertical
 	return s
@@ -35,32 +39,34 @@ func NewSidebar(ui *UI) *Sidebar {
 
 func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	// Fixed sidebar width
-	gtx.Constraints.Max.X = gtx.Dp(unit.Dp(256))
+	gtx.Constraints.Max.X = gtx.Dp(SidebarWidth)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
 	return FillBackground(gtx, ColorSidebarBg, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
-			Top:    unit.Dp(24),
-			Bottom: unit.Dp(16),
-			Left:   unit.Dp(16),
-			Right:  unit.Dp(16),
+			Top: SpaceXL, Bottom: SpaceLG,
+			Left: SpaceLG, Right: SpaceLG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				// Title
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.H5(th, "Locorum")
 					lbl.Color = ColorWhite
-					return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
+					return layout.Inset{Bottom: SpaceLG}.Layout(gtx, lbl.Layout)
+				}),
+				// Divider
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return Divider(gtx, ColorGray700, SpaceSM)
 				}),
 				// "Sites" heading
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.H6(th, "Sites")
 					lbl.Color = ColorGray100
-					return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+					return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
 				}),
 				// Search field
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return s.layoutSearch(gtx, th)
 					})
 				}),
@@ -70,11 +76,9 @@ func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensio
 				}),
 				// "New Site" button
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						if s.newSiteBtn.Clicked(gtx) {
-							s.ui.State.mu.Lock()
-							s.ui.State.ShowNewSiteModal = true
-							s.ui.State.mu.Unlock()
+							s.state.SetShowNewSiteModal(true)
 						}
 						return PrimaryButton(gtx, th, &s.newSiteBtn, "New Site")
 					})
@@ -85,36 +89,31 @@ func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensio
 }
 
 func (s *Sidebar) layoutSearch(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	// Update search term
-	s.ui.State.SearchTerm = s.searchField.Text()
+	s.state.SetSearchTerm(s.searchField.Text())
 
 	border := widget.Border{
 		Color:        ColorGray500,
-		CornerRadius: unit.Dp(4),
+		CornerRadius: RadiusSM,
 		Width:        unit.Dp(1),
 	}
 	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
-			Top:    unit.Dp(6),
-			Bottom: unit.Dp(6),
-			Left:   unit.Dp(8),
-			Right:  unit.Dp(8),
+			Top: unit.Dp(6), Bottom: unit.Dp(6),
+			Left: SpaceSM, Right: SpaceSM,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &s.searchField, "Search sites...")
 			ed.Color = ColorWhite
 			ed.HintColor = ColorGray400
-			ed.TextSize = unit.Sp(14)
+			ed.TextSize = TextBase
 			return ed.Layout(gtx)
 		})
 	})
 }
 
 func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	s.ui.State.mu.Lock()
-	allSites := s.ui.State.Sites
-	search := s.ui.State.SearchTerm
-	selectedID := s.ui.State.SelectedID
-	s.ui.State.mu.Unlock()
+	allSites := s.state.GetSites()
+	search := s.state.GetSearchTerm()
+	selectedID := s.state.GetSelectedID()
 
 	// Filter sites
 	var filtered []types.Site
@@ -141,24 +140,16 @@ func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.
 	return material.List(th, &s.list).Layout(gtx, len(filtered), func(gtx layout.Context, i int) layout.Dimensions {
 		site := filtered[i]
 
-		// Handle clicks
 		if s.siteClicks[i].Clicked(gtx) {
-			s.ui.State.mu.Lock()
-			s.ui.State.SelectedID = site.ID
-			s.ui.State.mu.Unlock()
+			s.state.SetSelectedID(site.ID)
 		}
 		if s.deleteClicks[i].Clicked(gtx) {
-			// Open delete confirmation modal instead of deleting directly.
-			s.ui.State.mu.Lock()
-			s.ui.State.ShowDeleteConfirmModal = true
-			s.ui.State.DeleteTargetID = site.ID
-			s.ui.State.DeleteTargetName = site.Name
-			s.ui.State.mu.Unlock()
+			s.state.ShowDeleteConfirm(site.ID, site.Name)
 		}
 
 		isSelected := site.ID == selectedID
 
-		return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return s.layoutSiteItem(gtx, th, &s.siteClicks[i], &s.deleteClicks[i], site.Name, isSelected, site.Started)
 		})
 	})
@@ -171,31 +162,28 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 	}
 
 	return FillBackground(gtx, bgColor, func(gtx layout.Context) layout.Dimensions {
-		// Round corners
+		rr := gtx.Dp(RadiusSM)
 		defer clip.RRect{
 			Rect: image.Rectangle{Max: gtx.Constraints.Max},
-			NE:   gtx.Dp(unit.Dp(4)), NW: gtx.Dp(unit.Dp(4)),
-			SE:   gtx.Dp(unit.Dp(4)), SW: gtx.Dp(unit.Dp(4)),
+			NE:   rr, NW: rr, SE: rr, SW: rr,
 		}.Push(gtx.Ops).Pop()
 
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			// Status indicator dot
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layoutStatusDot(gtx, started)
 				})
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, click, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Top:    unit.Dp(8),
-						Bottom: unit.Dp(8),
-						Left:   unit.Dp(6),
-						Right:  unit.Dp(4),
+						Top: SpaceSM, Bottom: SpaceSM,
+						Left: unit.Dp(6), Right: SpaceXS,
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, name)
 						lbl.Color = ColorWhite
-						lbl.TextSize = unit.Sp(14)
+						lbl.TextSize = TextBase
 						return lbl.Layout(gtx)
 					})
 				})
@@ -203,14 +191,12 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, deleteClick, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Top:    unit.Dp(8),
-						Bottom: unit.Dp(8),
-						Left:   unit.Dp(4),
-						Right:  unit.Dp(8),
+						Top: SpaceSM, Bottom: SpaceSM,
+						Left: SpaceXS, Right: SpaceSM,
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, "✕")
 						lbl.Color = ColorGray400
-						lbl.TextSize = unit.Sp(14)
+						lbl.TextSize = TextBase
 						return lbl.Layout(gtx)
 					})
 				})

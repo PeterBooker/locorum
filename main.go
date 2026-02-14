@@ -28,6 +28,8 @@ func main() {
 	// where these actions work correctly.
 	if _, ok := os.LookupEnv("WSL_DISTRO_NAME"); ok {
 		os.Unsetenv("WAYLAND_DISPLAY")
+		// Avoid dconf warnings from GTK file dialogs — no D-Bus session bus on WSL2.
+		os.Setenv("GSETTINGS_BACKEND", "memory")
 	}
 
 	d := docker.New()
@@ -94,7 +96,7 @@ func main() {
 			app.Size(unit.Dp(1024), unit.Dp(768)),
 		)
 
-		userInterface.State.Window = w
+		userInterface.State.SetWindow(w)
 
 		if err := eventLoop(w, userInterface); err != nil {
 			slog.Error("Window error: " + err.Error())
