@@ -30,6 +30,10 @@ func main() {
 		os.Unsetenv("WAYLAND_DISPLAY")
 		// Avoid dconf warnings from GTK file dialogs — no D-Bus session bus on WSL2.
 		os.Setenv("GSETTINGS_BACKEND", "memory")
+		// Prevent dconf from trying to auto-launch D-Bus via dbus-launch.
+		if _, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok {
+			os.Setenv("DBUS_SESSION_BUS_ADDRESS", "disabled:")
+		}
 	}
 
 	d := docker.New()
@@ -80,10 +84,14 @@ func main() {
 	// Initialize Docker infrastructure in background.
 	go initFunc()
 
-	// Load initial sites.
+	// Load initial sites with Started forced to false, since containers
+	// are not running yet. ReconcileState will emit an update after it runs.
 	go func() {
 		loadedSites, err := sm.GetSites()
 		if err == nil {
+			for i := range loadedSites {
+				loadedSites[i].Started = false
+			}
 			userInterface.State.SetSites(loadedSites)
 		}
 	}()

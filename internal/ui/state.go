@@ -51,13 +51,27 @@ type UIState struct {
 	initError   string
 	onRetryInit func()
 
+	// Clone modal
+	showCloneModal  bool
+	cloneTargetID   string
+	cloneTargetName string
+	cloneLoading    bool
+
+	// Link checker
+	linkCheckOutput  string
+	linkCheckLoading bool
+
+	// Live reload
+	liveReloadEnabled map[string]bool
+
 	// Window reference for triggering invalidation from background goroutines.
 	window *app.Window
 }
 
 func NewUIState() *UIState {
 	return &UIState{
-		siteToggling: make(map[string]bool),
+		siteToggling:      make(map[string]bool),
+		liveReloadEnabled: make(map[string]bool),
 	}
 }
 
@@ -371,4 +385,90 @@ func (s *UIState) GetRetryInit() func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.onRetryInit
+}
+
+// ─── Clone Modal ────────────────────────────────────────────────────────────
+
+func (s *UIState) ShowCloneModal(id, name string) {
+	s.mu.Lock()
+	s.showCloneModal = true
+	s.cloneTargetID = id
+	s.cloneTargetName = name
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) DismissCloneModal() {
+	s.mu.Lock()
+	s.showCloneModal = false
+	s.cloneTargetID = ""
+	s.cloneTargetName = ""
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) GetCloneModalState() (show bool, id, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.showCloneModal, s.cloneTargetID, s.cloneTargetName
+}
+
+func (s *UIState) SetCloneLoading(loading bool) {
+	s.mu.Lock()
+	s.cloneLoading = loading
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) IsCloneLoading() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cloneLoading
+}
+
+// ─── Link Checker ───────────────────────────────────────────────────────────
+
+func (s *UIState) SetLinkCheckOutput(output string) {
+	s.mu.Lock()
+	s.linkCheckOutput = output
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) AppendLinkCheckOutput(line string) {
+	s.mu.Lock()
+	if s.linkCheckOutput != "" {
+		s.linkCheckOutput += "\n"
+	}
+	s.linkCheckOutput += line
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) SetLinkCheckLoading(loading bool) {
+	s.mu.Lock()
+	s.linkCheckLoading = loading
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) GetLinkCheckState() (output string, loading bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.linkCheckOutput, s.linkCheckLoading
+}
+
+// ─── Live Reload ────────────────────────────────────────────────────────────
+
+func (s *UIState) SetLiveReload(siteID string, enabled bool) {
+	s.mu.Lock()
+	s.liveReloadEnabled[siteID] = enabled
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+func (s *UIState) IsLiveReloadEnabled(siteID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.liveReloadEnabled[siteID]
 }

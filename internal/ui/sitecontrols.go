@@ -12,15 +12,19 @@ import (
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
-// SiteControls renders the Start/Stop, View Files, and Export action bar.
+// SiteControls renders the Start/Stop, View Files, Export, and other action buttons.
 type SiteControls struct {
 	state *UIState
 	sm    *sites.SiteManager
 
-	startBtn  widget.Clickable
-	stopBtn   widget.Clickable
-	openFiles widget.Clickable
-	exportBtn widget.Clickable
+	startBtn      widget.Clickable
+	stopBtn       widget.Clickable
+	openFiles     widget.Clickable
+	exportBtn     widget.Clickable
+	openAdminBtn  widget.Clickable
+	shellBtn      widget.Clickable
+	cloneBtn      widget.Clickable
+	liveReloadBtn widget.Clickable
 }
 
 func NewSiteControls(state *UIState, sm *sites.SiteManager) *SiteControls {
@@ -34,38 +38,78 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 	exporting := sc.state.IsExportLoading()
 
 	return layout.Inset{Bottom: SpaceXL}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
-			// Start / Stop / Loading spinner
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Row 1: Start/Stop, View Files, Export, Clone
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if toggling {
-					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return Loader(gtx, th, LoaderSize)
-					})
-				}
-				if site.Started {
-					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return DangerButton(gtx, th, &sc.stopBtn, "Stop")
-					})
-				}
-				return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return SuccessButton(gtx, th, &sc.startBtn, "Start")
-				})
+				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
+					// Start / Stop / Loading spinner
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if toggling {
+							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return Loader(gtx, th, LoaderSize)
+							})
+						}
+						if site.Started {
+							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return DangerButton(gtx, th, &sc.stopBtn, "Stop")
+							})
+						}
+						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return SuccessButton(gtx, th, &sc.startBtn, "Start")
+						})
+					}),
+					// View Site Files
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return SecondaryButton(gtx, th, &sc.openFiles, "View Site Files")
+						})
+					}),
+					// Clone
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return SecondaryButton(gtx, th, &sc.cloneBtn, "Clone")
+						})
+					}),
+					// Export (only when running)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if !site.Started {
+							return layout.Dimensions{}
+						}
+						if exporting {
+							return Loader(gtx, th, LoaderSize)
+						}
+						return SecondaryButton(gtx, th, &sc.exportBtn, "Export")
+					}),
+				)
 			}),
-			// View Site Files
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return SecondaryButton(gtx, th, &sc.openFiles, "View Site Files")
-				})
-			}),
-			// Export (only when running)
+			// Row 2: Running-only actions (Open Admin, Shell, Live Reload)
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if !site.Started {
 					return layout.Dimensions{}
 				}
-				if exporting {
-					return Loader(gtx, th, LoaderSize)
-				}
-				return SecondaryButton(gtx, th, &sc.exportBtn, "Export")
+				return layout.Inset{Top: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
+						// Open Admin
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return PrimaryButton(gtx, th, &sc.openAdminBtn, "Open Admin")
+							})
+						}),
+						// Shell
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return SecondaryButton(gtx, th, &sc.shellBtn, "Shell")
+							})
+						}),
+						// Live Reload toggle
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if sc.state.IsLiveReloadEnabled(site.ID) {
+								return SuccessButton(gtx, th, &sc.liveReloadBtn, "Live Reload: On")
+							}
+							return SecondaryButton(gtx, th, &sc.liveReloadBtn, "Live Reload: Off")
+						}),
+					)
+				})
 			}),
 		)
 	})
@@ -91,6 +135,7 @@ func (sc *SiteControls) handleClicks(gtx layout.Context, site *types.Site) {
 				sc.state.ShowError("Failed to stop site: " + err.Error())
 			}
 			sc.state.SetSiteToggling(siteID, false)
+			sc.state.SetLiveReload(siteID, false)
 		}()
 	}
 
@@ -124,9 +169,51 @@ func (sc *SiteControls) handleClicks(gtx layout.Context, site *types.Site) {
 			}
 		}()
 	}
+
+	if sc.openAdminBtn.Clicked(gtx) && site.Started {
+		siteID := site.ID
+		go func() {
+			if err := sc.sm.OpenAdminLogin(siteID); err != nil {
+				sc.state.ShowError("Failed to open admin: " + err.Error())
+			}
+		}()
+	}
+
+	if sc.shellBtn.Clicked(gtx) && site.Started {
+		siteID := site.ID
+		go func() {
+			if err := sc.sm.OpenSiteShell(siteID); err != nil {
+				sc.state.ShowError("Failed to open shell: " + err.Error())
+			}
+		}()
+	}
+
+	if sc.cloneBtn.Clicked(gtx) {
+		sc.state.ShowCloneModal(site.ID, site.Name)
+	}
+
+	if sc.liveReloadBtn.Clicked(gtx) && site.Started {
+		siteID := site.ID
+		enabled := sc.state.IsLiveReloadEnabled(siteID)
+		go func() {
+			if enabled {
+				if err := sc.sm.DisableLiveReload(siteID); err != nil {
+					sc.state.ShowError("Live reload error: " + err.Error())
+					return
+				}
+				sc.state.SetLiveReload(siteID, false)
+			} else {
+				if err := sc.sm.EnableLiveReload(siteID); err != nil {
+					sc.state.ShowError("Live reload error: " + err.Error())
+					return
+				}
+				sc.state.SetLiveReload(siteID, true)
+			}
+		}()
+	}
 }
 
-// layoutStatusBadge renders a status badge next to the site name.
+// layoutSiteHeader renders a status badge next to the site name.
 func layoutSiteHeader(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
 	return layout.Inset{Bottom: SpaceLG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
@@ -143,16 +230,24 @@ func layoutSiteHeader(gtx layout.Context, th *material.Theme, site *types.Site) 
 
 // layoutSiteInfoSection renders the Site info key-value section.
 func layoutSiteInfoSection(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
+	rows := []KV{
+		{"ID", site.ID},
+		{"Slug", site.Slug},
+		{"URL", "https://" + site.Domain},
+		{"Files Dir", site.FilesDir},
+		{"Public Dir", site.PublicDir},
+		{"Web Server", site.WebServer},
+	}
+	if site.Multisite != "" {
+		rows = append(rows, KV{"Multisite", site.Multisite})
+	}
+	rows = append(rows,
+		KV{"Created", site.CreatedAt},
+		KV{"Updated", site.UpdatedAt},
+	)
+
 	return Section(gtx, th, "Site", func(gtx layout.Context) layout.Dimensions {
-		return KVRows(gtx, th, []KV{
-			{"ID", site.ID},
-			{"Slug", site.Slug},
-			{"URL", "https://" + site.Domain},
-			{"Files Dir", site.FilesDir},
-			{"Public Dir", site.PublicDir},
-			{"Created", site.CreatedAt},
-			{"Updated", site.UpdatedAt},
-		})
+		return KVRows(gtx, th, rows)
 	})
 }
 

@@ -9,77 +9,96 @@ import (
 	"gioui.org/widget/material"
 )
 
-// ─── Color Palette (Tailwind-inspired) ───────────────────────────────────────
+// ─── Color Palette (Hacktoberfest-inspired dark theme) ───────────────────────
 
 var (
-	ColorWhite     = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-	ColorBlack50   = color.NRGBA{R: 0, G: 0, B: 0, A: 128} // modal overlay
-	ColorSidebarBg = color.NRGBA{R: 17, G: 24, B: 39, A: 255}
+	// Core text & overlay
+	ColorWhite   = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	ColorBlack50 = color.NRGBA{R: 0, G: 0, B: 0, A: 160} // modal overlay
 
-	ColorGray100 = color.NRGBA{R: 243, G: 244, B: 246, A: 255}
-	ColorGray200 = color.NRGBA{R: 229, G: 231, B: 235, A: 255}
-	ColorGray300 = color.NRGBA{R: 209, G: 213, B: 219, A: 255}
-	ColorGray400 = color.NRGBA{R: 156, G: 163, B: 175, A: 255}
-	ColorGray500 = color.NRGBA{R: 107, G: 114, B: 128, A: 255}
-	ColorGray700 = color.NRGBA{R: 55, G: 65, B: 81, A: 255}
-	ColorGray900 = color.NRGBA{R: 17, G: 24, B: 39, A: 255}
+	// Backgrounds
+	ColorSidebarBg = color.NRGBA{R: 7, G: 7, B: 26, A: 255}   // #07071a — darkest navy
+	ColorContentBg = color.NRGBA{R: 13, G: 13, B: 43, A: 255}  // #0d0d2b — main content area
+	ColorModalBg   = color.NRGBA{R: 37, G: 37, B: 80, A: 255}  // #252550 — modals & dropdown popups
+	ColorNavyDark  = color.NRGBA{R: 13, G: 13, B: 43, A: 255}  // #0d0d2b — dark text on bright buttons
 
-	ColorBlue600 = color.NRGBA{R: 37, G: 99, B: 235, A: 255}
-	ColorBlue700 = color.NRGBA{R: 29, G: 78, B: 216, A: 255}
+	// Text hierarchy
+	ColorTextPrimary = color.NRGBA{R: 232, G: 232, B: 255, A: 255} // #e8e8ff — primary text
 
-	ColorRed600 = color.NRGBA{R: 220, G: 38, B: 38, A: 255}
-	ColorRed700 = color.NRGBA{R: 185, G: 28, B: 28, A: 255}
+	// Accent
+	ColorGold = color.NRGBA{R: 255, G: 215, B: 0, A: 255} // #ffd700 — gold highlights
 
-	ColorGreen600 = color.NRGBA{R: 22, G: 163, B: 74, A: 255}
-	ColorGreen100 = color.NRGBA{R: 220, G: 252, B: 231, A: 255}
-	ColorGreen800 = color.NRGBA{R: 22, G: 101, B: 52, A: 255}
+	// Surface scale (dark theme)
+	ColorGray100 = color.NRGBA{R: 26, G: 26, B: 62, A: 255}   // #1a1a3e — surface (output areas)
+	ColorGray200 = color.NRGBA{R: 42, G: 42, B: 80, A: 255}   // #2a2a50 — surface light (compact btn bg)
+	ColorGray300 = color.NRGBA{R: 53, G: 53, B: 102, A: 255}  // #353566 — subtle border
+	ColorGray400 = color.NRGBA{R: 120, G: 120, B: 180, A: 255} // #7878b4 — muted text & icons
+	ColorGray500 = color.NRGBA{R: 144, G: 144, B: 200, A: 255} // #9090c8 — secondary labels
+	ColorGray700 = color.NRGBA{R: 200, G: 200, B: 230, A: 255} // #c8c8e6 — label text
+	ColorGray900 = color.NRGBA{R: 18, G: 18, B: 42, A: 255}   // #12122a — deep surface
 
-	ColorRed100 = color.NRGBA{R: 254, G: 226, B: 226, A: 255}
-	ColorRed800 = color.NRGBA{R: 153, G: 27, B: 27, A: 255}
+	// Primary — Neon Cyan
+	ColorBlue600 = color.NRGBA{R: 0, G: 212, B: 255, A: 255} // #00d4ff — neon cyan
+	ColorBlue700 = color.NRGBA{R: 0, G: 180, B: 220, A: 255} // #00b4dc — darker cyan
 
-	ColorBlue100 = color.NRGBA{R: 219, G: 234, B: 254, A: 255}
-	ColorBlue800 = color.NRGBA{R: 30, G: 64, B: 175, A: 255}
+	// Danger — Hot Pink
+	ColorRed600 = color.NRGBA{R: 255, G: 45, B: 117, A: 255} // #ff2d75 — hot pink
+	ColorRed700 = color.NRGBA{R: 180, G: 30, B: 80, A: 255}  // #b41e50 — deep pink (error banner)
 
-	ColorBorder = color.NRGBA{R: 209, G: 213, B: 219, A: 255} // gray-300
+	// Success — Neon Green
+	ColorGreen600 = color.NRGBA{R: 0, G: 230, B: 118, A: 255}  // #00e676 — neon green
+	ColorGreen100 = color.NRGBA{R: 13, G: 55, B: 33, A: 255}   // #0d3721 — dark green surface
+	ColorGreen800 = color.NRGBA{R: 105, G: 240, B: 174, A: 255} // #69f0ae — bright green text
+
+	// Error toast
+	ColorRed100 = color.NRGBA{R: 55, G: 13, B: 25, A: 255}  // #370d19 — dark red surface
+	ColorRed800 = color.NRGBA{R: 255, G: 82, B: 82, A: 255}  // #ff5252 — bright red text
+
+	// Info toast
+	ColorBlue100 = color.NRGBA{R: 13, G: 33, B: 55, A: 255}   // #0d2137 — dark blue surface
+	ColorBlue800 = color.NRGBA{R: 79, G: 195, B: 247, A: 255}  // #4fc3f7 — bright cyan text
+
+	// Border
+	ColorBorder = color.NRGBA{R: 53, G: 53, B: 102, A: 255} // #353566 — muted purple border
 )
 
-// ─── Spacing Scale (dp) ─────────────────────────────────────────────────────
+// ─── Spacing Scale (dp) — generous for accessibility ────────────────────────
 
 var (
-	SpaceXS  = unit.Dp(4)
-	SpaceSM  = unit.Dp(8)
-	SpaceMD  = unit.Dp(12)
-	SpaceLG  = unit.Dp(16)
-	SpaceXL  = unit.Dp(24)
-	Space2XL = unit.Dp(32)
+	SpaceXS  = unit.Dp(6)
+	SpaceSM  = unit.Dp(10)
+	SpaceMD  = unit.Dp(16)
+	SpaceLG  = unit.Dp(20)
+	SpaceXL  = unit.Dp(32)
+	Space2XL = unit.Dp(40)
 )
 
-// ─── Typography Scale (sp) ──────────────────────────────────────────────────
+// ─── Typography Scale (sp) — minimum 18 sp for accessibility ────────────────
 
 var (
-	TextXS   = unit.Sp(11)
-	TextSM   = unit.Sp(12)
-	TextBase = unit.Sp(14)
-	TextLG   = unit.Sp(16)
+	TextXS   = unit.Sp(18) // compact elements (output lines, small buttons)
+	TextSM   = unit.Sp(18) // badges, secondary text
+	TextBase = unit.Sp(20) // body text
+	TextLG   = unit.Sp(24) // larger body / sub-headings
 )
 
 // ─── Border Radii (dp) ─────────────────────────────────────────────────────
 
 var (
-	RadiusSM = unit.Dp(4)
-	RadiusMD = unit.Dp(6)
-	RadiusLG = unit.Dp(8)
+	RadiusSM = unit.Dp(6)
+	RadiusMD = unit.Dp(8)
+	RadiusLG = unit.Dp(12)
 )
 
 // ─── Layout Dimensions (dp) ────────────────────────────────────────────────
 
 var (
-	SidebarWidth  = unit.Dp(256)
-	ModalWidth    = unit.Dp(500)
-	LoaderSize    = unit.Dp(36)
-	LoaderSizeSM  = unit.Dp(28)
-	OutputAreaMax = unit.Dp(300)
-	LabelColWidth = unit.Dp(100)
+	SidebarWidth  = unit.Dp(300)
+	ModalWidth    = unit.Dp(560)
+	LoaderSize    = unit.Dp(40)
+	LoaderSizeSM  = unit.Dp(32)
+	OutputAreaMax = unit.Dp(350)
+	LabelColWidth = unit.Dp(140)
 )
 
 // ─── Theme ─────────────────────────────────────────────────────────────────
@@ -87,5 +106,10 @@ var (
 func NewTheme() *material.Theme {
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	th.Fg = ColorTextPrimary // light text for dark backgrounds
+	th.Bg = ColorContentBg   // dark background
+	th.ContrastBg = ColorBlue600 // neon cyan for focus indicators & loaders
+	th.ContrastFg = ColorNavyDark
+	th.TextSize = TextBase
 	return th
 }

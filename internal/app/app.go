@@ -152,5 +152,11 @@ func (a *App) SetupFilesystem() error {
 		return err
 	}
 
+	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "apache", "sites"))
+	if err != nil {
+		slog.Error("Failed to create directory: " + err.Error())
+		return err
+	}
+
 	return nil
 }

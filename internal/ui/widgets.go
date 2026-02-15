@@ -70,20 +70,20 @@ func BorderedEditor(gtx layout.Context, th *material.Theme, editor *widget.Edito
 
 // ─── Buttons ────────────────────────────────────────────────────────────────
 
-// PrimaryButton draws a blue primary action button.
+// PrimaryButton draws a neon cyan primary action button.
 func PrimaryButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
 	b := material.Button(th, btn, text)
 	b.Background = ColorBlue600
-	b.Color = ColorWhite
+	b.Color = ColorNavyDark
 	b.CornerRadius = RadiusMD
 	b.TextSize = TextBase
 	return b.Layout(gtx)
 }
 
-// SecondaryButton draws a bordered secondary action button.
+// SecondaryButton draws a dark surface secondary action button.
 func SecondaryButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
 	b := material.Button(th, btn, text)
-	b.Background = ColorWhite
+	b.Background = ColorGray200
 	b.Color = ColorGray700
 	b.CornerRadius = RadiusMD
 	b.TextSize = TextBase
@@ -100,11 +100,11 @@ func DangerButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable,
 	return b.Layout(gtx)
 }
 
-// SuccessButton draws a green confirmation action button.
+// SuccessButton draws a neon green confirmation action button.
 func SuccessButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
 	b := material.Button(th, btn, text)
 	b.Background = ColorGreen600
-	b.Color = ColorWhite
+	b.Color = ColorNavyDark
 	b.CornerRadius = RadiusMD
 	b.TextSize = TextBase
 	return b.Layout(gtx)
@@ -118,10 +118,10 @@ func SmallButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, 
 	b.CornerRadius = RadiusSM
 	b.TextSize = TextXS
 	b.Inset = layout.Inset{
-		Top:    unit.Dp(2),
-		Bottom: unit.Dp(2),
-		Left:   unit.Dp(6),
-		Right:  unit.Dp(6),
+		Top:    unit.Dp(4),
+		Bottom: unit.Dp(4),
+		Left:   unit.Dp(10),
+		Right:  unit.Dp(10),
 	}
 	return b.Layout(gtx)
 }
@@ -138,7 +138,7 @@ func SelectableLabel(gtx layout.Context, th *material.Theme, sel *widget.Selecta
 	textCall := textMacro.Stop()
 
 	selMacro := op.Record(gtx.Ops)
-	paint.ColorOp{Color: color.NRGBA{R: 180, G: 215, B: 255, A: 255}}.Add(gtx.Ops)
+	paint.ColorOp{Color: color.NRGBA{R: 0, G: 120, B: 180, A: 180}}.Add(gtx.Ops)
 	selCall := selMacro.Stop()
 
 	return sel.Layout(gtx, th.Shaper, font.Font{}, size, textCall, selCall)
@@ -183,7 +183,7 @@ func StatusBadge(gtx layout.Context, th *material.Theme, started bool) layout.Di
 		}.Push(gtx.Ops).Pop()
 
 		return layout.Inset{
-			Top: unit.Dp(3), Bottom: unit.Dp(3),
+			Top: SpaceXS, Bottom: SpaceXS,
 			Left: SpaceSM, Right: SpaceSM,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
@@ -401,7 +401,7 @@ func (d *Dropdown) layoutOptions(gtx layout.Context, th *material.Theme) layout.
 	}
 
 	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return FillBackground(gtx, ColorWhite, func(gtx layout.Context) layout.Dimensions {
+		return FillBackground(gtx, ColorModalBg, func(gtx layout.Context) layout.Dimensions {
 			items := make([]layout.FlexChild, len(d.Options))
 			for i := range d.Options {
 				idx := i

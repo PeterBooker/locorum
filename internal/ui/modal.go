@@ -6,6 +6,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 )
@@ -15,6 +16,9 @@ var modalTag = new(bool)
 
 // ModalOverlay draws a semi-transparent overlay and centers the content widget.
 func ModalOverlay(gtx layout.Context, content layout.Widget) layout.Dimensions {
+	// Force full-screen so layout.Center has space to center within.
+	gtx.Constraints.Min = gtx.Constraints.Max
+
 	// Draw full-screen overlay
 	areaStack := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
 	paint.Fill(gtx.Ops, ColorBlack50)
@@ -32,15 +36,21 @@ func ModalOverlay(gtx layout.Context, content layout.Widget) layout.Dimensions {
 		gtx.Constraints.Max.X = w
 		gtx.Constraints.Min.X = w
 
-		// Rounded white background
-		return FillBackground(gtx, ColorWhite, func(gtx layout.Context) layout.Dimensions {
-			rr := gtx.Dp(RadiusLG)
-			defer clip.RRect{
-				Rect: image.Rectangle{Max: gtx.Constraints.Min},
-				NE:   rr, NW: rr, SE: rr, SW: rr,
-			}.Push(gtx.Ops).Pop()
+		// Record the content to measure its actual dimensions first.
+		macro := op.Record(gtx.Ops)
+		dims := layout.UniformInset(SpaceXL).Layout(gtx, content)
+		call := macro.Stop()
 
-			return layout.UniformInset(SpaceXL).Layout(gtx, content)
-		})
+		// Draw rounded dark background using actual content dimensions.
+		rr := gtx.Dp(RadiusLG)
+		defer clip.RRect{
+			Rect: image.Rectangle{Max: dims.Size},
+			NE:   rr, NW: rr, SE: rr, SW: rr,
+		}.Push(gtx.Ops).Pop()
+
+		paint.Fill(gtx.Ops, ColorModalBg)
+		call.Add(gtx.Ops)
+
+		return dims
 	})
 }

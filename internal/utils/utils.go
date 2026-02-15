@@ -102,7 +102,7 @@ func GetUserHomeDir() (string, error) {
 		return "", fmt.Errorf("getting user home directory: %w", err)
 	}
 
-	if runtime.GOOS == "windows" && hasWSL() {
+	if runtime.GOOS == "windows" && HasWSL() {
 		out, err := exec.Command("wsl", "wslpath", "-w", "$HOME").Output()
 		if err != nil {
 			return homeDir, fmt.Errorf("wslpath failed: %w", err)
@@ -118,7 +118,7 @@ func GetUserHomeDir() (string, error) {
 func OpenDirectory(path string) error {
 	switch runtime.GOOS {
 	case "windows":
-		if hasWSL() && strings.Contains(path, "\\wsl") {
+		if HasWSL() && strings.Contains(path, "\\wsl") {
 			return exec.Command("cmd.exe", "/C", "start", "", path).Start()
 		}
 
@@ -156,7 +156,81 @@ func isWSL() bool {
 	return bytes.Contains(bytes.ToLower(data), []byte("microsoft"))
 }
 
-func hasWSL() bool {
+// OpenURL opens the given URL in the user's default browser.
+func OpenURL(url string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("cmd.exe", "/C", "start", "", url).Start()
+	case "darwin":
+		return exec.Command("open", url).Start()
+	default:
+		if isWSL() {
+			return exec.Command("cmd.exe", "/C", "start", "", url).Start()
+		}
+		return exec.Command("xdg-open", url).Start()
+	}
+}
+
+// OpenTerminalWithCommand opens a terminal emulator running the given command.
+func OpenTerminalWithCommand(args ...string) error {
+	fullCmd := strings.Join(args, " ")
+	switch runtime.GOOS {
+	case "darwin":
+		script := fmt.Sprintf(`tell application "Terminal" to do script "%s"`, fullCmd)
+		return exec.Command("osascript", "-e", script).Start()
+	case "windows":
+		return exec.Command("cmd.exe", "/C", "start", "cmd.exe", "/K", fullCmd).Start()
+	default:
+		if isWSL() {
+			distro := os.Getenv("WSL_DISTRO_NAME")
+			if _, err := exec.LookPath("wt.exe"); err == nil {
+				cmdArgs := append([]string{"wsl.exe", "-d", distro, "--"}, args...)
+				return exec.Command("wt.exe", cmdArgs...).Start()
+			}
+			return exec.Command("cmd.exe", "/C", "start", "wsl.exe", "-d", distro, "--", fullCmd).Start()
+		}
+		// Native Linux: try common terminal emulators.
+		terminals := []struct {
+			name string
+			flag string
+		}{
+			{"x-terminal-emulator", "-e"},
+			{"gnome-terminal", "--"},
+			{"konsole", "-e"},
+			{"xfce4-terminal", "-e"},
+			{"xterm", "-e"},
+		}
+		for _, t := range terminals {
+			if _, err := exec.LookPath(t.name); err == nil {
+				cmdArgs := append([]string{t.flag}, args...)
+				return exec.Command(t.name, cmdArgs...).Start()
+			}
+		}
+		return fmt.Errorf("no terminal emulator found")
+	}
+}
+
+// CopyDir recursively copies the directory at src to dst.
+func CopyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0777)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0666)
+	})
+}
+
+// HasWSL returns true if WSL is available (Windows only).
+func HasWSL() bool {
 	cmd := exec.Command("wsl.exe", "echo", "wsl-test")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -166,4 +240,18 @@ func hasWSL() bool {
 	}
 
 	return strings.TrimSpace(out.String()) == "wsl-test"
+}
+
+// PickDirectoryInWSL opens a directory picker dialog inside WSL using zenity.
+// Returns the selected Linux path (e.g., /home/user/projects).
+func PickDirectoryInWSL() (string, error) {
+	out, err := exec.Command("wsl.exe", "zenity", "--file-selection", "--directory").Output()
+	if err != nil {
+		return "", fmt.Errorf("WSL directory picker failed (is zenity installed in WSL?): %w", err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return "", fmt.Errorf("no directory selected")
+	}
+	return dir, nil
 }

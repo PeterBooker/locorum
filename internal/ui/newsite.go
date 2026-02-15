@@ -27,9 +27,11 @@ type NewSiteModal struct {
 	filesDirVal  string
 
 	// Dropdowns
-	phpDropdown   *Dropdown
-	mysqlDropdown *Dropdown
-	redisDropdown *Dropdown
+	phpDropdown       *Dropdown
+	mysqlDropdown     *Dropdown
+	redisDropdown     *Dropdown
+	webServerDropdown *Dropdown
+	multisiteDropdown *Dropdown
 
 	// Buttons
 	browseDirBtn widget.Clickable
@@ -38,13 +40,18 @@ type NewSiteModal struct {
 }
 
 func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *NewSiteModal {
+	webServerOptions := []string{"nginx", "apache"}
+	multisiteOptions := []string{"Single Site", "Multisite (Subdirectory)", "Multisite (Subdomain)"}
+
 	m := &NewSiteModal{
-		state:         state,
-		sm:            sm,
-		toasts:        toasts,
-		phpDropdown:   NewDropdown(phpVersions),
-		mysqlDropdown: NewDropdown(mysqlVersions),
-		redisDropdown: NewDropdown(redisVersions),
+		state:             state,
+		sm:                sm,
+		toasts:            toasts,
+		phpDropdown:       NewDropdown(phpVersions),
+		mysqlDropdown:     NewDropdown(mysqlVersions),
+		redisDropdown:     NewDropdown(redisVersions),
+		webServerDropdown: NewDropdown(webServerOptions),
+		multisiteDropdown: NewDropdown(multisiteOptions),
 	}
 	m.nameEditor.SingleLine = true
 	m.publicEditor.SingleLine = true
@@ -77,6 +84,9 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 		phpVer := phpVersions[m.phpDropdown.Selected]
 		mysqlVer := mysqlVersions[m.mysqlDropdown.Selected]
 		redisVer := redisVersions[m.redisDropdown.Selected]
+		webServer := []string{"nginx", "apache"}[m.webServerDropdown.Selected]
+		multisiteMap := []string{"", "subdirectory", "subdomain"}
+		multisite := multisiteMap[m.multisiteDropdown.Selected]
 
 		if name == "" {
 			m.state.ShowError("Site name is required")
@@ -91,6 +101,8 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 					PHPVersion:   phpVer,
 					MySQLVersion: mysqlVer,
 					RedisVersion: redisVer,
+					WebServer:    webServer,
+					Multisite:    multisite,
 				}
 				if err := m.sm.AddSite(site); err != nil {
 					m.state.ShowError("Failed to create site: " + err.Error())
@@ -106,6 +118,8 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 				m.phpDropdown.Selected = 0
 				m.mysqlDropdown.Selected = 0
 				m.redisDropdown.Selected = 0
+				m.webServerDropdown.Selected = 0
+				m.multisiteDropdown.Selected = 0
 
 				m.state.Invalidate()
 			}()
@@ -142,6 +156,12 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 				return LabeledInput(gtx, th, "Public Dir", &m.publicEditor, "/")
 			})
 		}),
+		// Web Server
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return m.webServerDropdown.Layout(gtx, th, "Web Server")
+			})
+		}),
 		// PHP Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -156,8 +176,14 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 		}),
 		// Redis Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.redisDropdown.Layout(gtx, th, "Redis Version")
+			})
+		}),
+		// Multisite
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return m.multisiteDropdown.Layout(gtx, th, "Multisite")
 			})
 		}),
 		// Buttons row
@@ -197,7 +223,7 @@ func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *material.Theme) l
 					}
 					lbl := material.Body2(th, dirText)
 					lbl.Color = ColorGray500
-					lbl.TextSize = unit.Sp(13)
+					lbl.TextSize = TextSM
 					return lbl.Layout(gtx)
 				}),
 			)

@@ -69,6 +69,15 @@ http {
             rewrite (/wp-.*)       /wp$1      last;
             rewrite (/.*\.php)$    /wp$1      last;
         }
+{{- if eq .Multisite "subdirectory" }}
+
+        # WordPress Multisite (Subdirectory) rewrites
+        if (!-e $request_filename) {
+            rewrite /wp-admin$ $scheme://$host$uri/ permanent;
+            rewrite ^(/[^/]+)?(/wp-.*) $2 last;
+            rewrite ^(/[^/]+)?(/.*\.php) $2 last;
+        }
+{{- end }}
 
         # PHP
         location ~ \.php$ {

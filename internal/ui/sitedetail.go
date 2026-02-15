@@ -18,23 +18,27 @@ type SiteDetail struct {
 	list widget.List
 
 	// Sub-components
-	controls   *SiteControls
-	dbCreds    *DBCredentials
-	logViewer  *LogViewer
-	wpcliPanel *WPCLIPanel
+	controls      *SiteControls
+	dbCreds       *DBCredentials
+	logViewer     *LogViewer
+	wpcliPanel    *WPCLIPanel
+	versionEditor *VersionEditor
+	linkChecker   *LinkChecker
 
 	// Docker unavailable
 	retryInitBtn widget.Clickable
 }
 
-func NewSiteDetail(state *UIState, sm *sites.SiteManager) *SiteDetail {
+func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *SiteDetail {
 	sd := &SiteDetail{
-		state:      state,
-		sm:         sm,
-		controls:   NewSiteControls(state, sm),
-		dbCreds:    NewDBCredentials(),
-		logViewer:  NewLogViewer(state, sm),
-		wpcliPanel: NewWPCLIPanel(state, sm),
+		state:         state,
+		sm:            sm,
+		controls:      NewSiteControls(state, sm),
+		dbCreds:       NewDBCredentials(),
+		logViewer:     NewLogViewer(state, sm),
+		wpcliPanel:    NewWPCLIPanel(state, sm),
+		versionEditor: NewVersionEditor(state, sm, toasts),
+		linkChecker:   NewLinkChecker(state, sm),
 	}
 	sd.list.List.Axis = layout.Vertical
 	return sd
@@ -110,9 +114,9 @@ func (sd *SiteDetail) layoutContent(gtx layout.Context, th *material.Theme) layo
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutSiteInfoSection(gtx, th, site)
 		}),
-		// Versions section
+		// Versions section (editable when stopped)
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutVersionsSection(gtx, th, site)
+			return sd.versionEditor.Layout(gtx, th, site)
 		}),
 		// Database credentials
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -131,6 +135,13 @@ func (sd *SiteDetail) layoutContent(gtx layout.Context, th *material.Theme) layo
 	if site.Started {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return sd.wpcliPanel.Layout(gtx, th, site.ID)
+		}))
+	}
+
+	// Link Checker (only when running)
+	if site.Started {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return sd.linkChecker.Layout(gtx, th, site.ID)
 		}))
 	}
 

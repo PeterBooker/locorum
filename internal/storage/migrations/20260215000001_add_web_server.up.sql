@@ -1,0 +1,1 @@
+ALTER TABLE sites ADD COLUMN webServer TEXT NOT NULL DEFAULT 'nginx';

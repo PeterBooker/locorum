@@ -48,20 +48,31 @@ func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensio
 			Left: SpaceLG, Right: SpaceLG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				// Title
+				// Logo + Title
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(th, "Locorum")
-					lbl.Color = ColorWhite
-					return layout.Inset{Bottom: SpaceLG}.Layout(gtx, lbl.Layout)
+					return layout.Inset{Bottom: SpaceLG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return LayoutLogo(gtx, LogoSize)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.H5(th, "Locorum")
+									lbl.Color = ColorGold
+									return lbl.Layout(gtx)
+								})
+							}),
+						)
+					})
 				}),
 				// Divider
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return Divider(gtx, ColorGray700, SpaceSM)
+					return Divider(gtx, ColorBorder, SpaceSM)
 				}),
 				// "Sites" heading
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.H6(th, "Sites")
-					lbl.Color = ColorGray100
+					lbl.Color = ColorWhite
 					return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
 				}),
 				// Search field
@@ -158,7 +169,7 @@ func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.
 func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *widget.Clickable, deleteClick *widget.Clickable, name string, selected, started bool) layout.Dimensions {
 	bgColor := ColorGray900
 	if selected {
-		bgColor = ColorGray700
+		bgColor = ColorGray100
 	}
 
 	return FillBackground(gtx, bgColor, func(gtx layout.Context) layout.Dimensions {

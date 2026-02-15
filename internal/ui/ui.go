@@ -20,7 +20,8 @@ type UI struct {
 	NewSite    *NewSiteModal
 	Toasts     *ToastManager
 
-	// Delete confirmation dialog
+	// Modals
+	CloneModal   *CloneModal
 	deleteDialog ConfirmDialog
 }
 
@@ -36,8 +37,9 @@ func New(sm *sites.SiteManager) *UI {
 
 	ui.Toasts = NewToastManager(state)
 	ui.Sidebar = NewSidebar(state, sm, ui.Toasts)
-	ui.SiteDetail = NewSiteDetail(state, sm)
+	ui.SiteDetail = NewSiteDetail(state, sm, ui.Toasts)
 	ui.NewSite = NewNewSiteModal(state, sm, ui.Toasts)
+	ui.CloneModal = NewCloneModal(state, sm, ui.Toasts)
 
 	// Wire up backend callbacks to update UI state
 	sm.OnSitesUpdated = func(updatedSites []types.Site) {
@@ -72,7 +74,7 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 							return ui.Sidebar.Layout(gtx, ui.Theme)
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return FillBackground(gtx, ColorWhite, func(gtx layout.Context) layout.Dimensions {
+							return FillBackground(gtx, ColorContentBg, func(gtx layout.Context) layout.Dimensions {
 								return ui.SiteDetail.Layout(gtx, ui.Theme)
 							})
 						}),
@@ -91,7 +93,8 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				return ui.layoutDeleteConfirm(gtx, ui.Theme, deleteName)
 			}
 
-			return layout.Dimensions{}
+			// Clone modal
+			return ui.CloneModal.Layout(gtx, ui.Theme)
 		}),
 		// Toast notifications layer
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {

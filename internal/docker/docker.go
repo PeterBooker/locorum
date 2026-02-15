@@ -299,6 +299,13 @@ func (d *Docker) DeleteSite(site *types.Site) error {
 }
 
 func (d *Docker) addWebContainer(site *types.Site, home string) error {
+	if site.WebServer == "apache" {
+		return d.addApacheWebContainer(site, home)
+	}
+	return d.addNginxWebContainer(site, home)
+}
+
+func (d *Docker) addNginxWebContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-web"
 	imageName := "nginx:1.28-alpine"
 	networkName := "locorum-" + site.Slug
@@ -342,14 +349,65 @@ func (d *Docker) addWebContainer(site *types.Site, home string) error {
 	return nil
 }
 
+func (d *Docker) addApacheWebContainer(site *types.Site, home string) error {
+	containerName := "locorum-" + site.Slug + "-web"
+	imageName := "httpd:2.4-alpine"
+	networkName := "locorum-" + site.Slug
+
+	config := &container.Config{
+		Image: imageName,
+		Tty:   true,
+		ExposedPorts: nat.PortSet{
+			"80/tcp":  struct{}{},
+			"443/tcp": struct{}{},
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds: []string{
+			path.Join(home, ".locorum", "config", "apache", "sites", site.Slug+".conf") + ":/usr/local/apache2/conf/httpd.conf:ro",
+			path.Join(home, ".locorum", "config", "certs") + ":/usr/local/apache2/certs:ro",
+			site.FilesDir + ":/var/www/html",
+		},
+		PortBindings: nat.PortMap{},
+		NetworkMode:  container.NetworkMode(networkName),
+		ExtraHosts:   []string{},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"locorum-global": {
+				Aliases: []string{"locorum-" + site.Slug + "-web"},
+			},
+			networkName: {
+				Aliases: []string{"web"},
+			},
+		},
+	}
+
+	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-php"
 	imageName := "wodby/php:" + site.PHPVersion
 	networkName := "locorum-" + site.Slug
 
+	// On Windows os.Getuid()/os.Getgid() return -1; fall back to 1000:1000
+	// which matches the default wodby user inside the image.
+	uid, gid := os.Getuid(), os.Getgid()
+	if uid < 0 || gid < 0 {
+		uid, gid = 1000, 1000
+	}
+
 	config := &container.Config{
 		Image:        imageName,
-		User:         fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+		User:         fmt.Sprintf("%d:%d", uid, gid),
 		Tty:          true,
 		WorkingDir:   "/var/www/html",
 		ExposedPorts: nat.PortSet{},

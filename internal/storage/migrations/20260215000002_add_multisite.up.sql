@@ -1,0 +1,1 @@
+ALTER TABLE sites ADD COLUMN multisite TEXT NOT NULL DEFAULT '';

@@ -24,11 +24,15 @@ var funcMap = template.FuncMap{
 	"NginxRoot": func(s *types.Site) string {
 		return path.Clean("/var/www/html/" + s.PublicDir)
 	},
+	"ApacheRoot": func(s *types.Site) string {
+		return path.Clean("/var/www/html/" + s.PublicDir)
+	},
 }
 
 var (
-	siteTpl *template.Template
-	mapTpl  *template.Template
+	siteTpl       *template.Template
+	mapTpl        *template.Template
+	apacheSiteTpl *template.Template
 )
 
 // writeAtomic writes data to filename via a temp file + rename
@@ -102,6 +106,24 @@ func (sm *SiteManager) generateMapConfig(sites []types.Site, dest string, testCo
 		if err := sm.d.ReloadGlobalNginx(); err != nil {
 			return fmt.Errorf("reload nginx config: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// generateApacheSiteConfig generates the Apache vhost config for a single site.
+func (sm *SiteManager) generateApacheSiteConfig(site *types.Site, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), err)
+	}
+
+	var mbuf bytes.Buffer
+	if err := apacheSiteTpl.Execute(&mbuf, site); err != nil {
+		return fmt.Errorf("render apache site config: %w", err)
+	}
+
+	if err := sm.writeInPlace(dest, mbuf.Bytes()); err != nil {
+		return fmt.Errorf("write apache site config: %w", err)
 	}
 
 	return nil
