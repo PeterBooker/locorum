@@ -12,14 +12,13 @@ import (
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
-// SiteControls renders the Start/Stop, View Files, Export, and other action buttons.
+// SiteControls renders the Start/Stop, Export, and other action buttons.
 type SiteControls struct {
 	state *UIState
 	sm    *sites.SiteManager
 
 	startBtn      widget.Clickable
 	stopBtn       widget.Clickable
-	openFiles     widget.Clickable
 	exportBtn     widget.Clickable
 	openAdminBtn  widget.Clickable
 	shellBtn      widget.Clickable
@@ -39,7 +38,7 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 
 	return layout.Inset{Bottom: SpaceXL}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			// Row 1: Start/Stop, View Files, Export, Clone
+			// Row 1: Start/Stop, Clone, Export
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
 					// Start / Stop / Loading spinner
@@ -56,12 +55,6 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 						}
 						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return SuccessButton(gtx, th, &sc.startBtn, "Start")
-						})
-					}),
-					// View Site Files
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return SecondaryButton(gtx, th, &sc.openFiles, "View Site Files")
 						})
 					}),
 					// Clone
@@ -136,15 +129,6 @@ func (sc *SiteControls) handleClicks(gtx layout.Context, site *types.Site) {
 			}
 			sc.state.SetSiteToggling(siteID, false)
 			sc.state.SetLiveReload(siteID, false)
-		}()
-	}
-
-	if sc.openFiles.Clicked(gtx) {
-		siteID := site.ID
-		go func() {
-			if err := sc.sm.OpenSiteFilesDir(siteID); err != nil {
-				sc.state.ShowError("Failed to open files directory: " + err.Error())
-			}
 		}()
 	}
 
@@ -225,29 +209,6 @@ func layoutSiteHeader(gtx layout.Context, th *material.Theme, site *types.Site) 
 				return StatusBadge(gtx, th, site.Started)
 			}),
 		)
-	})
-}
-
-// layoutSiteInfoSection renders the Site info key-value section.
-func layoutSiteInfoSection(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
-	rows := []KV{
-		{"ID", site.ID},
-		{"Slug", site.Slug},
-		{"URL", "https://" + site.Domain},
-		{"Files Dir", site.FilesDir},
-		{"Public Dir", site.PublicDir},
-		{"Web Server", site.WebServer},
-	}
-	if site.Multisite != "" {
-		rows = append(rows, KV{"Multisite", site.Multisite})
-	}
-	rows = append(rows,
-		KV{"Created", site.CreatedAt},
-		KV{"Updated", site.UpdatedAt},
-	)
-
-	return Section(gtx, th, "Site", func(gtx layout.Context) layout.Dimensions {
-		return KVRows(gtx, th, rows)
 	})
 }
 

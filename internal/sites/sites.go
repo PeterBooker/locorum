@@ -535,6 +535,44 @@ func (sm *SiteManager) UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer str
 	return nil
 }
 
+// OpenSiteURL opens the site's URL in the default browser.
+func (sm *SiteManager) OpenSiteURL(siteID string) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+	return utils.OpenURL("https://" + site.Domain)
+}
+
+// UpdatePublicDir changes the public directory for a stopped site.
+func (sm *SiteManager) UpdatePublicDir(siteID, publicDir string) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+	if site.Started {
+		return fmt.Errorf("site must be stopped to change public directory")
+	}
+	if publicDir == site.PublicDir {
+		return nil
+	}
+
+	site.PublicDir = publicDir
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		return fmt.Errorf("updating site: %w", err)
+	}
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+	return nil
+}
+
 // CloneSite duplicates an existing site with a new name, copying files and database.
 func (sm *SiteManager) CloneSite(siteID, newName string) error {
 	site, err := sm.st.GetSite(siteID)

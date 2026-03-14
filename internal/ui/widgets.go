@@ -426,6 +426,55 @@ func (d *Dropdown) layoutOptions(gtx layout.Context, th *material.Theme) layout.
 	})
 }
 
+// ─── Tab Bar ─────────────────────────────────────────────────────────────────
+
+// TabBar renders a horizontal row of tab buttons. The active tab is highlighted
+// with the primary accent color and an underline indicator.
+func TabBar(gtx layout.Context, th *material.Theme, tabs []string, active int, clicks []*widget.Clickable) layout.Dimensions {
+	children := make([]layout.FlexChild, len(tabs))
+	for i, label := range tabs {
+		i, label := i, label
+		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			isActive := i == active
+			return layoutTab(gtx, th, clicks[i], label, isActive)
+		})
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+}
+
+// layoutTab renders a single tab with an underline indicator when active.
+func layoutTab(gtx layout.Context, th *material.Theme, btn *widget.Clickable, label string, active bool) layout.Dimensions {
+	textColor := ColorGray500
+	if active {
+		textColor = ColorBlue600
+	}
+
+	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top: SpaceSM, Bottom: SpaceSM,
+					Left: SpaceMD, Right: SpaceMD,
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(th, label)
+					lbl.Color = textColor
+					lbl.TextSize = TextBase
+					return lbl.Layout(gtx)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !active {
+					return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Min.X, Y: gtx.Dp(unit.Dp(2))}}
+				}
+				size := image.Point{X: gtx.Constraints.Min.X, Y: gtx.Dp(unit.Dp(2))}
+				defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+				paint.Fill(gtx.Ops, ColorBlue600)
+				return layout.Dimensions{Size: size}
+			}),
+		)
+	})
+}
+
 // ─── Confirm Dialog ─────────────────────────────────────────────────────────
 
 // ConfirmDialog holds state for a reusable confirmation modal dialog.
