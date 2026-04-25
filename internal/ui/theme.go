@@ -269,15 +269,15 @@ func LightPalette() *Palette {
 // DarkPalette returns the hacktoberfest-inspired dark palette
 // (navy backgrounds + neon cyan primary + gold brand).
 func DarkPalette() *Palette {
-	primary := color.NRGBA{R: 0, G: 212, B: 255, A: 255}  // #00d4ff
-	border := color.NRGBA{R: 53, G: 53, B: 102, A: 255}   // #353566
+	primary := color.NRGBA{R: 0, G: 212, B: 255, A: 255} // #00d4ff
+	border := color.NRGBA{R: 53, G: 53, B: 102, A: 255}  // #353566
 	return &Palette{
-		SidebarBg:       color.NRGBA{R: 7, G: 7, B: 26, A: 255},    // #07071a
-		ContentBg:       color.NRGBA{R: 13, G: 13, B: 43, A: 255},  // #0d0d2b
-		SurfaceDeep:     color.NRGBA{R: 18, G: 18, B: 42, A: 255},  // #12122a
-		Surface:         color.NRGBA{R: 26, G: 26, B: 62, A: 255},  // #1a1a3e
-		SurfaceAlt:      color.NRGBA{R: 42, G: 42, B: 80, A: 255},  // #2a2a50
-		SurfaceElevated: color.NRGBA{R: 37, G: 37, B: 80, A: 255},  // #252550
+		SidebarBg:       color.NRGBA{R: 7, G: 7, B: 26, A: 255},   // #07071a
+		ContentBg:       color.NRGBA{R: 13, G: 13, B: 43, A: 255}, // #0d0d2b
+		SurfaceDeep:     color.NRGBA{R: 18, G: 18, B: 42, A: 255}, // #12122a
+		Surface:         color.NRGBA{R: 26, G: 26, B: 62, A: 255}, // #1a1a3e
+		SurfaceAlt:      color.NRGBA{R: 42, G: 42, B: 80, A: 255}, // #2a2a50
+		SurfaceElevated: color.NRGBA{R: 37, G: 37, B: 80, A: 255}, // #252550
 
 		TextPrimary:   color.NRGBA{R: 232, G: 232, B: 255, A: 255}, // #e8e8ff
 		TextStrong:    color.NRGBA{R: 200, G: 200, B: 230, A: 255}, // #c8c8e6

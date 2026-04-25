@@ -47,11 +47,11 @@ func (n *Notification) expired() bool {
 // history panel toggled by a bell icon. Archive entries persist until the
 // user dismisses them individually or clears all.
 type Notifications struct {
-	mu       sync.Mutex
-	state    *UIState
-	active   []*Notification
-	archive  []*Notification
-	nextID   int64
+	mu        sync.Mutex
+	state     *UIState
+	active    []*Notification
+	archive   []*Notification
+	nextID    int64
 	showPanel bool
 
 	bellClick     widget.Clickable

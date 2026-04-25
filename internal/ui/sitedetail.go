@@ -31,7 +31,7 @@ type SiteDetail struct {
 	tabClicks [3]widget.Clickable
 
 	// Overview tab interactive widgets
-	openURLBtn     widget.Clickable
+	openURLBtn      widget.Clickable
 	openFilesDirBtn widget.Clickable
 	publicDirEditor widget.Editor
 	savePublicDir   widget.Clickable

@@ -148,4 +148,3 @@ func addToTar(tw *tar.Writer, name string, data []byte) error {
 	_, err := tw.Write(data)
 	return err
 }
-

@@ -13,8 +13,8 @@ type Site struct {
 	MySQLVersion string `json:"mysqlVersion"`
 	RedisVersion string `json:"redisVersion"`
 	DBPassword   string `json:"dbPassword"`
-	WebServer    string `json:"webServer"`  // "nginx" or "apache"
-	Multisite    string `json:"multisite"`  // "", "subdirectory", or "subdomain"
+	WebServer    string `json:"webServer"` // "nginx" or "apache"
+	Multisite    string `json:"multisite"` // "", "subdirectory", or "subdomain"
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`

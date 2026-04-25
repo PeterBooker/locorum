@@ -137,4 +137,3 @@ func drawModal(gtx layout.Context, th *Theme, content layout.Widget, progress fl
 		return dims
 	})
 }
-

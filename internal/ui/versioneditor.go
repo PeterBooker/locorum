@@ -22,7 +22,7 @@ type VersionEditor struct {
 
 	// Track which site we last synced dropdowns for, and the baseline values
 	// used to compute the dirty flag.
-	lastSiteID                          string
+	lastSiteID                             string
 	initialPHP, initialMySQL, initialRedis string
 }
 
