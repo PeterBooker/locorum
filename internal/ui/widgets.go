@@ -34,12 +34,12 @@ func FillBackground(gtx layout.Context, col color.NRGBA, w layout.Widget) layout
 // ─── Text Inputs ────────────────────────────────────────────────────────────
 
 // LabeledInput draws a label above a styled text editor.
-func LabeledInput(gtx layout.Context, th *material.Theme, label string, editor *widget.Editor, hint string) layout.Dimensions {
+func LabeledInput(gtx layout.Context, th *Theme, label string, editor *widget.Editor, hint string) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, label)
-			lbl.Color = ColorGray700
-			return layout.Inset{Bottom: SpaceXS}.Layout(gtx, lbl.Layout)
+			lbl := material.Body2(th.Theme, label)
+			lbl.Color = th.Color.TextStrong
+			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return BorderedEditor(gtx, th, editor, hint)
@@ -48,21 +48,32 @@ func LabeledInput(gtx layout.Context, th *material.Theme, label string, editor *
 }
 
 // BorderedEditor draws a text editor with a border.
-func BorderedEditor(gtx layout.Context, th *material.Theme, editor *widget.Editor, hint string) layout.Dimensions {
+func BorderedEditor(gtx layout.Context, th *Theme, editor *widget.Editor, hint string) layout.Dimensions {
+	return borderedEditor(gtx, th, editor, hint, font.Font{})
+}
+
+// BorderedMonoEditor draws a bordered text editor using the monospace font,
+// suitable for code or shell-command input.
+func BorderedMonoEditor(gtx layout.Context, th *Theme, editor *widget.Editor, hint string) layout.Dimensions {
+	return borderedEditor(gtx, th, editor, hint, MonoFont)
+}
+
+func borderedEditor(gtx layout.Context, th *Theme, editor *widget.Editor, hint string, f font.Font) layout.Dimensions {
 	border := widget.Border{
-		Color:        ColorBorder,
-		CornerRadius: RadiusSM,
+		Color:        th.Color.Border,
+		CornerRadius: th.Radii.SM,
 		Width:        unit.Dp(1),
 	}
 	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
-			Top:    SpaceSM,
-			Bottom: SpaceSM,
+			Top:    th.Spacing.SM,
+			Bottom: th.Spacing.SM,
 			Left:   unit.Dp(10),
 			Right:  unit.Dp(10),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, editor, hint)
-			ed.TextSize = TextBase
+			ed := material.Editor(th.Theme, editor, hint)
+			ed.TextSize = th.Sizes.Base
+			ed.Font = f
 			return ed.Layout(gtx)
 		})
 	})
@@ -70,53 +81,90 @@ func BorderedEditor(gtx layout.Context, th *material.Theme, editor *widget.Edito
 
 // ─── Buttons ────────────────────────────────────────────────────────────────
 
-// PrimaryButton draws a neon cyan primary action button.
-func PrimaryButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
-	b := material.Button(th, btn, text)
-	b.Background = ColorBlue600
-	b.Color = ColorNavyDark
-	b.CornerRadius = RadiusMD
-	b.TextSize = TextBase
+// Primary draws a neon cyan primary action button.
+func (th *Theme) Primary(gtx layout.Context, btn *widget.Clickable, text string) layout.Dimensions {
+	b := material.Button(th.Theme, btn, text)
+	b.Background = th.Color.Primary
+	b.Color = th.Color.OnPrimary
+	b.CornerRadius = th.Radii.MD
+	b.TextSize = th.Sizes.Base
 	return b.Layout(gtx)
 }
 
-// SecondaryButton draws a dark surface secondary action button.
-func SecondaryButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
-	b := material.Button(th, btn, text)
-	b.Background = ColorGray200
-	b.Color = ColorGray700
-	b.CornerRadius = RadiusMD
-	b.TextSize = TextBase
+// PrimaryGated draws a primary button that is visually muted and ignores
+// clicks when enabled is false. Pair with .Changed() / dirty-tracking so the
+// button only activates when the user has edited something.
+func (th *Theme) PrimaryGated(gtx layout.Context, btn *widget.Clickable, text string, enabled bool) layout.Dimensions {
+	if !enabled {
+		gtx = gtx.Disabled()
+	}
+	b := material.Button(th.Theme, btn, text)
+	if enabled {
+		b.Background = th.Color.Primary
+		b.Color = th.Color.OnPrimary
+	} else {
+		b.Background = th.Disabled(th.Color.Primary)
+		b.Color = th.Disabled(th.Color.OnPrimary)
+	}
+	b.CornerRadius = th.Radii.MD
+	b.TextSize = th.Sizes.Base
 	return b.Layout(gtx)
 }
 
-// DangerButton draws a red destructive action button.
-func DangerButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
-	b := material.Button(th, btn, text)
-	b.Background = ColorRed600
-	b.Color = ColorWhite
-	b.CornerRadius = RadiusMD
-	b.TextSize = TextBase
+// Secondary draws a muted surface secondary action button.
+func (th *Theme) Secondary(gtx layout.Context, btn *widget.Clickable, text string) layout.Dimensions {
+	b := material.Button(th.Theme, btn, text)
+	b.Background = th.Color.SurfaceAlt
+	b.Color = th.Color.TextStrong
+	b.CornerRadius = th.Radii.MD
+	b.TextSize = th.Sizes.Base
 	return b.Layout(gtx)
 }
 
-// SuccessButton draws a neon green confirmation action button.
-func SuccessButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
-	b := material.Button(th, btn, text)
-	b.Background = ColorGreen600
-	b.Color = ColorNavyDark
-	b.CornerRadius = RadiusMD
-	b.TextSize = TextBase
+// Danger draws a destructive action button.
+func (th *Theme) Danger(gtx layout.Context, btn *widget.Clickable, text string) layout.Dimensions {
+	b := material.Button(th.Theme, btn, text)
+	b.Background = th.Color.Danger
+	b.Color = th.Color.White
+	b.CornerRadius = th.Radii.MD
+	b.TextSize = th.Sizes.Base
 	return b.Layout(gtx)
 }
 
-// SmallButton draws a compact secondary button for inline use (e.g., copy buttons).
-func SmallButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, text string) layout.Dimensions {
-	b := material.Button(th, btn, text)
-	b.Background = ColorGray200
-	b.Color = ColorGray700
-	b.CornerRadius = RadiusSM
-	b.TextSize = TextXS
+// Success draws a confirmation action button.
+func (th *Theme) Success(gtx layout.Context, btn *widget.Clickable, text string) layout.Dimensions {
+	b := material.Button(th.Theme, btn, text)
+	b.Background = th.Color.Success
+	b.Color = th.Color.OnPrimary
+	b.CornerRadius = th.Radii.MD
+	b.TextSize = th.Sizes.Base
+	return b.Layout(gtx)
+}
+
+// Small draws a compact secondary button for inline use (e.g., Copy buttons).
+func (th *Theme) Small(gtx layout.Context, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.smallStyled(gtx, btn, text, true)
+}
+
+// SmallGated mirrors Small but is muted and ignores clicks when enabled is false.
+func (th *Theme) SmallGated(gtx layout.Context, btn *widget.Clickable, text string, enabled bool) layout.Dimensions {
+	return th.smallStyled(gtx, btn, text, enabled)
+}
+
+func (th *Theme) smallStyled(gtx layout.Context, btn *widget.Clickable, text string, enabled bool) layout.Dimensions {
+	if !enabled {
+		gtx = gtx.Disabled()
+	}
+	b := material.Button(th.Theme, btn, text)
+	if enabled {
+		b.Background = th.Color.SurfaceAlt
+		b.Color = th.Color.TextStrong
+	} else {
+		b.Background = th.Disabled(th.Color.SurfaceAlt)
+		b.Color = th.Disabled(th.Color.TextStrong)
+	}
+	b.CornerRadius = th.Radii.SM
+	b.TextSize = th.Sizes.XS
 	b.Inset = layout.Inset{
 		Top:    unit.Dp(4),
 		Bottom: unit.Dp(4),
@@ -126,11 +174,28 @@ func SmallButton(gtx layout.Context, th *material.Theme, btn *widget.Clickable, 
 	return b.Layout(gtx)
 }
 
+// Backward-compatible top-level helpers (delegate to *Theme methods).
+func PrimaryButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.Primary(gtx, btn, text)
+}
+func SecondaryButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.Secondary(gtx, btn, text)
+}
+func DangerButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.Danger(gtx, btn, text)
+}
+func SuccessButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.Success(gtx, btn, text)
+}
+func SmallButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
+	return th.Small(gtx, btn, text)
+}
+
 // ─── Selectable Text & Clipboard ────────────────────────────────────────────
 
 // SelectableLabel renders a widget.Selectable with material-style text appearance.
 // Users can click-drag to select text and Ctrl+C to copy.
-func SelectableLabel(gtx layout.Context, th *material.Theme, sel *widget.Selectable, text string, size unit.Sp, col color.NRGBA) layout.Dimensions {
+func SelectableLabel(gtx layout.Context, th *Theme, sel *widget.Selectable, text string, size unit.Sp, col color.NRGBA, f font.Font) layout.Dimensions {
 	sel.SetText(text)
 
 	textMacro := op.Record(gtx.Ops)
@@ -141,7 +206,30 @@ func SelectableLabel(gtx layout.Context, th *material.Theme, sel *widget.Selecta
 	paint.ColorOp{Color: color.NRGBA{R: 0, G: 120, B: 180, A: 180}}.Add(gtx.Ops)
 	selCall := selMacro.Stop()
 
-	return sel.Layout(gtx, th.Shaper, font.Font{}, size, textCall, selCall)
+	return sel.Layout(gtx, th.Shaper, f, size, textCall, selCall)
+}
+
+// TruncateWords returns s shortened to at most maxRunes runes, breaking at the
+// last word boundary that fits and appending an ellipsis. Strings shorter than
+// the budget are returned unchanged. If no whitespace exists within the
+// budget, falls back to a hard rune-boundary cut.
+func TruncateWords(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	cut := maxRunes
+	// Prefer the last whitespace before the budget.
+	for i := cut - 1; i > 0; i-- {
+		if runes[i] == ' ' || runes[i] == '\t' || runes[i] == '\n' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimRight(string(runes[:cut]), " \t\n") + "…"
 }
 
 // CopyToClipboard writes text to the system clipboard.
@@ -156,7 +244,7 @@ func CopyToClipboard(gtx layout.Context, text string) {
 
 // StatusBadge renders a pill-shaped badge showing "Running" or "Stopped"
 // with a colored dot and tinted background.
-func StatusBadge(gtx layout.Context, th *material.Theme, started bool) layout.Dimensions {
+func StatusBadge(gtx layout.Context, th *Theme, started bool) layout.Dimensions {
 	var (
 		bg    color.NRGBA
 		fg    color.NRGBA
@@ -164,27 +252,27 @@ func StatusBadge(gtx layout.Context, th *material.Theme, started bool) layout.Di
 		label string
 	)
 	if started {
-		bg = ColorGreen100
-		fg = ColorGreen800
-		dot = ColorGreen600
+		bg = th.Color.SuccessBg
+		fg = th.Color.SuccessFg
+		dot = th.Color.Success
 		label = "Running"
 	} else {
-		bg = ColorGray200
-		fg = ColorGray700
-		dot = ColorGray400
+		bg = th.Color.SurfaceAlt
+		fg = th.Color.TextStrong
+		dot = th.Color.TextMuted
 		label = "Stopped"
 	}
 
 	return FillBackground(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-		rr := gtx.Dp(RadiusLG)
+		rr := gtx.Dp(th.Radii.LG)
 		defer clip.RRect{
 			Rect: image.Rectangle{Max: gtx.Constraints.Min},
 			NE:   rr, NW: rr, SE: rr, SW: rr,
 		}.Push(gtx.Ops).Pop()
 
 		return layout.Inset{
-			Top: SpaceXS, Bottom: SpaceXS,
-			Left: SpaceSM, Right: SpaceSM,
+			Top: th.Spacing.XS, Bottom: th.Spacing.XS,
+			Left: th.Spacing.SM, Right: th.Spacing.SM,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -193,9 +281,9 @@ func StatusBadge(gtx layout.Context, th *material.Theme, started bool) layout.Di
 					})
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
+					lbl := material.Body2(th.Theme, label)
 					lbl.Color = fg
-					lbl.TextSize = TextSM
+					lbl.TextSize = th.Sizes.SM
 					return lbl.Layout(gtx)
 				}),
 			)
@@ -229,11 +317,22 @@ func Divider(gtx layout.Context, col color.NRGBA, verticalMargin unit.Dp) layout
 // ─── Section ────────────────────────────────────────────────────────────────
 
 // Section renders a titled section with consistent header styling and bottom spacing.
-func Section(gtx layout.Context, th *material.Theme, title string, content layout.Widget) layout.Dimensions {
+func Section(gtx layout.Context, th *Theme, title string, content layout.Widget) layout.Dimensions {
+	return sectionWithColor(gtx, th, title, th.Color.TextPrimary, content)
+}
+
+// SectionDirty renders a Section with the title coloured by th.Color.Brand,
+// signalling that the contained controls have unsaved changes.
+func SectionDirty(gtx layout.Context, th *Theme, title string, content layout.Widget) layout.Dimensions {
+	return sectionWithColor(gtx, th, title, th.Color.Brand, content)
+}
+
+func sectionWithColor(gtx layout.Context, th *Theme, title string, titleColor color.NRGBA, content layout.Widget) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H6(th, title)
-			return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
+			lbl := material.H6(th.Theme, title)
+			lbl.Color = titleColor
+			return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(content),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -251,23 +350,23 @@ type KV struct {
 }
 
 // KVRows renders a list of key-value pairs with consistent label column width.
-func KVRows(gtx layout.Context, th *material.Theme, items []KV) layout.Dimensions {
+func KVRows(gtx layout.Context, th *Theme, items []KV) layout.Dimensions {
 	children := make([]layout.FlexChild, len(items))
 	for i, item := range items {
 		item := item
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Dp(LabelColWidth)
-						lbl := material.Body2(th, item.Key)
-						lbl.Color = ColorGray500
-						lbl.TextSize = TextBase
+						gtx.Constraints.Min.X = gtx.Dp(th.Dims.LabelColWidth)
+						lbl := material.Body2(th.Theme, item.Key)
+						lbl.Color = th.Color.TextSecondary
+						lbl.TextSize = th.Sizes.Base
 						return lbl.Layout(gtx)
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, item.Value)
-						lbl.TextSize = TextBase
+						lbl := material.Body2(th.Theme, item.Value)
+						lbl.TextSize = th.Sizes.Base
 						return lbl.Layout(gtx)
 					}),
 				)
@@ -281,23 +380,24 @@ func KVRows(gtx layout.Context, th *material.Theme, items []KV) layout.Dimension
 
 // OutputArea renders a scrollable monospace-style text area with a gray background.
 // Used for log viewers, CLI output, etc.
-func OutputArea(gtx layout.Context, th *material.Theme, list *widget.List, output string, placeholder string, maxHeight unit.Dp) layout.Dimensions {
+func OutputArea(gtx layout.Context, th *Theme, list *widget.List, output string, placeholder string, maxHeight unit.Dp) layout.Dimensions {
 	mh := gtx.Dp(maxHeight)
 	gtx.Constraints.Max.Y = mh
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
-	return FillBackground(gtx, ColorGray100, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(SpaceSM).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return FillBackground(gtx, th.Color.Surface, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(th.Spacing.SM).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if output == "" {
-				lbl := material.Body2(th, placeholder)
-				lbl.Color = ColorGray400
-				lbl.TextSize = TextSM
+				lbl := material.Body2(th.Theme, placeholder)
+				lbl.Color = th.Color.TextMuted
+				lbl.TextSize = th.Sizes.SM
 				return lbl.Layout(gtx)
 			}
 			lines := strings.Split(output, "\n")
-			return material.List(th, list).Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
-				lbl := material.Body2(th, lines[i])
-				lbl.TextSize = TextXS
+			return material.List(th.Theme, list).Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
+				lbl := material.Body2(th.Theme, lines[i])
+				lbl.TextSize = th.Sizes.XS
+				lbl.Font = MonoFont
 				return lbl.Layout(gtx)
 			})
 		})
@@ -307,8 +407,8 @@ func OutputArea(gtx layout.Context, th *material.Theme, list *widget.List, outpu
 // ─── Loader ─────────────────────────────────────────────────────────────────
 
 // Loader renders a material loading spinner at the given size.
-func Loader(gtx layout.Context, th *material.Theme, size unit.Dp) layout.Dimensions {
-	loader := material.Loader(th)
+func Loader(gtx layout.Context, th *Theme, size unit.Dp) layout.Dimensions {
+	loader := material.Loader(th.Theme)
 	s := gtx.Dp(size)
 	gtx.Constraints.Max.X = s
 	gtx.Constraints.Max.Y = s
@@ -333,7 +433,7 @@ func NewDropdown(options []string) *Dropdown {
 	}
 }
 
-func (d *Dropdown) Layout(gtx layout.Context, th *material.Theme, label string) layout.Dimensions {
+func (d *Dropdown) Layout(gtx layout.Context, th *Theme, label string) layout.Dimensions {
 	if d.button.Clicked(gtx) {
 		d.expanded = !d.expanded
 	}
@@ -346,9 +446,9 @@ func (d *Dropdown) Layout(gtx layout.Context, th *material.Theme, label string) 
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, label)
-			lbl.Color = ColorGray700
-			return layout.Inset{Bottom: SpaceXS}.Layout(gtx, lbl.Layout)
+			lbl := material.Body2(th.Theme, label)
+			lbl.Color = th.Color.TextStrong
+			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return d.layoutDropdown(gtx, th)
@@ -356,10 +456,10 @@ func (d *Dropdown) Layout(gtx layout.Context, th *material.Theme, label string) 
 	)
 }
 
-func (d *Dropdown) layoutDropdown(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (d *Dropdown) layoutDropdown(gtx layout.Context, th *Theme) layout.Dimensions {
 	border := widget.Border{
-		Color:        ColorBorder,
-		CornerRadius: RadiusSM,
+		Color:        th.Color.Border,
+		CornerRadius: th.Radii.SM,
 		Width:        unit.Dp(1),
 	}
 
@@ -368,15 +468,15 @@ func (d *Dropdown) layoutDropdown(gtx layout.Context, th *material.Theme) layout
 			return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, &d.button, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Top: SpaceSM, Bottom: SpaceSM,
+						Top: th.Spacing.SM, Bottom: th.Spacing.SM,
 						Left: unit.Dp(10), Right: unit.Dp(10),
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						selectedText := ""
 						if d.Selected >= 0 && d.Selected < len(d.Options) {
 							selectedText = d.Options[d.Selected]
 						}
-						lbl := material.Body2(th, selectedText+" ▾")
-						lbl.TextSize = TextBase
+						lbl := material.Body2(th.Theme, selectedText+" ▾")
+						lbl.TextSize = th.Sizes.Base
 						return lbl.Layout(gtx)
 					})
 				})
@@ -393,15 +493,15 @@ func (d *Dropdown) layoutDropdown(gtx layout.Context, th *material.Theme) layout
 	)
 }
 
-func (d *Dropdown) layoutOptions(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (d *Dropdown) layoutOptions(gtx layout.Context, th *Theme) layout.Dimensions {
 	border := widget.Border{
-		Color:        ColorBorder,
-		CornerRadius: RadiusSM,
+		Color:        th.Color.Border,
+		CornerRadius: th.Radii.SM,
 		Width:        unit.Dp(1),
 	}
 
 	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return FillBackground(gtx, ColorModalBg, func(gtx layout.Context) layout.Dimensions {
+		return FillBackground(gtx, th.Color.SurfaceElevated, func(gtx layout.Context) layout.Dimensions {
 			items := make([]layout.FlexChild, len(d.Options))
 			for i := range d.Options {
 				idx := i
@@ -411,10 +511,10 @@ func (d *Dropdown) layoutOptions(gtx layout.Context, th *material.Theme) layout.
 							Top: unit.Dp(6), Bottom: unit.Dp(6),
 							Left: unit.Dp(10), Right: unit.Dp(10),
 						}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(th, d.Options[idx])
-							lbl.TextSize = TextBase
+							lbl := material.Body2(th.Theme, d.Options[idx])
+							lbl.TextSize = th.Sizes.Base
 							if idx == d.Selected {
-								lbl.Color = ColorBlue600
+								lbl.Color = th.Color.Primary
 							}
 							return lbl.Layout(gtx)
 						})
@@ -430,7 +530,7 @@ func (d *Dropdown) layoutOptions(gtx layout.Context, th *material.Theme) layout.
 
 // TabBar renders a horizontal row of tab buttons. The active tab is highlighted
 // with the primary accent color and an underline indicator.
-func TabBar(gtx layout.Context, th *material.Theme, tabs []string, active int, clicks []*widget.Clickable) layout.Dimensions {
+func TabBar(gtx layout.Context, th *Theme, tabs []string, active int, clicks []*widget.Clickable) layout.Dimensions {
 	children := make([]layout.FlexChild, len(tabs))
 	for i, label := range tabs {
 		i, label := i, label
@@ -443,22 +543,22 @@ func TabBar(gtx layout.Context, th *material.Theme, tabs []string, active int, c
 }
 
 // layoutTab renders a single tab with an underline indicator when active.
-func layoutTab(gtx layout.Context, th *material.Theme, btn *widget.Clickable, label string, active bool) layout.Dimensions {
-	textColor := ColorGray500
+func layoutTab(gtx layout.Context, th *Theme, btn *widget.Clickable, label string, active bool) layout.Dimensions {
+	textColor := th.Color.TextSecondary
 	if active {
-		textColor = ColorBlue600
+		textColor = th.Color.Primary
 	}
 
 	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{
-					Top: SpaceSM, Bottom: SpaceSM,
-					Left: SpaceMD, Right: SpaceMD,
+					Top: th.Spacing.SM, Bottom: th.Spacing.SM,
+					Left: th.Spacing.MD, Right: th.Spacing.MD,
 				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(th, label)
+					lbl := material.Body1(th.Theme, label)
 					lbl.Color = textColor
-					lbl.TextSize = TextBase
+					lbl.TextSize = th.Sizes.Base
 					return lbl.Layout(gtx)
 				})
 			}),
@@ -468,7 +568,7 @@ func layoutTab(gtx layout.Context, th *material.Theme, btn *widget.Clickable, la
 				}
 				size := image.Point{X: gtx.Constraints.Min.X, Y: gtx.Dp(unit.Dp(2))}
 				defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
-				paint.Fill(gtx.Ops, ColorBlue600)
+				paint.Fill(gtx.Ops, th.Color.Primary)
 				return layout.Dimensions{Size: size}
 			}),
 		)
@@ -481,6 +581,10 @@ func layoutTab(gtx layout.Context, th *material.Theme, btn *widget.Clickable, la
 type ConfirmDialog struct {
 	confirmBtn widget.Clickable
 	cancelBtn  widget.Clickable
+
+	keys      *ModalFocus
+	anim      *modalShowState
+	keyResult ModalKeyResult
 }
 
 // ConfirmDialogStyle configures the appearance of a ConfirmDialog.
@@ -491,40 +595,62 @@ type ConfirmDialogStyle struct {
 	ConfirmColor color.NRGBA
 }
 
-// Layout renders the confirmation dialog inside a modal overlay.
-// Returns (confirmed, cancelled) booleans indicating which button was clicked.
-func (cd *ConfirmDialog) Layout(gtx layout.Context, th *material.Theme, style ConfirmDialogStyle) (confirmed, cancelled bool, dims layout.Dimensions) {
-	confirmed = cd.confirmBtn.Clicked(gtx)
-	cancelled = cd.cancelBtn.Clicked(gtx)
+// HandleUserInteractions reads the confirm/cancel button click state for the frame.
+// Must be called before Layout each frame and only once (Clicked() consumes events).
+func (cd *ConfirmDialog) HandleUserInteractions(gtx layout.Context) (confirmed, cancelled bool) {
+	if cd.keys == nil {
+		cd.keys = NewModalFocus()
+	}
+	cd.keyResult = ProcessModalKeys(gtx, cd.keys.Tag)
+	confirmed = cd.confirmBtn.Clicked(gtx) || cd.keyResult.Enter
+	cancelled = cd.cancelBtn.Clicked(gtx) || cd.keyResult.Escape
+	if confirmed || cancelled {
+		cd.keys.OnHide()
+		if cd.anim != nil {
+			cd.anim.Hide()
+		}
+	}
+	return
+}
 
-	dims = ModalOverlay(gtx, func(gtx layout.Context) layout.Dimensions {
+// Layout renders the confirmation dialog inside a modal overlay.
+// Use HandleUserInteractions to detect confirm/cancel clicks.
+func (cd *ConfirmDialog) Layout(gtx layout.Context, th *Theme, style ConfirmDialogStyle) layout.Dimensions {
+	if cd.keys == nil {
+		cd.keys = NewModalFocus()
+	}
+	if cd.anim == nil {
+		cd.anim = NewModalAnim()
+	}
+	cd.anim.Show()
+	return AnimatedModalOverlay(gtx, th, cd.anim, func(gtx layout.Context) layout.Dimensions {
+		cd.keys.Layout(gtx)
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H6(th, style.Title)
-				return layout.Inset{Bottom: SpaceMD}.Layout(gtx, lbl.Layout)
+				lbl := material.H6(th.Theme, style.Title)
+				return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(th, style.Message)
+				lbl := material.Body1(th.Theme, style.Message)
 				return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return SecondaryButton(gtx, th, &cd.cancelBtn, "Cancel")
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						b := material.Button(th, &cd.confirmBtn, style.ConfirmLabel)
+						b := material.Button(th.Theme, &cd.confirmBtn, style.ConfirmLabel)
 						b.Background = style.ConfirmColor
-						b.Color = ColorWhite
-						b.CornerRadius = RadiusMD
-						b.TextSize = TextBase
+						b.Color = th.Color.White
+						b.CornerRadius = th.Radii.MD
+						b.TextSize = th.Sizes.Base
 						return b.Layout(gtx)
 					}),
 				)
 			}),
 		)
 	})
-	return
 }

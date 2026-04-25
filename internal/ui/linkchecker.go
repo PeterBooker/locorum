@@ -23,26 +23,24 @@ func NewLinkChecker(state *UIState, sm *sites.SiteManager) *LinkChecker {
 	return lc
 }
 
-func (lc *LinkChecker) Layout(gtx layout.Context, th *material.Theme, siteID string) layout.Dimensions {
-	lc.handleClicks(gtx, siteID)
-
+func (lc *LinkChecker) Layout(gtx layout.Context, th *Theme, siteID string) layout.Dimensions {
 	output, loading := lc.state.GetLinkCheckState()
 
-	return layout.Inset{Top: SpaceLG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: th.Spacing.LG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H6(th, "Link Checker")
-				return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
+				lbl := material.H6(th.Theme, "Link Checker")
+				return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if loading {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return Loader(gtx, th, LoaderSizeSM)
+							return Loader(gtx, th, th.Dims.LoaderSizeSM)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(th, "  Checking links...")
-							lbl.Color = ColorGray500
+							lbl := material.Body2(th.Theme, "  Checking links...")
+							lbl.Color = th.Color.TextSecondary
 							return lbl.Layout(gtx)
 						}),
 					)
@@ -50,15 +48,16 @@ func (lc *LinkChecker) Layout(gtx layout.Context, th *material.Theme, siteID str
 				return SecondaryButton(gtx, th, &lc.checkBtn, "Check Links")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return OutputArea(gtx, th, &lc.outputList, output, "Click Check Links to scan for broken links", OutputAreaMax)
+				return layout.Inset{Top: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return OutputArea(gtx, th, &lc.outputList, output, "Click Check Links to scan for broken links", th.Dims.OutputAreaMax)
 				})
 			}),
 		)
 	})
 }
 
-func (lc *LinkChecker) handleClicks(gtx layout.Context, siteID string) {
+// HandleUserInteractions processes the Check Links button click.
+func (lc *LinkChecker) HandleUserInteractions(gtx layout.Context, siteID string) {
 	if lc.checkBtn.Clicked(gtx) {
 		lc.state.SetLinkCheckOutput("")
 		lc.state.SetLinkCheckLoading(true)

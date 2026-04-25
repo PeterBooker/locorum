@@ -132,3 +132,25 @@ func (s *Storage) DeleteSite(id string) error {
 
 	return nil
 }
+
+// GetSetting returns the setting value for a key, or "" if not set.
+func (s *Storage) GetSetting(key string) (string, error) {
+	row := s.db.QueryRow("SELECT value FROM settings WHERE key = ?", key)
+	var v string
+	if err := row.Scan(&v); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return v, nil
+}
+
+// SetSetting upserts a key/value pair into the settings table.
+func (s *Storage) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value,
+	)
+	return err
+}

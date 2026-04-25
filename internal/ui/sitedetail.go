@@ -49,7 +49,7 @@ type SiteDetail struct {
 	retryInitBtn widget.Clickable
 }
 
-func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *SiteDetail {
+func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications) *SiteDetail {
 	sd := &SiteDetail{
 		state:         state,
 		sm:            sm,
@@ -65,7 +65,51 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *ToastManager) 
 	return sd
 }
 
-func (sd *SiteDetail) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
+// HandleUserInteractions processes retry-init, tab-bar, and per-tab interactions,
+// and delegates to the relevant sub-components. Called by the root UI before Layout.
+func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
+	// Docker init error screen: only the Retry button is interactive.
+	if sd.state.GetInitError() != "" {
+		if sd.retryInitBtn.Clicked(gtx) {
+			if retryFn := sd.state.GetRetryInit(); retryFn != nil {
+				go retryFn()
+			}
+		}
+		return
+	}
+
+	site := sd.state.SelectedSite()
+	if site == nil {
+		return
+	}
+
+	// Tab selection
+	for i := range sd.tabClicks {
+		if sd.tabClicks[i].Clicked(gtx) {
+			sd.activeTab = i
+		}
+	}
+
+	// Controls bar (always present when a site is selected)
+	sd.controls.HandleUserInteractions(gtx, site)
+
+	// Per-tab interactions
+	switch sd.activeTab {
+	case tabDatabase:
+		sd.dbCreds.HandleUserInteractions(gtx, site)
+	case tabUtilities:
+		if site.Started {
+			sd.logViewer.HandleUserInteractions(gtx, site.ID)
+			sd.wpcliPanel.HandleUserInteractions(gtx, site.ID)
+			sd.linkChecker.HandleUserInteractions(gtx, site.ID)
+		}
+	default: // tabOverview
+		sd.handleOverviewClicks(gtx, site)
+		sd.versionEditor.HandleUserInteractions(gtx, site)
+	}
+}
+
+func (sd *SiteDetail) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Check for Docker initialization error.
 	if initError := sd.state.GetInitError(); initError != "" {
 		return sd.layoutInitError(gtx, th, initError)
@@ -74,22 +118,15 @@ func (sd *SiteDetail) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 	site := sd.state.SelectedSite()
 	if site == nil {
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H6(th, "Select a site from the sidebar")
-			lbl.Color = ColorGray400
+			lbl := material.H6(th.Theme, "Select a site from the sidebar")
+			lbl.Color = th.Color.TextMuted
 			return lbl.Layout(gtx)
 		})
 	}
 
-	// Handle tab clicks.
-	for i := range sd.tabClicks {
-		if sd.tabClicks[i].Clicked(gtx) {
-			sd.activeTab = i
-		}
-	}
-
 	return layout.Inset{
-		Top: SpaceXL, Bottom: SpaceXL,
-		Left: Space2XL, Right: Space2XL,
+		Top: th.Spacing.XL, Bottom: th.Spacing.XL,
+		Left: th.Spacing.XXL, Right: th.Spacing.XXL,
 	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Site header (always visible above tabs)
@@ -106,20 +143,20 @@ func (sd *SiteDetail) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 				for i := range sd.tabClicks {
 					clicks[i] = &sd.tabClicks[i]
 				}
-				return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return TabBar(gtx, th, tabLabels, sd.activeTab, clicks)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return Divider(gtx, ColorBorder, 0)
+							return Divider(gtx, th.Color.Border, 0)
 						}),
 					)
 				})
 			}),
 			// Tab content (scrollable)
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return material.List(th, &sd.list).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+				return material.List(th.Theme, &sd.list).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 					return sd.layoutTabContent(gtx, th)
 				})
 			}),
@@ -127,23 +164,17 @@ func (sd *SiteDetail) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 	})
 }
 
-func (sd *SiteDetail) layoutInitError(gtx layout.Context, th *material.Theme, errMsg string) layout.Dimensions {
-	if sd.retryInitBtn.Clicked(gtx) {
-		if retryFn := sd.state.GetRetryInit(); retryFn != nil {
-			go retryFn()
-		}
-	}
-
+func (sd *SiteDetail) layoutInitError(gtx layout.Context, th *Theme, errMsg string) layout.Dimensions {
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H5(th, "Docker Unavailable")
-				lbl.Color = ColorRed600
-				return layout.Inset{Bottom: SpaceMD}.Layout(gtx, lbl.Layout)
+				lbl := material.H5(th.Theme, "Docker Unavailable")
+				lbl.Color = th.Color.Danger
+				return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, errMsg)
-				lbl.Color = ColorGray500
+				lbl := material.Body2(th.Theme, errMsg)
+				lbl.Color = th.Color.TextSecondary
 				return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -153,7 +184,7 @@ func (sd *SiteDetail) layoutInitError(gtx layout.Context, th *material.Theme, er
 	})
 }
 
-func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *Theme) layout.Dimensions {
 	site := sd.state.SelectedSite()
 	if site == nil {
 		return layout.Dimensions{}
@@ -170,7 +201,7 @@ func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *material.Theme) l
 }
 
 // layoutOverviewTab shows site info and version settings.
-func (sd *SiteDetail) layoutOverviewTab(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (sd *SiteDetail) layoutOverviewTab(gtx layout.Context, th *Theme) layout.Dimensions {
 	site := sd.state.SelectedSite()
 	if site == nil {
 		return layout.Dimensions{}
@@ -182,9 +213,7 @@ func (sd *SiteDetail) layoutOverviewTab(gtx layout.Context, th *material.Theme) 
 		sd.publicDirEditor.SetText(site.PublicDir)
 	}
 
-	sd.handleOverviewClicks(gtx, site)
-
-	return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Site info section
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -221,6 +250,9 @@ func (sd *SiteDetail) handleOverviewClicks(gtx layout.Context, site *types.Site)
 	if sd.savePublicDir.Clicked(gtx) && !site.Started {
 		siteID := site.ID
 		newDir := sd.publicDirEditor.Text()
+		if newDir == site.PublicDir {
+			return
+		}
 		go func() {
 			if err := sd.sm.UpdatePublicDir(siteID, newDir); err != nil {
 				sd.state.ShowError("Failed to update public dir: " + err.Error())
@@ -230,7 +262,7 @@ func (sd *SiteDetail) handleOverviewClicks(gtx layout.Context, site *types.Site)
 }
 
 // layoutSiteInfo renders the site info section with interactive rows.
-func (sd *SiteDetail) layoutSiteInfo(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
+func (sd *SiteDetail) layoutSiteInfo(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	return Section(gtx, th, "Site", func(gtx layout.Context) layout.Dimensions {
 		children := []layout.FlexChild{
 			// URL row with Open button
@@ -247,7 +279,7 @@ func (sd *SiteDetail) layoutSiteInfo(gtx layout.Context, th *material.Theme, sit
 			}),
 			// Web Server
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return KVRows(gtx, th, []KV{{"Web Server", site.WebServer}})
 				})
 			}),
@@ -264,23 +296,23 @@ func (sd *SiteDetail) layoutSiteInfo(gtx layout.Context, th *material.Theme, sit
 }
 
 // layoutKVWithButton renders a key-value row with a small action button on the right.
-func (sd *SiteDetail) layoutKVWithButton(gtx layout.Context, th *material.Theme, key, value string, btn *widget.Clickable, btnLabel string) layout.Dimensions {
-	return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+func (sd *SiteDetail) layoutKVWithButton(gtx layout.Context, th *Theme, key, value string, btn *widget.Clickable, btnLabel string) layout.Dimensions {
+	return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.X = gtx.Dp(LabelColWidth)
-				lbl := material.Body2(th, key)
-				lbl.Color = ColorGray500
-				lbl.TextSize = TextBase
+				gtx.Constraints.Min.X = gtx.Dp(th.Dims.LabelColWidth)
+				lbl := material.Body2(th.Theme, key)
+				lbl.Color = th.Color.TextSecondary
+				lbl.TextSize = th.Sizes.Base
 				return lbl.Layout(gtx)
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, value)
-				lbl.TextSize = TextBase
+				lbl := material.Body2(th.Theme, value)
+				lbl.TextSize = th.Sizes.Base
 				return lbl.Layout(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return SmallButton(gtx, th, btn, btnLabel)
 				})
 			}),
@@ -290,30 +322,31 @@ func (sd *SiteDetail) layoutKVWithButton(gtx layout.Context, th *material.Theme,
 
 // layoutPublicDirRow renders the public dir as an editable field when stopped,
 // or as read-only text when running.
-func (sd *SiteDetail) layoutPublicDirRow(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
+func (sd *SiteDetail) layoutPublicDirRow(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	if site.Started {
 		// Read-only when running.
-		return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return KVRows(gtx, th, []KV{{"Public Dir", site.PublicDir}})
 		})
 	}
 
 	// Editable when stopped.
-	return layout.Inset{Bottom: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.X = gtx.Dp(LabelColWidth)
-				lbl := material.Body2(th, "Public Dir")
-				lbl.Color = ColorGray500
-				lbl.TextSize = TextBase
+				gtx.Constraints.Min.X = gtx.Dp(th.Dims.LabelColWidth)
+				lbl := material.Body2(th.Theme, "Public Dir")
+				lbl.Color = th.Color.TextSecondary
+				lbl.TextSize = th.Sizes.Base
 				return lbl.Layout(gtx)
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return BorderedEditor(gtx, th, &sd.publicDirEditor, "e.g. wp-content/public")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return SmallButton(gtx, th, &sd.savePublicDir, "Save")
+				return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					dirty := sd.publicDirEditor.Text() != site.PublicDir
+					return th.SmallGated(gtx, &sd.savePublicDir, "Save", dirty)
 				})
 			}),
 		)
@@ -321,33 +354,33 @@ func (sd *SiteDetail) layoutPublicDirRow(gtx layout.Context, th *material.Theme,
 }
 
 // layoutDatabaseTab shows database credentials.
-func (sd *SiteDetail) layoutDatabaseTab(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (sd *SiteDetail) layoutDatabaseTab(gtx layout.Context, th *Theme) layout.Dimensions {
 	site := sd.state.SelectedSite()
 	if site == nil {
 		return layout.Dimensions{}
 	}
 
-	return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return sd.dbCreds.Layout(gtx, th, site)
 	})
 }
 
 // layoutUtilitiesTab shows logs, WP-CLI, and link checker (running-only features).
-func (sd *SiteDetail) layoutUtilitiesTab(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (sd *SiteDetail) layoutUtilitiesTab(gtx layout.Context, th *Theme) layout.Dimensions {
 	site := sd.state.SelectedSite()
 	if site == nil {
 		return layout.Dimensions{}
 	}
 
 	if !site.Started {
-		return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "Start the site to access utilities.")
-			lbl.Color = ColorGray400
+		return layout.Inset{Top: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th.Theme, "Start the site to access utilities.")
+			lbl.Color = th.Color.TextMuted
 			return lbl.Layout(gtx)
 		})
 	}
 
-	return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return sd.logViewer.Layout(gtx, th, site.ID)

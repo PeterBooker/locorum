@@ -19,7 +19,7 @@ import (
 type Sidebar struct {
 	state  *UIState
 	sm     *sites.SiteManager
-	toasts *ToastManager
+	toasts *Notifications
 
 	searchField widget.Editor
 	newSiteBtn  widget.Clickable
@@ -30,54 +30,100 @@ type Sidebar struct {
 	deleteClicks []widget.Clickable
 }
 
-func NewSidebar(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *Sidebar {
+func NewSidebar(state *UIState, sm *sites.SiteManager, toasts *Notifications) *Sidebar {
 	s := &Sidebar{state: state, sm: sm, toasts: toasts}
 	s.searchField.SingleLine = true
 	s.list.List.Axis = layout.Vertical
 	return s
 }
 
-func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
+// HandleUserInteractions processes the search editor, New Site button, and
+// per-site selection/delete clicks. Called by the root UI before Layout.
+func (s *Sidebar) HandleUserInteractions(gtx layout.Context) {
+	// Pull search term from editor into app state so filtering is consistent.
+	s.state.SetSearchTerm(s.searchField.Text())
+
+	if s.newSiteBtn.Clicked(gtx) {
+		s.state.SetShowNewSiteModal(true)
+	}
+
+	filtered := s.filteredSites()
+	for len(s.siteClicks) < len(filtered) {
+		s.siteClicks = append(s.siteClicks, widget.Clickable{})
+	}
+	for len(s.deleteClicks) < len(filtered) {
+		s.deleteClicks = append(s.deleteClicks, widget.Clickable{})
+	}
+	for i, site := range filtered {
+		if s.siteClicks[i].Clicked(gtx) {
+			s.state.SetSelectedID(site.ID)
+		}
+		if s.deleteClicks[i].Clicked(gtx) {
+			s.state.ShowDeleteConfirm(site.ID, site.Name)
+		}
+	}
+}
+
+// filteredSites returns the filtered site list shown in the sidebar.
+func (s *Sidebar) filteredSites() []types.Site {
+	allSites := s.state.GetSites()
+	search := s.state.GetSearchTerm()
+	var filtered []types.Site
+	for _, site := range allSites {
+		if search == "" || strings.Contains(strings.ToLower(site.Name), strings.ToLower(search)) {
+			filtered = append(filtered, site)
+		}
+	}
+	return filtered
+}
+
+func (s *Sidebar) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Fixed sidebar width
-	gtx.Constraints.Max.X = gtx.Dp(SidebarWidth)
+	gtx.Constraints.Max.X = gtx.Dp(th.Dims.SidebarWidth)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
-	return FillBackground(gtx, ColorSidebarBg, func(gtx layout.Context) layout.Dimensions {
+	return FillBackground(gtx, th.Color.SidebarBg, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
-			Top: SpaceXL, Bottom: SpaceLG,
-			Left: SpaceLG, Right: SpaceLG,
+			Top: th.Spacing.XL, Bottom: th.Spacing.LG,
+			Left: th.Spacing.LG, Right: th.Spacing.LG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				// Logo + Title
+				// Logo + Title + Bell
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Bottom: SpaceLG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Bottom: th.Spacing.LG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return LayoutLogo(gtx, LogoSize)
+								return LayoutLogo(gtx, th, LogoSize)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.H5(th, "Locorum")
-									lbl.Color = ColorGold
+								return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.H5(th.Theme, "Locorum")
+									lbl.Color = th.Color.Brand
 									return lbl.Layout(gtx)
 								})
+							}),
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X}}
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return s.toasts.LayoutBell(gtx, th)
 							}),
 						)
 					})
 				}),
 				// Divider
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return Divider(gtx, ColorBorder, SpaceSM)
+					return Divider(gtx, th.Color.Border, th.Spacing.SM)
 				}),
 				// "Sites" heading
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H6(th, "Sites")
-					lbl.Color = ColorWhite
-					return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
+					lbl := material.H6(th.Theme, "Sites")
+					lbl.Color = th.Color.White
+					return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, lbl.Layout)
 				}),
 				// Search field
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return s.layoutSearch(gtx, th)
 					})
 				}),
@@ -87,10 +133,7 @@ func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensio
 				}),
 				// "New Site" button
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						if s.newSiteBtn.Clicked(gtx) {
-							s.state.SetShowNewSiteModal(true)
-						}
+					return layout.Inset{Top: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return PrimaryButton(gtx, th, &s.newSiteBtn, "New Site")
 					})
 				}),
@@ -99,42 +142,32 @@ func (s *Sidebar) Layout(gtx layout.Context, th *material.Theme) layout.Dimensio
 	})
 }
 
-func (s *Sidebar) layoutSearch(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	s.state.SetSearchTerm(s.searchField.Text())
-
+func (s *Sidebar) layoutSearch(gtx layout.Context, th *Theme) layout.Dimensions {
 	border := widget.Border{
-		Color:        ColorGray500,
-		CornerRadius: RadiusSM,
+		Color:        th.Color.TextSecondary,
+		CornerRadius: th.Radii.SM,
 		Width:        unit.Dp(1),
 	}
 	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
 			Top: unit.Dp(6), Bottom: unit.Dp(6),
-			Left: SpaceSM, Right: SpaceSM,
+			Left: th.Spacing.SM, Right: th.Spacing.SM,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &s.searchField, "Search sites...")
-			ed.Color = ColorWhite
-			ed.HintColor = ColorGray400
-			ed.TextSize = TextBase
+			ed := material.Editor(th.Theme, &s.searchField, "Search sites...")
+			ed.Color = th.Color.White
+			ed.HintColor = th.Color.TextMuted
+			ed.TextSize = th.Sizes.Base
 			return ed.Layout(gtx)
 		})
 	})
 }
 
-func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	allSites := s.state.GetSites()
-	search := s.state.GetSearchTerm()
+func (s *Sidebar) layoutSiteList(gtx layout.Context, th *Theme) layout.Dimensions {
+	filtered := s.filteredSites()
 	selectedID := s.state.GetSelectedID()
 
-	// Filter sites
-	var filtered []types.Site
-	for _, site := range allSites {
-		if search == "" || strings.Contains(strings.ToLower(site.Name), strings.ToLower(search)) {
-			filtered = append(filtered, site)
-		}
-	}
-
-	// Ensure enough clickables
+	// Ensure enough clickables — HandleUserInteractions also grows these, but
+	// guard here so Layout is safe if ever invoked alone (e.g., tests).
 	for len(s.siteClicks) < len(filtered) {
 		s.siteClicks = append(s.siteClicks, widget.Clickable{})
 	}
@@ -143,37 +176,29 @@ func (s *Sidebar) layoutSiteList(gtx layout.Context, th *material.Theme) layout.
 	}
 
 	if len(filtered) == 0 {
-		lbl := material.Body2(th, "No sites found")
-		lbl.Color = ColorGray400
+		lbl := material.Body2(th.Theme, "No sites found")
+		lbl.Color = th.Color.TextMuted
 		return lbl.Layout(gtx)
 	}
 
-	return material.List(th, &s.list).Layout(gtx, len(filtered), func(gtx layout.Context, i int) layout.Dimensions {
+	return material.List(th.Theme, &s.list).Layout(gtx, len(filtered), func(gtx layout.Context, i int) layout.Dimensions {
 		site := filtered[i]
-
-		if s.siteClicks[i].Clicked(gtx) {
-			s.state.SetSelectedID(site.ID)
-		}
-		if s.deleteClicks[i].Clicked(gtx) {
-			s.state.ShowDeleteConfirm(site.ID, site.Name)
-		}
-
 		isSelected := site.ID == selectedID
 
-		return layout.Inset{Bottom: SpaceXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return s.layoutSiteItem(gtx, th, &s.siteClicks[i], &s.deleteClicks[i], site.Name, isSelected, site.Started)
 		})
 	})
 }
 
-func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *widget.Clickable, deleteClick *widget.Clickable, name string, selected, started bool) layout.Dimensions {
-	bgColor := ColorGray900
+func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *Theme, click *widget.Clickable, deleteClick *widget.Clickable, name string, selected, started bool) layout.Dimensions {
+	bgColor := th.Color.SurfaceDeep
 	if selected {
-		bgColor = ColorGray100
+		bgColor = th.Color.Surface
 	}
 
 	return FillBackground(gtx, bgColor, func(gtx layout.Context) layout.Dimensions {
-		rr := gtx.Dp(RadiusSM)
+		rr := gtx.Dp(th.Radii.SM)
 		defer clip.RRect{
 			Rect: image.Rectangle{Max: gtx.Constraints.Max},
 			NE:   rr, NW: rr, SE: rr, SW: rr,
@@ -182,19 +207,21 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			// Status indicator dot
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layoutStatusDot(gtx, started)
+				return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layoutStatusDot(gtx, th, started)
 				})
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, click, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Top: SpaceSM, Bottom: SpaceSM,
-						Left: unit.Dp(6), Right: SpaceXS,
+						Top: th.Spacing.SM, Bottom: th.Spacing.SM,
+						Left: unit.Dp(6), Right: th.Spacing.XS,
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, name)
-						lbl.Color = ColorWhite
-						lbl.TextSize = TextBase
+						lbl := material.Body2(th.Theme, TruncateWords(name, 22))
+						lbl.Color = th.Color.White
+						lbl.TextSize = th.Sizes.Base
+						lbl.MaxLines = 1
+						lbl.Truncator = "…"
 						return lbl.Layout(gtx)
 					})
 				})
@@ -202,12 +229,12 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return material.Clickable(gtx, deleteClick, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Top: SpaceSM, Bottom: SpaceSM,
-						Left: SpaceXS, Right: SpaceSM,
+						Top: th.Spacing.SM, Bottom: th.Spacing.SM,
+						Left: th.Spacing.XS, Right: th.Spacing.SM,
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "✕")
-						lbl.Color = ColorGray400
-						lbl.TextSize = TextBase
+						lbl := material.Body2(th.Theme, "✕")
+						lbl.Color = th.Color.TextMuted
+						lbl.TextSize = th.Sizes.Base
 						return lbl.Layout(gtx)
 					})
 				})
@@ -217,13 +244,13 @@ func (s *Sidebar) layoutSiteItem(gtx layout.Context, th *material.Theme, click *
 }
 
 // layoutStatusDot draws a small filled circle as a status indicator.
-func layoutStatusDot(gtx layout.Context, started bool) layout.Dimensions {
+func layoutStatusDot(gtx layout.Context, th *Theme, started bool) layout.Dimensions {
 	size := gtx.Dp(unit.Dp(8))
 	var col color.NRGBA
 	if started {
-		col = ColorGreen600
+		col = th.Color.Success
 	} else {
-		col = ColorGray400
+		col = th.Color.TextMuted
 	}
 
 	defer clip.Ellipse{

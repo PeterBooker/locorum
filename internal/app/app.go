@@ -4,6 +4,7 @@ import (
 	"embed"
 	"log"
 	"log/slog"
+	"os"
 	"path"
 
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -150,6 +151,19 @@ func (a *App) SetupFilesystem() error {
 	if err != nil {
 		slog.Error("Failed to create directory: " + err.Error())
 		return err
+	}
+
+	// Ensure map.conf exists as a file before the global nginx container is
+	// created — otherwise Docker bind-mounts the missing path and creates it
+	// as a (root-owned) directory, breaking later attempts to write to it.
+	mapConf := path.Join(a.homeDir, ".locorum", "config", "nginx", "map.conf")
+	if _, err := os.Stat(mapConf); os.IsNotExist(err) {
+		f, err := os.Create(mapConf)
+		if err != nil {
+			slog.Error("Failed to create map.conf: " + err.Error())
+			return err
+		}
+		f.Close()
 	}
 
 	err = utils.EnsureDir(path.Join(a.homeDir, ".locorum", "config", "apache", "sites"))

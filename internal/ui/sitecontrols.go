@@ -30,13 +30,11 @@ func NewSiteControls(state *UIState, sm *sites.SiteManager) *SiteControls {
 	return &SiteControls{state: state, sm: sm}
 }
 
-func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
-	sc.handleClicks(gtx, site)
-
+func (sc *SiteControls) Layout(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	toggling := sc.state.IsSiteToggling(site.ID)
 	exporting := sc.state.IsExportLoading()
 
-	return layout.Inset{Bottom: SpaceXL}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Bottom: th.Spacing.XL}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Row 1: Start/Stop, Clone, Export
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -44,22 +42,22 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 					// Start / Stop / Loading spinner
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if toggling {
-							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return Loader(gtx, th, LoaderSize)
+							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return Loader(gtx, th, th.Dims.LoaderSize)
 							})
 						}
 						if site.Started {
-							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return DangerButton(gtx, th, &sc.stopBtn, "Stop")
 							})
 						}
-						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return SuccessButton(gtx, th, &sc.startBtn, "Start")
 						})
 					}),
 					// Clone
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return SecondaryButton(gtx, th, &sc.cloneBtn, "Clone")
 						})
 					}),
@@ -69,7 +67,7 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 							return layout.Dimensions{}
 						}
 						if exporting {
-							return Loader(gtx, th, LoaderSize)
+							return Loader(gtx, th, th.Dims.LoaderSize)
 						}
 						return SecondaryButton(gtx, th, &sc.exportBtn, "Export")
 					}),
@@ -80,17 +78,17 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 				if !site.Started {
 					return layout.Dimensions{}
 				}
-				return layout.Inset{Top: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
 						// Open Admin
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return PrimaryButton(gtx, th, &sc.openAdminBtn, "Open Admin")
 							})
 						}),
 						// Shell
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return SecondaryButton(gtx, th, &sc.shellBtn, "Shell")
 							})
 						}),
@@ -108,7 +106,9 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *material.Theme, site *typ
 	})
 }
 
-func (sc *SiteControls) handleClicks(gtx layout.Context, site *types.Site) {
+// HandleUserInteractions processes button clicks on the controls bar.
+// Called by the parent SiteDetail before Layout each frame.
+func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.Site) {
 	if sc.startBtn.Clicked(gtx) {
 		siteID := site.ID
 		sc.state.SetSiteToggling(siteID, true)
@@ -198,12 +198,14 @@ func (sc *SiteControls) handleClicks(gtx layout.Context, site *types.Site) {
 }
 
 // layoutSiteHeader renders a status badge next to the site name.
-func layoutSiteHeader(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
-	return layout.Inset{Bottom: SpaceLG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+func layoutSiteHeader(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
+	return layout.Inset{Bottom: th.Spacing.LG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H4(th, site.Name)
-				return layout.Inset{Right: SpaceMD}.Layout(gtx, lbl.Layout)
+				lbl := material.H4(th.Theme, TruncateWords(site.Name, 50))
+				lbl.MaxLines = 1
+				lbl.Truncator = "…"
+				return layout.Inset{Right: th.Spacing.MD}.Layout(gtx, lbl.Layout)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return StatusBadge(gtx, th, site.Started)
@@ -213,7 +215,7 @@ func layoutSiteHeader(gtx layout.Context, th *material.Theme, site *types.Site) 
 }
 
 // layoutVersionsSection renders the Versions key-value section.
-func layoutVersionsSection(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
+func layoutVersionsSection(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	return Section(gtx, th, "Versions", func(gtx layout.Context) layout.Dimensions {
 		return KVRows(gtx, th, []KV{
 			{"PHP", site.PHPVersion},

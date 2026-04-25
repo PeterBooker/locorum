@@ -3,7 +3,6 @@ package ui
 import (
 	"gioui.org/layout"
 	"gioui.org/widget"
-	"gioui.org/widget/material"
 
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
@@ -14,18 +13,20 @@ import (
 type VersionEditor struct {
 	state  *UIState
 	sm     *sites.SiteManager
-	toasts *ToastManager
+	toasts *Notifications
 
 	phpDropdown   *Dropdown
 	mysqlDropdown *Dropdown
 	redisDropdown *Dropdown
 	saveBtn       widget.Clickable
 
-	// Track which site we last synced dropdowns for.
-	lastSiteID string
+	// Track which site we last synced dropdowns for, and the baseline values
+	// used to compute the dirty flag.
+	lastSiteID                          string
+	initialPHP, initialMySQL, initialRedis string
 }
 
-func NewVersionEditor(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *VersionEditor {
+func NewVersionEditor(state *UIState, sm *sites.SiteManager, toasts *Notifications) *VersionEditor {
 	return &VersionEditor{
 		state:         state,
 		sm:            sm,
@@ -36,7 +37,7 @@ func NewVersionEditor(state *UIState, sm *sites.SiteManager, toasts *ToastManage
 	}
 }
 
-func (ve *VersionEditor) Layout(gtx layout.Context, th *material.Theme, site *types.Site) layout.Dimensions {
+func (ve *VersionEditor) Layout(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	if site.Started {
 		return layoutVersionsSection(gtx, th, site)
 	}
@@ -47,30 +48,44 @@ func (ve *VersionEditor) Layout(gtx layout.Context, th *material.Theme, site *ty
 		ve.syncDropdowns(site)
 	}
 
-	ve.handleClicks(gtx, site)
+	dirty := ve.isDirty()
+	sectionFn := Section
+	title := "Versions (editable while stopped)"
+	if dirty {
+		title = "● Versions — unsaved changes"
+		sectionFn = SectionDirty
+	}
 
-	return Section(gtx, th, "Versions (editable while stopped)", func(gtx layout.Context) layout.Dimensions {
+	return sectionFn(gtx, th, title, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Bottom: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return ve.phpDropdown.Layout(gtx, th, "PHP Version")
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Bottom: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return ve.mysqlDropdown.Layout(gtx, th, "MySQL Version")
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return ve.redisDropdown.Layout(gtx, th, "Redis Version")
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return PrimaryButton(gtx, th, &ve.saveBtn, "Save Changes")
+				return th.PrimaryGated(gtx, &ve.saveBtn, "Save Changes", dirty)
 			}),
 		)
 	})
+}
+
+// isDirty reports whether any dropdown selection differs from the baseline
+// captured when the site was last synced.
+func (ve *VersionEditor) isDirty() bool {
+	return phpVersions[ve.phpDropdown.Selected] != ve.initialPHP ||
+		mysqlVersions[ve.mysqlDropdown.Selected] != ve.initialMySQL ||
+		redisVersions[ve.redisDropdown.Selected] != ve.initialRedis
 }
 
 func (ve *VersionEditor) syncDropdowns(site *types.Site) {
@@ -92,14 +107,26 @@ func (ve *VersionEditor) syncDropdowns(site *types.Site) {
 			break
 		}
 	}
+	ve.initialPHP = site.PHPVersion
+	ve.initialMySQL = site.MySQLVersion
+	ve.initialRedis = site.RedisVersion
 }
 
-func (ve *VersionEditor) handleClicks(gtx layout.Context, site *types.Site) {
-	if ve.saveBtn.Clicked(gtx) {
+// HandleUserInteractions processes the Save button click on the version editor.
+// Only meaningful when the site is stopped; no-op otherwise.
+func (ve *VersionEditor) HandleUserInteractions(gtx layout.Context, site *types.Site) {
+	if site.Started {
+		return
+	}
+	if ve.saveBtn.Clicked(gtx) && ve.isDirty() {
 		siteID := site.ID
 		phpVer := phpVersions[ve.phpDropdown.Selected]
 		mysqlVer := mysqlVersions[ve.mysqlDropdown.Selected]
 		redisVer := redisVersions[ve.redisDropdown.Selected]
+
+		ve.initialPHP = phpVer
+		ve.initialMySQL = mysqlVer
+		ve.initialRedis = redisVer
 
 		go func() {
 			if err := ve.sm.UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer); err != nil {

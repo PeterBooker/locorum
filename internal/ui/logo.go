@@ -18,20 +18,17 @@ var LogoSize = unit.Dp(44)
 
 // LayoutLogo draws the Locorum logo: a neon cyan hexagonal frame enclosing
 // a hot-pink location pin with a gold center dot.
-func LayoutLogo(gtx layout.Context, size unit.Dp) layout.Dimensions {
+func LayoutLogo(gtx layout.Context, th *Theme, size unit.Dp) layout.Dimensions {
 	s := float32(gtx.Dp(size))
 	px := int(s)
 	cx, cy := s/2, s/2
 
-	// Neon cyan hexagon outline
-	logoHexOutline(gtx.Ops, cx, cy, s*0.45, s*0.055, ColorBlue600)
+	logoHexOutline(gtx.Ops, cx, cy, s*0.45, s*0.055, th.Color.Primary)
 
-	// Hot pink location pin body (circle)
 	pinCy := cy - s*0.10
 	pinR := s * 0.18
-	logoFilledCircle(gtx.Ops, cx, pinCy, pinR, ColorRed600)
+	logoFilledCircle(gtx.Ops, cx, pinCy, pinR, th.Color.Danger)
 
-	// Hot pink pin point (triangle)
 	triTopY := pinCy + pinR*0.50
 	triBotY := cy + s*0.32
 	triHW := s * 0.155
@@ -39,11 +36,10 @@ func LayoutLogo(gtx layout.Context, size unit.Dp) layout.Dimensions {
 		cx-triHW, triTopY,
 		cx+triHW, triTopY,
 		cx, triBotY,
-		ColorRed600,
+		th.Color.Danger,
 	)
 
-	// Gold center dot
-	logoFilledCircle(gtx.Ops, cx, pinCy, s*0.075, ColorGold)
+	logoFilledCircle(gtx.Ops, cx, pinCy, s*0.075, th.Color.Brand)
 
 	return layout.Dimensions{Size: image.Pt(px, px)}
 }

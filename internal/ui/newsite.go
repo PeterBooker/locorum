@@ -19,7 +19,7 @@ var (
 type NewSiteModal struct {
 	state  *UIState
 	sm     *sites.SiteManager
-	toasts *ToastManager
+	toasts *Notifications
 
 	// Form fields
 	nameEditor   widget.Editor
@@ -37,9 +37,12 @@ type NewSiteModal struct {
 	browseDirBtn widget.Clickable
 	createBtn    widget.Clickable
 	cancelBtn    widget.Clickable
+
+	keys *ModalFocus
+	anim *modalShowState
 }
 
-func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *ToastManager) *NewSiteModal {
+func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *Notifications) *NewSiteModal {
 	webServerOptions := []string{"nginx", "apache"}
 	multisiteOptions := []string{"Single Site", "Multisite (Subdirectory)", "Multisite (Subdomain)"}
 
@@ -52,6 +55,8 @@ func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *ToastManager
 		redisDropdown:     NewDropdown(redisVersions),
 		webServerDropdown: NewDropdown(webServerOptions),
 		multisiteDropdown: NewDropdown(multisiteOptions),
+		keys:              NewModalFocus(),
+		anim:              NewModalAnim(),
 	}
 	m.nameEditor.SingleLine = true
 	m.publicEditor.SingleLine = true
@@ -59,10 +64,16 @@ func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *ToastManager
 	return m
 }
 
-func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	// Handle button clicks
-	if m.cancelBtn.Clicked(gtx) {
+// HandleUserInteractions processes Cancel / Browse / Create button clicks.
+// Called by the root UI before Layout when the modal is visible.
+func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
+	keys := ProcessModalKeys(gtx, m.keys.Tag)
+
+	if m.cancelBtn.Clicked(gtx) || keys.Escape {
 		m.state.SetShowNewSiteModal(false)
+		m.keys.OnHide()
+		m.anim.Hide()
+		return
 	}
 
 	if m.browseDirBtn.Clicked(gtx) {
@@ -77,7 +88,7 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 		}()
 	}
 
-	if m.createBtn.Clicked(gtx) {
+	if m.createBtn.Clicked(gtx) || keys.Enter {
 		name := m.nameEditor.Text()
 		filesDir := m.filesDirVal
 		publicDir := m.publicEditor.Text()
@@ -110,6 +121,8 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 				}
 
 				m.state.SetShowNewSiteModal(false)
+				m.keys.OnHide()
+				m.anim.Hide()
 
 				// Reset form
 				m.nameEditor.SetText("")
@@ -125,58 +138,62 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 			}()
 		}
 	}
+}
 
-	return ModalOverlay(gtx, func(gtx layout.Context) layout.Dimensions {
+func (m *NewSiteModal) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
+	m.anim.Show()
+	return AnimatedModalOverlay(gtx, th, m.anim, func(gtx layout.Context) layout.Dimensions {
+		m.keys.Layout(gtx)
 		return m.layoutForm(gtx, th)
 	})
 }
 
-func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Title
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H5(th, "Create New Site")
+			lbl := material.H5(th.Theme, "Create New Site")
 			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
 		}),
 		// Site Name
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return LabeledInput(gtx, th, "Site Name", &m.nameEditor, "My WordPress Site")
 			})
 		}),
 		// Files Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.layoutDirPicker(gtx, th)
 			})
 		}),
 		// Public Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return LabeledInput(gtx, th, "Public Dir", &m.publicEditor, "/")
 			})
 		}),
 		// Web Server
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.webServerDropdown.Layout(gtx, th, "Web Server")
 			})
 		}),
 		// PHP Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.phpDropdown.Layout(gtx, th, "PHP Version")
 			})
 		}),
 		// Database Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.mysqlDropdown.Layout(gtx, th, "Database Version")
 			})
 		}),
 		// Redis Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceMD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return m.redisDropdown.Layout(gtx, th, "Redis Version")
 			})
 		}),
@@ -190,7 +207,7 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceStart}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return SecondaryButton(gtx, th, &m.cancelBtn, "Cancel")
 					})
 				}),
@@ -202,17 +219,17 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *material.Theme) layout
 	)
 }
 
-func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *Theme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "Files Dir")
-			lbl.Color = ColorGray700
-			return layout.Inset{Bottom: SpaceXS}.Layout(gtx, lbl.Layout)
+			lbl := material.Body2(th.Theme, "Files Dir")
+			lbl.Color = th.Color.TextStrong
+			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return SecondaryButton(gtx, th, &m.browseDirBtn, "Choose directory...")
 					})
 				}),
@@ -221,9 +238,9 @@ func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *material.Theme) l
 					if dirText == "" {
 						dirText = "No directory selected"
 					}
-					lbl := material.Body2(th, dirText)
-					lbl.Color = ColorGray500
-					lbl.TextSize = TextSM
+					lbl := material.Body2(th.Theme, dirText)
+					lbl.Color = th.Color.TextSecondary
+					lbl.TextSize = th.Sizes.SM
 					return lbl.Layout(gtx)
 				}),
 			)

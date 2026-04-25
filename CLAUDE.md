@@ -28,7 +28,7 @@ make test              # go test ./...
 make linux-amd64       # cross-compile (see Makefile for all targets)
 ```
 
-After code changes, **always** run `go vet ./...` and `go test ./...` before reporting done. The `locorum` binary at the repo root is a build artifact — don't edit or commit it (it's 41 MB).
+After code changes, **always** run `go vet ./...` and `go test ./...` before reporting done. `build/` and a stray `locorum` binary at the repo root are both gitignored — a one-off `go build .` won't pollute `git status`.
 
 Testing the GUI itself requires running the app; the test suite only covers storage, nginx templating, and utils. If you touch UI code you can't functionally verify without launching the app — **say so explicitly** rather than claiming the change works.
 
@@ -209,7 +209,6 @@ Pure-Go tests run without Docker. Don't add tests that require a Docker daemon; 
 - **Prefer `Edit` over `Write`** for existing files — Write asks for a full file and is wasteful for small changes.
 - **Don't create new docs/READMEs** unless asked. The `README.md`, `CLAUDE.md`, and migration file headers are enough.
 - **Don't add comments** that just describe what the code does; the code is already self-documenting. Only add comments for *why* (non-obvious constraint, workaround, invariant).
-- **Don't leave the `locorum` binary modified** if a build gets run. It's at the repo root and not in `.gitignore` — check `git status` before wrapping up.
 - **For tool use:** use `Bash` for `go build`/`go test`/`go vet`; use `Read` for files, `Edit` for modifications. Use the `Explore` agent for open-ended searches across the repo; use `grep`/`find` directly for specific lookups.
 - **Don't touch `~/.locorum/`** in your working commands — that's runtime state for the user's real sites. Work only within the repo.
 - **Migration files are immutable once merged.** If you need to change a shipped migration, write a *new* migration. Don't edit the old one.

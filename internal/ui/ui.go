@@ -10,7 +10,7 @@ import (
 )
 
 type UI struct {
-	Theme *material.Theme
+	Theme *Theme
 	State *UIState
 	SM    *sites.SiteManager
 
@@ -18,16 +18,24 @@ type UI struct {
 	Sidebar    *Sidebar
 	SiteDetail *SiteDetail
 	NewSite    *NewSiteModal
-	Toasts     *ToastManager
+	Toasts     *Notifications
 
 	// Modals
 	CloneModal   *CloneModal
 	deleteDialog ConfirmDialog
 }
 
+// SettingKeyThemeMode persists the user's theme preference ("dark", "light",
+// or "system"). Read/written via SiteManager.GetSetting / SetSetting.
+const SettingKeyThemeMode = "theme_mode"
+
 func New(sm *sites.SiteManager) *UI {
 	state := NewUIState()
 	th := NewTheme()
+
+	if stored, err := sm.GetSetting(SettingKeyThemeMode); err == nil && stored != "" {
+		th.SetMode(ParseThemeMode(stored))
+	}
 
 	ui := &UI{
 		Theme: th,
@@ -35,7 +43,7 @@ func New(sm *sites.SiteManager) *UI {
 		SM:    sm,
 	}
 
-	ui.Toasts = NewToastManager(state)
+	ui.Toasts = NewNotifications(state)
 	ui.Sidebar = NewSidebar(state, sm, ui.Toasts)
 	ui.SiteDetail = NewSiteDetail(state, sm, ui.Toasts)
 	ui.NewSite = NewNewSiteModal(state, sm, ui.Toasts)
@@ -53,7 +61,31 @@ func New(sm *sites.SiteManager) *UI {
 	return ui
 }
 
+// HandleUserInteractions processes all user input for the current frame: button
+// clicks, text-editor changes, keyboard events. Called before Layout each frame.
+// Modal interactions are only processed when their modal is visible, preventing
+// phantom clicks against hidden widgets.
+func (ui *UI) HandleUserInteractions(gtx layout.Context) {
+	ui.Toasts.HandleUserInteractions(gtx)
+	ui.Sidebar.HandleUserInteractions(gtx)
+	ui.SiteDetail.HandleUserInteractions(gtx)
+
+	if ui.State.IsShowNewSiteModal() {
+		ui.NewSite.HandleUserInteractions(gtx)
+	}
+
+	if showDelete, _ := ui.State.GetDeleteConfirmState(); showDelete {
+		ui.handleDeleteConfirm(gtx)
+	}
+
+	if show, _, _ := ui.State.GetCloneModalState(); show {
+		ui.CloneModal.HandleUserInteractions(gtx)
+	}
+}
+
 func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
+	ui.HandleUserInteractions(gtx)
+
 	errMsg := ui.State.ActiveError()
 
 	return layout.Stack{}.Layout(gtx,
@@ -74,7 +106,7 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 							return ui.Sidebar.Layout(gtx, ui.Theme)
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return FillBackground(gtx, ColorContentBg, func(gtx layout.Context) layout.Dimensions {
+							return FillBackground(gtx, ui.Theme.Color.ContentBg, func(gtx layout.Context) layout.Dimensions {
 								return ui.SiteDetail.Layout(gtx, ui.Theme)
 							})
 						}),
@@ -103,13 +135,11 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 	)
 }
 
-func (ui *UI) layoutDeleteConfirm(gtx layout.Context, th *material.Theme, siteName string) layout.Dimensions {
-	confirmed, cancelled, dims := ui.deleteDialog.Layout(gtx, th, ConfirmDialogStyle{
-		Title:        "Delete Site",
-		Message:      "Are you sure you want to delete \"" + siteName + "\"? This will remove all containers and configuration for this site.",
-		ConfirmLabel: "Delete",
-		ConfirmColor: ColorRed600,
-	})
+// handleDeleteConfirm reads the confirm/cancel clicks from the delete dialog and
+// drives the delete workflow. Called from HandleUserInteractions when the
+// delete-confirm modal is visible.
+func (ui *UI) handleDeleteConfirm(gtx layout.Context) {
+	confirmed, cancelled := ui.deleteDialog.HandleUserInteractions(gtx)
 
 	if cancelled {
 		ui.State.DismissDeleteConfirm()
@@ -125,18 +155,26 @@ func (ui *UI) layoutDeleteConfirm(gtx layout.Context, th *material.Theme, siteNa
 			}()
 		}
 	}
+}
 
-	return dims
+func (ui *UI) layoutDeleteConfirm(gtx layout.Context, th *Theme, siteName string) layout.Dimensions {
+	return ui.deleteDialog.Layout(gtx, th, ConfirmDialogStyle{
+		Title:        "Delete Site",
+		Message:      "Are you sure you want to delete \"" + siteName + "\"? This will remove all containers and configuration for this site.",
+		ConfirmLabel: "Delete",
+		ConfirmColor: th.Color.Danger,
+	})
 }
 
 func (ui *UI) layoutErrorBanner(gtx layout.Context, msg string) layout.Dimensions {
-	return FillBackground(gtx, ColorRed700, func(gtx layout.Context) layout.Dimensions {
+	th := ui.Theme
+	return FillBackground(gtx, th.Color.DangerDeep, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
 			Top: unit.Dp(10), Bottom: unit.Dp(10),
-			Left: SpaceLG, Right: SpaceLG,
+			Left: th.Spacing.LG, Right: th.Spacing.LG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(ui.Theme, msg)
-			lbl.Color = ColorWhite
+			lbl := material.Body2(th.Theme, msg)
+			lbl.Color = th.Color.White
 			return lbl.Layout(gtx)
 		})
 	})

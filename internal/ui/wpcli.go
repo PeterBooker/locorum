@@ -28,33 +28,31 @@ func NewWPCLIPanel(state *UIState, sm *sites.SiteManager) *WPCLIPanel {
 	return wp
 }
 
-func (wp *WPCLIPanel) Layout(gtx layout.Context, th *material.Theme, siteID string) layout.Dimensions {
-	wp.handleClicks(gtx, siteID)
-
+func (wp *WPCLIPanel) Layout(gtx layout.Context, th *Theme, siteID string) layout.Dimensions {
 	wpcliOutput, wpcliLoading := wp.state.GetWPCLIState()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Section title
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H6(th, "WP-CLI")
-			return layout.Inset{Bottom: SpaceSM}.Layout(gtx, lbl.Layout)
+			lbl := material.H6(th.Theme, "WP-CLI")
+			return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, lbl.Layout)
 		}),
 		// Input row: "wp " prefix + editor + run button
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "wp ")
-						lbl.TextSize = TextBase
+						lbl := material.Body2(th.Theme, "wp ")
+						lbl.TextSize = th.Sizes.Base
 						return lbl.Layout(gtx)
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return BorderedEditor(gtx, th, &wp.editor, "plugin list --status=active")
+						return BorderedMonoEditor(gtx, th, &wp.editor, "plugin list --status=active")
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: SpaceSM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							if wpcliLoading {
-								return Loader(gtx, th, LoaderSizeSM)
+								return Loader(gtx, th, th.Dims.LoaderSizeSM)
 							}
 							return PrimaryButton(gtx, th, &wp.runBtn, "Run")
 						})
@@ -71,7 +69,8 @@ func (wp *WPCLIPanel) Layout(gtx layout.Context, th *material.Theme, siteID stri
 	)
 }
 
-func (wp *WPCLIPanel) handleClicks(gtx layout.Context, siteID string) {
+// HandleUserInteractions processes the Run button click.
+func (wp *WPCLIPanel) HandleUserInteractions(gtx layout.Context, siteID string) {
 	if wp.runBtn.Clicked(gtx) {
 		cmdText := wp.editor.Text()
 		if cmdText == "" {

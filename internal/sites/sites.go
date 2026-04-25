@@ -101,6 +101,16 @@ func (sm *SiteManager) GetSites() ([]types.Site, error) {
 	return sm.st.GetSites()
 }
 
+// GetSetting returns a stored user preference, or "" if unset.
+func (sm *SiteManager) GetSetting(key string) (string, error) {
+	return sm.st.GetSetting(key)
+}
+
+// SetSetting upserts a user preference.
+func (sm *SiteManager) SetSetting(key, value string) error {
+	return sm.st.SetSetting(key, value)
+}
+
 func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
