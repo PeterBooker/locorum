@@ -80,19 +80,19 @@ Click **More info** → **Run anyway**. The warning won't reappear once the app 
 
 #### Linux / WSL2
 
-Gio's Linux backend uses CGO. Install the system libraries:
+Gio's Linux backend uses CGO. The native file-picker dialog (`sqweek/dialog`) needs GTK3 too. Install the system libraries:
 
 ```bash
 sudo apt install gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev \
     libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
-    libxcursor-dev libvulkan-dev
+    libxcursor-dev libvulkan-dev libgtk-3-dev
 ```
 
 Equivalent on Arch/CachyOS:
 
 ```bash
 sudo pacman -S --needed pkgconf wayland libx11 libxcb libxkbcommon-x11 \
-    mesa libxcursor vulkan-headers
+    mesa libxcursor vulkan-headers gtk3
 ```
 
 #### macOS

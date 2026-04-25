@@ -31,7 +31,8 @@ jobs:
             gcc pkg-config \
             libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
             libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
-            libxcursor-dev libvulkan-dev
+            libxcursor-dev libvulkan-dev \
+            libgtk-3-dev
 
       - name: gofmt
         run: |

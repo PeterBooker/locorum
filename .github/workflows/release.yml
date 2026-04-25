@@ -47,7 +47,8 @@ jobs:
             gcc pkg-config \
             libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
             libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
-            libxcursor-dev libvulkan-dev librsvg2-bin
+            libxcursor-dev libvulkan-dev librsvg2-bin \
+            libgtk-3-dev
 
       - name: Build Linux amd64 tarball
         run: make tarball-linux-amd64 VERSION=${{ inputs.tag || github.ref_name }}
@@ -77,7 +78,8 @@ jobs:
             gcc pkg-config \
             libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
             libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
-            libxcursor-dev libvulkan-dev librsvg2-bin
+            libxcursor-dev libvulkan-dev librsvg2-bin \
+            libgtk-3-dev
 
       - name: Build Linux arm64 tarball
         run: make tarball-linux-arm64 VERSION=${{ inputs.tag || github.ref_name }}
@@ -89,9 +91,20 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    # Cross-compiled from Linux: Gio v0.9 has no CGO requirement on Windows,
-    # and WiX runs on .NET (cross-platform). One job covers both archs.
-    runs-on: ubuntu-22.04
+    # WiX is officially Windows-only — running it on Linux emits
+    # `WIX0000: only supports Windows; behavior undefined` and fails
+    # validation on otherwise valid .wxs (e.g. WIX0389 on Directory/@Name).
+    # gogio cross-compiles fine from Linux but we pay the runner cost
+    # for the MSI step anyway, so build everything on the Windows host.
+    # Both archs handled in one job — gogio cross-compiles arm64 from x64.
+    runs-on: windows-latest
+    defaults:
+      run:
+        # GitHub Actions on Windows: `bash` resolves to Git Bash, which
+        # ships with the Unix utilities (cp, rm, mkdir -p, ...) the
+        # Makefile recipes assume. Without this, cmd.exe runs the recipes
+        # and Unix idioms fail.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,24 +115,20 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install rsvg-convert (for icon regeneration)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librsvg2-bin
+      - name: Install GNU Make
+        run: choco install make -y
+        shell: pwsh
 
       - name: Install gogio
         run: go install gioui.org/cmd/gogio@v0.9.0
 
       - name: Install WiX
+        # .NET SDK is preinstalled on windows-latest runners.
         run: dotnet tool install --global wix --version 5.0.2
 
       - name: Build Windows MSIs (amd64 + arm64)
         run: |
-          export PATH="$HOME/go/bin:$HOME/.dotnet/tools:$PATH"
+          export PATH="$HOME/go/bin:$LOCALAPPDATA/Microsoft/WindowsApps:$USERPROFILE/.dotnet/tools:$PATH"
           make dist-windows VERSION=${{ inputs.tag || github.ref_name }}
 
       - uses: actions/upload-artifact@v4
