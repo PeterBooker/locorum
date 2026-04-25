@@ -1,0 +1,55 @@
+# GoReleaser config for Locorum.
+#
+# Publish-only mode: per-platform CI jobs build the actual artifacts (Linux
+# tarballs via `make tarball-linux-*`, Windows MSIs via gogio + WiX). The
+# release job downloads all artifacts to build/dist/ and runs goreleaser
+# here purely to (a) compute the SHA256SUMS file and (b) publish the
+# GitHub Release with auto-generated changelog.
+#
+# When Phase 5 (Homebrew tap, Scoop bucket, AUR) lands, switch goreleaser
+# to drive the actual builds and add `brews:`, `scoops:`, `aurs:` blocks.
+
+version: 2
+project_name: locorum
+# Goreleaser owns this directory exclusively. Our pre-built artifacts live
+# under build/dist/ and are referenced via the extra_files globs below.
+dist: build/release
+
+# No builds — artifacts come from per-platform CI jobs.
+builds:
+  - id: noop
+    skip: true
+
+# No archives — we ship pre-packaged tarballs and MSIs.
+archives:
+  - id: noop
+    ids: [noop]
+    formats: [binary]
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: build/dist/*.tar.gz
+    - glob: build/dist/*.msi
+    - glob: build/dist/*.dmg
+
+snapshot:
+  version_template: "{{ .Tag }}-SNAPSHOT-{{ .ShortCommit }}"
+
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: PeterBooker
+    name: locorum
+  # Draft mode: review the auto-generated notes + verify all artifacts
+  # uploaded before clicking "Publish" in the GitHub UI.
+  draft: true
+  prerelease: auto
+  name_template: "Locorum {{ .Tag }}"
+  extra_files:
+    - glob: build/dist/*.tar.gz
+    - glob: build/dist/*.msi
+    - glob: build/dist/*.dmg

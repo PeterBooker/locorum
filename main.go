@@ -16,12 +16,15 @@ import (
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/ui"
+	"github.com/PeterBooker/locorum/internal/version"
 )
 
 //go:embed all:config
 var config embed.FS
 
 func main() {
+	slog.Info("starting Locorum", "version", version.Version, "commit", version.Commit, "date", version.Date)
+
 	// On WSL2, force the X11 backend. WSLg's Wayland compositor does not
 	// fully support window-management actions (minimize/maximize).
 	// Unsetting WAYLAND_DISPLAY makes Gio fall back to X11 via XWayland,

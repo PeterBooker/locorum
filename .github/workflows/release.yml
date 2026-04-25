@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Bare semver tags: 1.0.0, 0.1.0-rc1, etc. (no "v" prefix).
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist, e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # ubuntu-22.04 has glibc 2.35 — older than the rolling distros, ensures
+  # the binaries run on Ubuntu 22.04 LTS, Debian 12 stable, and current Arch.
+  LINUX_AMD64_RUNNER: ubuntu-22.04
+  LINUX_ARM64_RUNNER: ubuntu-22.04-arm
+  GO_VERSION: '1.25'
+
+jobs:
+  # ------------------------------------------------------------------
+  # Per-platform build jobs. Each produces release-ready artifacts in
+  # build/dist/ and uploads them. The release job downloads everything.
+  # macOS jobs intentionally absent — Phase 2b not yet implemented.
+  # ------------------------------------------------------------------
+
+  build-linux-amd64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Gio Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc pkg-config \
+            libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
+            libxcursor-dev libvulkan-dev librsvg2-bin
+
+      - name: Build Linux amd64 tarball
+        run: make tarball-linux-amd64 VERSION=${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64
+          path: build/dist/locorum-*-linux-amd64.tar.gz
+          if-no-files-found: error
+
+  build-linux-arm64:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Gio Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc pkg-config \
+            libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
+            libxcursor-dev libvulkan-dev librsvg2-bin
+
+      - name: Build Linux arm64 tarball
+        run: make tarball-linux-arm64 VERSION=${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: build/dist/locorum-*-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    # Cross-compiled from Linux: Gio v0.9 has no CGO requirement on Windows,
+    # and WiX runs on .NET (cross-platform). One job covers both archs.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install rsvg-convert (for icon regeneration)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends librsvg2-bin
+
+      - name: Install gogio
+        run: go install gioui.org/cmd/gogio@v0.9.0
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build Windows MSIs (amd64 + arm64)
+        run: |
+          export PATH="$HOME/go/bin:$HOME/.dotnet/tools:$PATH"
+          make dist-windows VERSION=${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/dist/Locorum-*-windows-*.msi
+          if-no-files-found: error
+
+  build-macos:
+    # Apple-only tools (iconutil, lipo, hdiutil) — must run on a macOS host.
+    # macos-latest is currently arm64 Apple Silicon; gogio's `-arch
+    # amd64,arm64` produces a universal binary regardless of host arch.
+    # Unsigned per D1: README documents the Gatekeeper "right-click → Open"
+    # workaround for first launch.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install create-dmg + librsvg
+        run: brew install create-dmg librsvg
+
+      - name: Install gogio
+        run: go install gioui.org/cmd/gogio@v0.9.0
+
+      - name: Build macOS universal .dmg
+        run: |
+          export PATH="$HOME/go/bin:$PATH"
+          make dist-macos VERSION=${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: build/dist/Locorum-*-macos-*.dmg
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # Release job: collect artifacts, checksum them, publish release.
+  # ------------------------------------------------------------------
+
+  release:
+    runs-on: ubuntu-22.04
+    needs: [build-linux-amd64, build-linux-arm64, build-windows, build-macos]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # Goreleaser's github-native changelog needs full history.
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build/dist
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -la build/dist/
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          # --clean wipes goreleaser's own dist (build/release/), not our
+          # pre-built artifacts (build/dist/). Safe and idempotent.
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

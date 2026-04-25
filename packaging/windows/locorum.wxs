@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v4/v5 installer definition for Locorum.
+
+  Built per-architecture by passing `wix build -arch x64|arm64`. The .exe
+  source path and product version are passed in as preprocessor variables:
+
+    wix build -arch x64 \
+      -d Version=0.1.0.0 \
+      -d SourceExe=build/dist/Locorum-windows-amd64.exe \
+      -o build/dist/Locorum-0.1.0-windows-amd64.msi \
+      packaging/windows/locorum.wxs
+
+  UpgradeCode is immutable for the lifetime of the product line.
+  Do NOT change it once a release ships, or upgrades will silently
+  install a second copy alongside the old one.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Locorum"
+    Manufacturer="Peter Booker"
+    Version="$(Version)"
+    UpgradeCode="fb12c625-88a0-4ebb-aa53-fb70a86f77e1"
+    Compressed="yes"
+    Scope="perMachine">
+
+    <SummaryInformation
+      Description="Locorum — local WordPress dev environments"
+      Manufacturer="Peter Booker" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Locorum is already installed." />
+
+    <Media Id="1" Cabinet="locorum.cab" EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Locorum">
+        <Component Id="MainExe" Guid="08d57442-8d6b-4ba1-8e09-566549b67c7c">
+          <File Id="LocorumExe" Source="$(SourceExe)" Name="Locorum.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="*">
+        <Shortcut Id="LocorumStartMenu"
+                  Name="Locorum"
+                  Description="Local WordPress dev environments"
+                  Target="[INSTALLFOLDER]Locorum.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\PeterBooker\Locorum"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Locorum" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

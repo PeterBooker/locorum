@@ -16,15 +16,14 @@ type WPCLIPanel struct {
 	state *UIState
 	sm    *sites.SiteManager
 
-	editor     widget.Editor
-	runBtn     widget.Clickable
-	outputList widget.List
+	editor widget.Editor
+	runBtn widget.Clickable
+	output *OutputView
 }
 
 func NewWPCLIPanel(state *UIState, sm *sites.SiteManager) *WPCLIPanel {
-	wp := &WPCLIPanel{state: state, sm: sm}
+	wp := &WPCLIPanel{state: state, sm: sm, output: NewOutputView()}
 	wp.editor.SingleLine = true
-	wp.outputList.List.Axis = layout.Vertical
 	return wp
 }
 
@@ -63,7 +62,7 @@ func (wp *WPCLIPanel) Layout(gtx layout.Context, th *Theme, siteID string) layou
 		// Output area
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return OutputArea(gtx, th, &wp.outputList, wpcliOutput, "Run a WP-CLI command to see output", unit.Dp(250))
+				return wp.output.Layout(gtx, th, wpcliOutput, "Run a WP-CLI command to see output", unit.Dp(250))
 			})
 		}),
 	)

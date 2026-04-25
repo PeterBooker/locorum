@@ -16,17 +16,16 @@ type LogViewer struct {
 
 	serviceDropdown *Dropdown
 	refreshBtn      widget.Clickable
-	outputList      widget.List
+	output          *OutputView
 }
 
 func NewLogViewer(state *UIState, sm *sites.SiteManager) *LogViewer {
-	lv := &LogViewer{
+	return &LogViewer{
 		state:           state,
 		sm:              sm,
 		serviceDropdown: NewDropdown([]string{"web", "php", "database", "redis"}),
+		output:          NewOutputView(),
 	}
-	lv.outputList.List.Axis = layout.Vertical
-	return lv
 }
 
 func (lv *LogViewer) Layout(gtx layout.Context, th *Theme, siteID string) layout.Dimensions {
@@ -60,7 +59,7 @@ func (lv *LogViewer) Layout(gtx layout.Context, th *Theme, siteID string) layout
 		// Log output area
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return OutputArea(gtx, th, &lv.outputList, logOutput, "Click Refresh to load logs", th.Dims.OutputAreaMax)
+				return lv.output.Layout(gtx, th, logOutput, "Click Refresh to load logs", th.Dims.OutputAreaMax)
 			})
 		}),
 	)

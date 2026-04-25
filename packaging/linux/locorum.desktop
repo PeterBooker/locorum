@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Locorum
+GenericName=Local WordPress Dev Environments
+Comment=Manage local WordPress dev environments via Docker
+Exec=locorum
+Icon=locorum
+Terminal=false
+Categories=Development;Network;
+StartupWMClass=Locorum
+Keywords=wordpress;docker;development;web;

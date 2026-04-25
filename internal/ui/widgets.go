@@ -378,28 +378,43 @@ func KVRows(gtx layout.Context, th *Theme, items []KV) layout.Dimensions {
 
 // ─── Output Area ────────────────────────────────────────────────────────────
 
-// OutputArea renders a scrollable monospace-style text area with a gray background.
-// Used for log viewers, CLI output, etc.
-func OutputArea(gtx layout.Context, th *Theme, list *widget.List, output string, placeholder string, maxHeight unit.Dp) layout.Dimensions {
-	mh := gtx.Dp(maxHeight)
-	gtx.Constraints.Max.Y = mh
+// OutputView is the persistent state for an output panel (logs, WP-CLI output,
+// link-checker results). It wraps a read-only widget.Editor so the user can
+// click-drag to select text and Ctrl+C to copy. lastText caches the most
+// recently applied content; SetText resets the caret and selection, so we only
+// re-apply when the output actually changes.
+type OutputView struct {
+	editor   widget.Editor
+	lastText string
+}
+
+// NewOutputView constructs an OutputView with a read-only editor.
+func NewOutputView() *OutputView {
+	ov := &OutputView{}
+	ov.editor.ReadOnly = true
+	return ov
+}
+
+// Layout renders the output panel: a Surface-colored card containing a
+// scrollable, selectable monospace text area. When output is empty, placeholder
+// is shown via the editor's hint.
+func (ov *OutputView) Layout(gtx layout.Context, th *Theme, output, placeholder string, maxHeight unit.Dp) layout.Dimensions {
+	if output != ov.lastText {
+		ov.editor.SetText(output)
+		ov.lastText = output
+	}
+
+	gtx.Constraints.Max.Y = gtx.Dp(maxHeight)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
 	return FillBackground(gtx, th.Color.Surface, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(th.Spacing.SM).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			if output == "" {
-				lbl := material.Body2(th.Theme, placeholder)
-				lbl.Color = th.Color.TextMuted
-				lbl.TextSize = th.Sizes.SM
-				return lbl.Layout(gtx)
-			}
-			lines := strings.Split(output, "\n")
-			return material.List(th.Theme, list).Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
-				lbl := material.Body2(th.Theme, lines[i])
-				lbl.TextSize = th.Sizes.XS
-				lbl.Font = MonoFont
-				return lbl.Layout(gtx)
-			})
+			ed := material.Editor(th.Theme, &ov.editor, placeholder)
+			ed.TextSize = th.Sizes.XS
+			ed.Font = MonoFont
+			ed.Color = th.Color.TextPrimary
+			ed.HintColor = th.Color.TextMuted
+			return ed.Layout(gtx)
 		})
 	})
 }

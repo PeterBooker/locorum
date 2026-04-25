@@ -90,7 +90,7 @@ Don't call `material.Button`/`material.Editor` directly with custom colors. Use 
 | Status badge | `StatusBadge(gtx, th, started)` |
 | Section with title | `Section(gtx, th, "Title", contentFn)` |
 | Key/value rows | `KVRows(gtx, th, []KV{...})` |
-| Output / log panel | `OutputArea(gtx, th, &list, text, placeholder, maxHeight)` |
+| Output / log panel | `NewOutputView()` once + `view.Layout(gtx, th, text, placeholder, maxHeight)` (selectable, read-only editor) |
 | Loading spinner | `Loader(gtx, th, LoaderSize)` |
 | Background fill | `FillBackground(gtx, col, contentFn)` |
 | Horizontal divider | `Divider(gtx, ColorBorder, SpaceSM)` |

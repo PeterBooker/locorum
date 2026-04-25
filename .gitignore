@@ -1,2 +1,4 @@
 build/
 locorum
+# gogio-generated Windows resource files (regenerated per dist build)
+*.syso

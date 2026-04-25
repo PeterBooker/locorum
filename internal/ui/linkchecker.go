@@ -13,14 +13,12 @@ type LinkChecker struct {
 	state *UIState
 	sm    *sites.SiteManager
 
-	checkBtn   widget.Clickable
-	outputList widget.List
+	checkBtn widget.Clickable
+	output   *OutputView
 }
 
 func NewLinkChecker(state *UIState, sm *sites.SiteManager) *LinkChecker {
-	lc := &LinkChecker{state: state, sm: sm}
-	lc.outputList.List.Axis = layout.Vertical
-	return lc
+	return &LinkChecker{state: state, sm: sm, output: NewOutputView()}
 }
 
 func (lc *LinkChecker) Layout(gtx layout.Context, th *Theme, siteID string) layout.Dimensions {
@@ -49,7 +47,7 @@ func (lc *LinkChecker) Layout(gtx layout.Context, th *Theme, siteID string) layo
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return OutputArea(gtx, th, &lc.outputList, output, "Click Check Links to scan for broken links", th.Dims.OutputAreaMax)
+					return lc.output.Layout(gtx, th, output, "Click Check Links to scan for broken links", th.Dims.OutputAreaMax)
 				})
 			}),
 		)

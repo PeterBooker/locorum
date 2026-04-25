@@ -1,22 +1,86 @@
 # Locorum
 
-*Note: This is a very early prototype. It is not yet ready for use.*
+*Early development (0.x) — expect rough edges and occasional breaking changes between releases. Don't point it at production data.*
 
 ## About
 
-Locorum is a simple yet powerful local development environment for WordPress projects. It uses Docker to create isolated WordPress environments with nginx, PHP, MySQL, and Redis containers.
+Locorum is a local development environment for WordPress. It uses Docker to spin up isolated WordPress sites, each with its own nginx, PHP, MySQL, and Redis containers, routed through a shared HTTPS reverse proxy.
 
-The desktop UI is built with [Gio](https://gioui.org/), a pure Go immediate-mode GUI framework.
+The desktop UI is built with [Gio](https://gioui.org/), a pure-Go immediate-mode GUI framework.
 
-## Prerequisites
+---
 
-- **Go** 1.23+
+## Install
+
+Pre-built downloads for every release are on the [GitHub Releases page](https://github.com/PeterBooker/locorum/releases/latest). All platforms require Docker (Docker Desktop on macOS / Windows; Docker Engine or rootless Docker on Linux) to be installed and running.
+
+### macOS
+
+1. Download `Locorum-<version>-macos-universal.dmg` (one universal binary works on both Intel and Apple Silicon).
+2. Open the DMG and drag Locorum to your Applications folder.
+3. See **[First-Run Notes → macOS](#macos-gatekeeper)** before launching for the first time.
+
+### Windows
+
+1. Download the MSI for your CPU:
+   - `Locorum-<version>-windows-amd64.msi` — Intel / AMD 64-bit (most PCs)
+   - `Locorum-<version>-windows-arm64.msi` — Snapdragon / Surface Pro X
+2. Double-click to install (admin prompt expected).
+3. See **[First-Run Notes → Windows](#windows-smartscreen)** before launching.
+
+### Linux
+
+1. Download the tarball for your CPU:
+   - `locorum-<version>-linux-amd64.tar.gz` — x86_64
+   - `locorum-<version>-linux-arm64.tar.gz` — aarch64
+2. Extract and install:
+   ```bash
+   tar -xzf locorum-<version>-linux-amd64.tar.gz
+   cd locorum-<version>-linux-amd64
+   sudo install -m755 locorum /usr/local/bin/locorum
+   ```
+3. (Optional) Add a menu entry:
+   ```bash
+   mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/256x256/apps
+   cp locorum.desktop ~/.local/share/applications/
+   cp locorum.png ~/.local/share/icons/hicolor/256x256/apps/locorum.png
+   ```
+4. The binaries are built against glibc 2.35 — that covers Ubuntu 22.04+, Debian 12+, and current Arch / CachyOS / Fedora. Most distros also have the Gio runtime libs (`libwayland`, `libx11`, `libxkbcommon`, `libegl1`, `libvulkan`, `libxcursor`) installed by default; if Locorum complains about a missing library, install the matching `-dev`-less package via your distro's package manager.
+
+---
+
+## First-Run Notes
+
+### macOS Gatekeeper
+
+Locorum isn't notarized by Apple yet, so Gatekeeper blocks unsigned apps on the first launch. One-time workaround:
+
+1. Open Finder → Applications.
+2. **Right-click** (or Control-click) `Locorum.app` → **Open**.
+3. In the dialog, click **Open** again.
+
+After that, double-click works normally. macOS remembers the override per app.
+
+### Windows SmartScreen
+
+The MSI isn't code-signed yet, so Microsoft Defender SmartScreen warns on install:
+
+> Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+
+Click **More info** → **Run anyway**. The warning won't reappear once the app is installed.
+
+---
+
+## Building from Source
+
+### Prerequisites
+
+- **Go** 1.25+
 - **Docker** (running and accessible)
-- **GCC** and C development tools
 
-### Linux / WSL2
+#### Linux / WSL2
 
-Gio requires system libraries for its display backends:
+Gio's Linux backend uses CGO. Install the system libraries:
 
 ```bash
 sudo apt install gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev \
@@ -24,97 +88,109 @@ sudo apt install gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev \
     libxcursor-dev libvulkan-dev
 ```
 
-### macOS
+Equivalent on Arch/CachyOS:
 
-Install Xcode command line tools:
+```bash
+sudo pacman -S --needed pkgconf wayland libx11 libxcb libxkbcommon-x11 \
+    mesa libxcursor vulkan-headers
+```
+
+#### macOS
+
+Gio's macOS backend uses CGO. Install Xcode command-line tools:
 
 ```bash
 xcode-select --install
 ```
 
-### Windows
+#### Windows
 
-Install [TDM-GCC](https://jmeubank.github.io/tdm-gcc/) or use MSYS2.
+No extra toolchain required — Gio v0.9 builds Windows targets in pure Go (no CGO, no MinGW).
 
-## Building
-
-```bash
-go build -o build/bin/locorum .
-```
-
-## Running
+### Build and run
 
 ```bash
-go run .
-```
-
-Or after building:
-
-```bash
+make build       # → build/bin/locorum (with version ldflags)
+go run .         # dev iteration
 ./build/bin/locorum
 ```
 
-The application will:
+On first launch the app:
 
-1. Set up configuration files in `~/.locorum/`
-2. Create a global Docker network and containers (nginx proxy, MailHog)
-3. Open the desktop window
+1. Sets up `~/.locorum/` (config, SQLite database, per-site nginx confs).
+2. Wipes any leftover `locorum-*` Docker resources, then creates the global network and the proxy / mail / DB-admin containers.
+3. Opens the desktop window.
 
-## Cross-Compilation
+### Release builds
 
-### Linux
+Release artifacts (with embedded icon, manifest, version metadata, and installer wrapping) are built via `make`:
 
-```bash
-GOOS=linux GOARCH=amd64 go build -o build/bin/locorum-linux .
-```
+| Target | Output | Tools needed |
+|---|---|---|
+| `make tarball-linux-amd64` | `build/dist/locorum-<version>-linux-amd64.tar.gz` | `rsvg-convert` |
+| `make tarball-linux-arm64` | `build/dist/locorum-<version>-linux-arm64.tar.gz` | aarch64 GCC + arm64 Gio headers (use the CI runner) |
+| `make dist-windows` | `Locorum-<version>-windows-{amd64,arm64}.msi` | `gogio`, `wix` (.NET) |
+| `make dist-macos` | `Locorum-<version>-macos-universal.dmg` | macOS host, `gogio`, `create-dmg` |
 
-### Windows (from Linux, requires mingw)
-
-```bash
-GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc go build -o build/bin/locorum.exe .
-```
-
-### macOS App Bundle
-
-Install the `gogio` tool:
+A real release happens automatically when you push a bare-semver tag:
 
 ```bash
-go install gioui.org/cmd/gogio@latest
-gogio -target macos -o build/bin/Locorum.app .
+git tag 0.1.0
+git push origin 0.1.0
 ```
+
+The [`Release` workflow](.github/workflows/release.yml) builds every artifact on its native runner, then GoReleaser publishes a **draft** GitHub Release with all five binaries + `SHA256SUMS` + auto-generated notes. Review the draft and click **Publish**.
+
+### Cross-compilation quick-build
+
+For a quick "does it compile" check across platforms (no icon, manifest, or version metadata — bare binary only):
+
+```bash
+GOOS=linux   GOARCH=arm64 go build -o build/bin/locorum-linux-arm64 .
+GOOS=windows GOARCH=amd64 go build -o build/bin/locorum.exe .
+GOOS=darwin  GOARCH=arm64 go build -o build/bin/locorum-macos .
+```
+
+Cross-builds that need CGO (Linux/macOS) require the matching cross toolchain on the host.
+
+---
 
 ## Developing with Gio
 
-### Architecture
-
-Gio is an **immediate-mode** GUI framework. Unlike retained-mode frameworks (React, Qt), the entire UI is redrawn every frame by calling layout functions. There is no virtual DOM or widget tree that persists between frames.
+Gio is **immediate-mode**: the entire UI is redrawn every frame by calling layout functions. There is no virtual DOM or persistent widget tree.
 
 Key concepts:
 
-- **`app.Window`** creates the OS window and delivers events
-- **`app.FrameEvent`** triggers a redraw; you respond by laying out the entire UI
-- **`layout.Context` (gtx)** carries constraints, operations list, and dimensions
-- **`op.Ops`** accumulates drawing operations for the frame
-- **`widget.*`** types hold persistent state (click state, editor text, scroll position)
+- **`app.Window`** — creates the OS window and delivers events.
+- **`app.FrameEvent`** — triggers a redraw; you respond by laying out the entire UI.
+- **`layout.Context` (gtx)** — carries constraints, the operations list, and dimensions.
+- **`op.Ops`** — accumulates drawing operations for the frame.
+- **`widget.*`** — types that hold persistent state (click state, editor text, scroll position).
 
-### Project Structure
+### Project structure
 
 ```
 main.go                    Entry point: window creation, event loop, startup/shutdown
-internal/ui/
-    ui.go                  Root UI struct, wires backend callbacks, defines root layout
-    state.go               Shared UI state with mutex for thread-safe access
-    theme.go               Color palette and font setup
-    sidebar.go             Left sidebar: app title, search, site list, "New Site" button
-    sitedetail.go          Right panel: site metadata, start/stop, versions, DB info
-    newsite.go             Modal form for creating a new site
-    modal.go               Generic modal overlay component
-    widgets.go             Reusable widgets: buttons, inputs, dropdowns
+internal/
+  app/                     Filesystem setup, global Docker infra
+  docker/                  Thin wrapper over the Docker SDK
+  storage/                 SQLite + embedded migrations
+  sites/                   SiteManager — core business logic
+  types/                   Shared data model
+  utils/                   Filesystem / WSL / platform helpers
+  version/                 Build-time identity (Version, Commit, Date)
+  ui/
+    ui.go                  Root UI struct, top-level Layout, error banner
+    state.go               Mutex-protected shared state
+    theme.go               Color palette, spacing, typography
+    sidebar.go             Left panel (logo, search, site list)
+    sitedetail.go          Right panel
+    newsite.go             New-site modal
+    widgets.go             Reusable primitives
+    ...                    See CLAUDE.md for the full file map
 ```
 
-### Event Loop
-
-The main event loop in `main.go` is the core of Gio:
+### Event loop
 
 ```go
 for {
@@ -129,55 +205,61 @@ for {
 }
 ```
 
-### Background Operations
+### Background operations
 
-Long-running operations (Docker container management, file dialogs) must run in goroutines to avoid blocking the UI. After completion, update `UIState` and call `state.Invalidate()` to trigger a redraw:
+Long-running operations (Docker container management, file dialogs, link checks) must run in goroutines so they don't block the UI. After completion, update `UIState` via its locking helpers — they call `state.Invalidate()` internally to wake the event loop:
 
 ```go
+state.SetSiteToggling(siteID, true)
 go func() {
-    _ = sm.StartSite(siteID)
-    state.mu.Lock()
-    state.SiteToggling[siteID] = false
-    state.mu.Unlock()
-    state.Invalidate()  // Wakes the event loop
+    err := sm.StartSite(siteID)
+    state.SetSiteToggling(siteID, false)
+    if err != nil {
+        state.ShowError("Failed to start site: " + err.Error())
+    }
 }()
 ```
 
-### Backend Communication
+### Backend ↔ UI
 
-The backend (`SiteManager`) communicates with the UI through callback functions:
+`SiteManager` talks to the UI through callbacks — `sm.OnSitesUpdated` and `sm.OnSiteUpdated`, both wired by `ui.New()`. The backend never imports `internal/ui`.
 
-- `sm.OnSitesUpdated` is called when the site list changes
-- `sm.OnSiteUpdated` is called when a single site's state changes
+### Adding a UI component
 
-These callbacks update `UIState` and invalidate the window to trigger a redraw.
+1. New file in `internal/ui/`.
+2. Struct holds persistent widget state (`widget.Clickable`, `widget.Editor`, `widget.List`).
+3. Implement `Layout(gtx layout.Context, th *material.Theme) layout.Dimensions`.
+4. Wire it into `ui.go`.
 
-### Adding New UI Components
+See the `add-ui-component` skill in `.claude/skills/` for a fuller scaffold, and CLAUDE.md for the full architecture / invariants.
 
-1. Create a new file in `internal/ui/`
-2. Define a struct with persistent widget state (`widget.Clickable`, `widget.Editor`, etc.)
-3. Implement a `Layout(gtx layout.Context, th *material.Theme) layout.Dimensions` method
-4. Use `layout.Flex`, `layout.Stack`, `layout.Inset` for positioning
-5. Use `material.*` functions for styled widgets
-6. Wire it into `ui.go`
-
-### Useful Gio Resources
+### Useful Gio resources
 
 - [Gio documentation](https://gioui.org/)
 - [Gio API reference](https://pkg.go.dev/gioui.org)
 - [Gio examples](https://git.sr.ht/~eliasnaur/gio-example)
 - [Gio extended widgets](https://pkg.go.dev/gioui.org/x)
 
+---
+
 ## Migrations
 
-You first need to install the migrations tool:
+Install the migrate CLI once:
 
 ```bash
 go install -tags 'sqlite' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 ```
 
-Then you can create migrations with:
+Create a new migration:
 
 ```bash
-migrate create -ext sql -dir internal/storage/migrations create_{table_name}_table
+migrate create -ext sql -dir internal/storage/migrations create_<table_name>_table
 ```
+
+See the `add-migration` skill in `.claude/skills/` and `internal/storage/migrations/` for examples. Migrations are embedded into the binary at build time and applied automatically on startup.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Peter Booker.
