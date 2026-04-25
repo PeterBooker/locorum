@@ -21,8 +21,10 @@ LDFLAGS_RELEASE := -s -w $(LDFLAGS_VERSION)
 ICON_SIZES := 16 32 48 64 128 256 512 1024
 ICON_PNGS  := $(foreach s,$(ICON_SIZES),$(ICON_DIR)/icon-$(s).png)
 
-GOGIO ?= gogio
-WIX   ?= wix
+GOGIO   ?= gogio
+# WIX_BIN, not WIX: the windows-latest runner preinstalls WiX 3.14 and sets
+# the WIX env var to that install dir, which would override `?= wix`.
+WIX_BIN ?= wix
 
 .PHONY: build linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64 all clean test icons \
         dist-windows dist-windows-amd64 dist-windows-arm64 \
@@ -88,14 +90,14 @@ dist-windows-arm64: appicon.png
 	@rm -f *.syso
 
 msi-windows-amd64: dist-windows-amd64
-	$(WIX) build -arch x64 \
+	$(WIX_BIN) build -arch x64 \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-amd64.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-amd64.msi \
 		packaging/windows/locorum.wxs
 
 msi-windows-arm64: dist-windows-arm64
-	$(WIX) build -arch arm64 \
+	$(WIX_BIN) build -arch arm64 \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-arm64.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-arm64.msi \
