@@ -6,10 +6,11 @@ package docker
 // cleanup precisely without false positives from unrelated user containers
 // that happen to share a prefix.
 const (
-	LabelPlatform = "io.locorum.platform"
-	LabelSite     = "io.locorum.site"
-	LabelRole     = "io.locorum.role"
-	LabelVersion  = "io.locorum.version"
+	LabelPlatform   = "io.locorum.platform"
+	LabelSite       = "io.locorum.site"
+	LabelRole       = "io.locorum.role"
+	LabelVersion    = "io.locorum.version"
+	LabelConfigHash = "io.locorum.confighash"
 
 	// PlatformValue is the constant value carried on every Locorum-owned
 	// resource by LabelPlatform. Filtering by this label is the canonical

@@ -1,21 +1,19 @@
 package docker
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 )
 
 // ContainersByLabel lists all containers (running or stopped) whose labels
 // match every entry in the given map. An empty value matches any value for
 // that label key.
-func (d *Docker) ContainersByLabel(match map[string]string) ([]container.Summary, error) {
+func (d *Docker) ContainersByLabel(ctx context.Context, match map[string]string) ([]ContainerInfo, error) {
 	args := filters.NewArgs()
 	for k, v := range match {
 		if v == "" {
@@ -24,119 +22,78 @@ func (d *Docker) ContainersByLabel(match map[string]string) ([]container.Summary
 			args.Add("label", k+"="+v)
 		}
 	}
-	return d.cli.ContainerList(d.ctx, container.ListOptions{All: true, Filters: args})
+	summaries, err := d.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
+	if err != nil {
+		return nil, fmt.Errorf("listing containers: %w", err)
+	}
+	out := make([]ContainerInfo, 0, len(summaries))
+	for _, s := range summaries {
+		out = append(out, ContainerInfo{
+			ID:     s.ID,
+			Names:  s.Names,
+			Image:  s.Image,
+			State:  s.State,
+			Status: s.Status,
+			Labels: s.Labels,
+		})
+	}
+	return out, nil
 }
 
-// RemoveByLabel force-removes every container matching the given label set.
-// Used at startup and shutdown to wipe Locorum-owned containers cleanly.
-// NotFound errors are tolerated (the container may have been removed
-// concurrently, e.g. by a parallel docker rm).
-func (d *Docker) RemoveByLabel(match map[string]string) error {
-	containers, err := d.ContainersByLabel(match)
+// RemoveContainersByLabel force-removes every container matching the given
+// label set. NotFound errors during removal are tolerated — another caller
+// may have removed the container concurrently.
+func (d *Docker) RemoveContainersByLabel(ctx context.Context, match map[string]string) error {
+	containers, err := d.ContainersByLabel(ctx, match)
 	if err != nil {
-		return fmt.Errorf("listing containers: %w", err)
+		return err
 	}
-
 	for _, c := range containers {
-		name := containerDisplayName(c)
-		slog.Info("Removing container: " + name)
-		if err := d.cli.ContainerRemove(d.ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+		name := containerInfoDisplayName(c)
+		slog.Info("Removing container", "name", name)
+		if err := d.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
 			if errdefs.IsNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("removing container %q: %w", name, err)
 		}
 	}
-
 	return nil
 }
 
-func containerDisplayName(c container.Summary) string {
+// RemoveByLabel is a backward-compatible alias retained until call sites
+// are migrated. New code should use RemoveContainersByLabel.
+func (d *Docker) RemoveByLabel(ctx context.Context, match map[string]string) error {
+	return d.RemoveContainersByLabel(ctx, match)
+}
+
+func containerInfoDisplayName(c ContainerInfo) string {
 	if len(c.Names) > 0 {
 		return c.Names[0]
 	}
 	return c.ID
 }
 
-// containerExists checks if a Docker container with the specified name exists.
-func (d *Docker) containerExists(containerName string) (bool, error) {
-	filterArgs := filters.NewArgs()
-	filterArgs.Add("name", containerName)
-
-	containers, err := d.cli.ContainerList(d.ctx, container.ListOptions{
-		Filters: filterArgs,
-		All:     true,
-	})
+// ContainerExists reports whether a container with the given name exists.
+func (d *Docker) ContainerExists(ctx context.Context, name string) (bool, error) {
+	_, err := d.cli.ContainerInspect(ctx, name)
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
 		return false, err
 	}
-
-	return len(containers) > 0, nil
+	return true, nil
 }
 
-// ensureImage pulls an image only if it is not already available locally.
-func (d *Docker) ensureImage(imageName string) error {
-	filterArgs := filters.NewArgs()
-	filterArgs.Add("reference", imageName)
-
-	images, err := d.cli.ImageList(d.ctx, image.ListOptions{Filters: filterArgs})
+// ContainerIsRunning reports whether the container exists and is running.
+func (d *Docker) ContainerIsRunning(ctx context.Context, name string) (bool, error) {
+	info, err := d.cli.ContainerInspect(ctx, name)
 	if err != nil {
-		return fmt.Errorf("listing images failed: %w", err)
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
 	}
-
-	if len(images) > 0 {
-		slog.Info(fmt.Sprintf("Image %q already exists locally, skipping pull", imageName))
-		return nil
-	}
-
-	slog.Info(fmt.Sprintf("Pulling image %q", imageName))
-	out, err := d.cli.ImagePull(d.ctx, imageName, image.PullOptions{})
-	if err != nil {
-		return fmt.Errorf("image pull failed: %w", err)
-	}
-	defer out.Close()
-
-	// Wait for image pull to complete.
-	if _, err = io.Copy(io.Discard, out); err != nil {
-		return fmt.Errorf("reading image pull stream failed: %w", err)
-	}
-
-	return nil
-}
-
-// createContainer creates a Docker container with the given name and image.
-func (d *Docker) createContainer(containerName string, imageName string, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig) error {
-	if err := d.ensureImage(imageName); err != nil {
-		return err
-	}
-
-	resp, err := d.cli.ContainerCreate(
-		d.ctx,
-		config,
-		hostConfig,
-		networkingConfig,
-		nil,
-		containerName,
-	)
-	if err != nil {
-		return fmt.Errorf("creating container %q failed: %w", containerName, err)
-	}
-
-	err = d.cli.ContainerStart(d.ctx, resp.ID, container.StartOptions{})
-	if err != nil {
-		return fmt.Errorf("starting container %q failed: %w", containerName, err)
-	}
-
-	return nil
-}
-
-// CreateContainer is the exported equivalent of createContainer; used by
-// other internal packages (router/traefik) that build their own containers.
-func (d *Docker) CreateContainer(name, image string, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig) error {
-	return d.createContainer(name, image, config, hostConfig, networkingConfig)
-}
-
-// CreateNetwork is the exported equivalent of createNetwork.
-func (d *Docker) CreateNetwork(name string, internal bool, labels map[string]string) error {
-	return d.createNetwork(name, internal, labels)
+	return info.State != nil && info.State.Running, nil
 }

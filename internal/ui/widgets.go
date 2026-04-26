@@ -661,6 +661,14 @@ func (cd *ConfirmDialog) HandleUserInteractions(gtx layout.Context) (confirmed, 
 // Layout renders the confirmation dialog inside a modal overlay.
 // Use HandleUserInteractions to detect confirm/cancel clicks.
 func (cd *ConfirmDialog) Layout(gtx layout.Context, th *Theme, style ConfirmDialogStyle) layout.Dimensions {
+	return cd.LayoutWithExtras(gtx, th, style, nil)
+}
+
+// LayoutWithExtras renders the confirmation dialog with an optional extras
+// widget (e.g. a checkbox) sandwiched between the message and the action
+// buttons. Pass nil for extras when no additional UI is needed; the result
+// is identical to Layout().
+func (cd *ConfirmDialog) LayoutWithExtras(gtx layout.Context, th *Theme, style ConfirmDialogStyle, extras layout.Widget) layout.Dimensions {
 	if cd.keys == nil {
 		cd.keys = NewModalFocus()
 	}
@@ -670,7 +678,7 @@ func (cd *ConfirmDialog) Layout(gtx layout.Context, th *Theme, style ConfirmDial
 	cd.anim.Show()
 	return AnimatedModalOverlay(gtx, th, cd.anim, func(gtx layout.Context) layout.Dimensions {
 		cd.keys.Layout(gtx)
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		children := []layout.FlexChild{
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.H6(th.Theme, style.Title)
 				return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, lbl.Layout)
@@ -679,23 +687,27 @@ func (cd *ConfirmDialog) Layout(gtx layout.Context, th *Theme, style ConfirmDial
 				lbl := material.Body1(th.Theme, style.Message)
 				return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
 			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return SecondaryButton(gtx, th, &cd.cancelBtn, "Cancel")
-						})
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						b := material.Button(th.Theme, &cd.confirmBtn, style.ConfirmLabel)
-						b.Background = style.ConfirmColor
-						b.Color = th.Color.White
-						b.CornerRadius = th.Radii.MD
-						b.TextSize = th.Sizes.Base
-						return b.Layout(gtx)
-					}),
-				)
-			}),
-		)
+		}
+		if extras != nil {
+			children = append(children, layout.Rigid(extras))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return SecondaryButton(gtx, th, &cd.cancelBtn, "Cancel")
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					b := material.Button(th.Theme, &cd.confirmBtn, style.ConfirmLabel)
+					b.Background = style.ConfirmColor
+					b.Color = th.Color.White
+					b.CornerRadius = th.Radii.MD
+					b.TextSize = th.Sizes.Base
+					return b.Layout(gtx)
+				}),
+			)
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
 }

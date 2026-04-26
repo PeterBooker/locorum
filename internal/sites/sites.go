@@ -23,12 +23,18 @@ import (
 
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/hooks"
+	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/router"
+	"github.com/PeterBooker/locorum/internal/sites/sitesteps"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 	"github.com/PeterBooker/locorum/internal/utils"
 )
 
+// SiteManager owns site lifecycle. Lifecycle methods build orch.Plans and
+// run them via orch.Run; that's where the rollback / progress / per-step
+// observability live. Direct Docker calls (exec for wp-cli, container logs)
+// are still used for short non-orchestrated operations.
 type SiteManager struct {
 	st      *storage.Storage
 	cli     *client.Client
@@ -39,12 +45,9 @@ type SiteManager struct {
 	homeDir string
 	config  embed.FS
 
-	// siteLocks serialises lifecycle calls per site. Created lazily on
-	// first use; the outer mutex protects the map itself, the inner mutex
-	// protects the lifecycle on a single site. Different sites run in
-	// parallel.
-	locksMu   sync.Mutex
-	siteLocks map[string]*sync.Mutex
+	// siteLocks serialises lifecycle calls per site. Different sites run
+	// in parallel; two lifecycle calls on the same site queue.
+	siteLocks sync.Map // map[string]*sync.Mutex
 
 	// Callbacks invoked when sites data changes. The UI layer sets these
 	// in ui.New() to trigger redraws.
@@ -52,12 +55,21 @@ type SiteManager struct {
 	OnSiteUpdated  func(site *types.Site)
 
 	// Hook-stream callbacks. Set by the UI in ui.New(); fired from
-	// goroutines spawned inside runHooks. Implementations are responsible
-	// for thread safety + UI invalidation per the existing pattern.
+	// goroutines spawned inside runHooks.
 	OnHookTaskStart func(siteID string, hook hooks.Hook)
 	OnHookOutput    func(siteID string, line string, stderr bool)
 	OnHookTaskDone  func(siteID string, result hooks.Result)
 	OnHookAllDone   func(siteID string, summary hooks.Summary)
+
+	// Lifecycle progress callbacks. Fired from orch.Run during a Plan.
+	// The UI subscribes to render the per-step checklist.
+	OnStepStart func(siteID string, step orch.StepResult)
+	OnStepDone  func(siteID string, step orch.StepResult)
+	OnPlanDone  func(siteID string, result orch.Result)
+
+	// Pull progress callback. Fired during the PullImages step. Called
+	// per pull tick; aggregated across layers.
+	OnPullProgress func(siteID string, progress docker.PullProgress)
 }
 
 func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, config embed.FS, homeDir string) *SiteManager {
@@ -74,36 +86,30 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, r
 	)
 
 	return &SiteManager{
-		st:        st,
-		cli:       cli,
-		d:         d,
-		rtr:       rtr,
-		hooks:     runner,
-		config:    config,
-		homeDir:   homeDir,
-		sites:     make(map[string]types.Site),
-		siteLocks: make(map[string]*sync.Mutex),
+		st:      st,
+		cli:     cli,
+		d:       d,
+		rtr:     rtr,
+		hooks:   runner,
+		config:  config,
+		homeDir: homeDir,
+		sites:   make(map[string]types.Site),
 	}
 }
 
 // siteMutex returns the per-site lifecycle mutex, creating it on first use.
-// Different sites get independent mutexes so they can run in parallel; two
-// lifecycle calls on the same site queue.
+// Different sites get independent mutexes so they can run in parallel.
 func (sm *SiteManager) siteMutex(siteID string) *sync.Mutex {
-	sm.locksMu.Lock()
-	defer sm.locksMu.Unlock()
-	m, ok := sm.siteLocks[siteID]
-	if !ok {
-		m = &sync.Mutex{}
-		sm.siteLocks[siteID] = m
+	if v, ok := sm.siteLocks.Load(siteID); ok {
+		return v.(*sync.Mutex)
 	}
-	return m
+	m := &sync.Mutex{}
+	actual, _ := sm.siteLocks.LoadOrStore(siteID, m)
+	return actual.(*sync.Mutex)
 }
 
 // runHooks fires every enabled hook for ev/site, forwarding results to the
-// UI callbacks. The runner returns nil in warn mode and the task error in
-// strict mode; we propagate verbatim — it is the lifecycle method's
-// decision whether to short-circuit the rest of its work.
+// UI callbacks. Returns task error in fail-strict mode, nil otherwise.
 func (sm *SiteManager) runHooks(ctx context.Context, ev hooks.Event, site *types.Site) error {
 	if sm.hooks == nil || site == nil {
 		return nil
@@ -140,8 +146,6 @@ func (sm *SiteManager) runHooks(ctx context.Context, ev hooks.Event, site *types
 }
 
 // RunHookNow executes a single hook for a site outside the lifecycle.
-// Used by the GUI's "Run now" buttons. Streams via the same OnHook*
-// callbacks as runHooks.
 func (sm *SiteManager) RunHookNow(ctx context.Context, h hooks.Hook) (hooks.Result, error) {
 	if sm.hooks == nil {
 		return hooks.Result{}, fmt.Errorf("hooks runner not configured")
@@ -189,18 +193,13 @@ func (sm *SiteManager) SetSetting(key, value string) error {
 }
 
 // ─── Hook persistence pass-throughs ─────────────────────────────────────────
-//
-// These thin wrappers let the UI layer talk to the storage's hook CRUD
-// without importing storage directly. Mirrors the existing GetSetting /
-// SetSetting pattern.
 
 // ListSiteHooks returns every hook attached to siteID.
 func (sm *SiteManager) ListSiteHooks(siteID string) ([]hooks.Hook, error) {
 	return sm.st.ListHooks(siteID)
 }
 
-// AddSiteHook validates h and persists it. h.ID, Position, CreatedAt and
-// UpdatedAt are populated on success.
+// AddSiteHook validates h and persists it.
 func (sm *SiteManager) AddSiteHook(h *hooks.Hook) error {
 	return sm.st.AddHook(h)
 }
@@ -262,7 +261,297 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	return nil
 }
 
+// ─── StartSite ──────────────────────────────────────────────────────────────
+
+// StartSite brings up a site as an orchestrated Plan. Each step is small,
+// idempotent, and rolled back on failure. Container readiness is verified
+// (not just "running") via the WaitReady step.
+func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		slog.Error("Failed to fetch site: " + err.Error())
+		return err
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", id)
+	}
+
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreStart, site); err != nil {
+		return err
+	}
+
+	specs := sm.serviceSpecs(site)
+
+	plan := orch.Plan{
+		Name: "start-site:" + site.Slug,
+		Steps: []orch.Step{
+			&sitesteps.FuncStep{
+				Label: "ensure-files-writable",
+				Do: func(_ context.Context) error {
+					ensureWritable(site.FilesDir)
+					return nil
+				},
+			},
+			&sitesteps.FuncStep{
+				Label: "ensure-wordpress",
+				Do: func(_ context.Context) error {
+					return sm.ensureWordPress(site)
+				},
+			},
+			&sitesteps.FuncStep{
+				Label: "generate-site-config",
+				Do: func(_ context.Context) error {
+					return sm.generateWebServerConfig(site)
+				},
+			},
+			&sitesteps.EnsureNetworkStep{Engine: sm.d, Site: site},
+			&sitesteps.EnsureVolumeStep{Engine: sm.d, Site: site},
+			&sitesteps.PullImagesStep{
+				Engine:     sm.d,
+				Site:       site,
+				Specs:      specs,
+				OnProgress: sm.pullProgressCallback(site.ID),
+			},
+			&sitesteps.ChownStep{Engine: sm.d, Site: site},
+			&sitesteps.CreateContainersStep{Engine: sm.d, Specs: specs},
+			&sitesteps.WaitReadyStep{
+				Engine:     sm.d,
+				Containers: specNames(specs),
+				Timeouts: map[string]time.Duration{
+					docker.SiteContainerName(site.Slug, "database"): 120 * time.Second,
+				},
+			},
+			&sitesteps.RegisterRoutesStep{
+				Router: sm.rtr,
+				Route:  sm.routeFor(site),
+			},
+		},
+	}
+
+	res := sm.runPlan(ctx, site.ID, plan)
+	if res.FinalError != nil {
+		return res.FinalError
+	}
+
+	site.Started = true
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		slog.Error("Failed to update site: " + err.Error())
+		return err
+	}
+
+	if site.Multisite != "" {
+		if err := sm.ensureMultisiteWithHooks(ctx, site); err != nil {
+			slog.Error("Failed to configure multisite: " + err.Error())
+		}
+	}
+
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+
+	return sm.runHooks(ctx, hooks.PostStart, site)
+}
+
+func (sm *SiteManager) routeFor(site *types.Site) router.SiteRoute {
+	route := router.SiteRoute{
+		Slug:        site.Slug,
+		PrimaryHost: site.Domain,
+		Backend:     "http://" + docker.SiteContainerName(site.Slug, "web") + ":80",
+	}
+	if site.Multisite == "subdomain" {
+		route.WildcardHost = "*." + site.Domain
+	}
+	return route
+}
+
+func (sm *SiteManager) generateWebServerConfig(site *types.Site) error {
+	if site.WebServer == "apache" {
+		return sm.generateApacheSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "apache", "sites", site.Slug+".conf"))
+	}
+	return sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
+}
+
+// serviceSpecs returns the four per-site container specs in the order:
+// web, php, database, redis.
+func (sm *SiteManager) serviceSpecs(site *types.Site) []docker.ContainerSpec {
+	return []docker.ContainerSpec{
+		docker.WebSpec(site, sm.homeDir),
+		docker.PHPSpec(site, sm.homeDir),
+		docker.DatabaseSpec(site, sm.homeDir),
+		docker.RedisSpec(site),
+	}
+}
+
+func specNames(specs []docker.ContainerSpec) []string {
+	out := make([]string, len(specs))
+	for i, s := range specs {
+		out[i] = s.Name
+	}
+	return out
+}
+
+// runPlan executes plan and forwards step / pull callbacks to the UI. It
+// also emits structured slog records at start, per step, and at the plan
+// boundary — so the lifecycle log on disk and the in-app logs both have
+// the same view.
+func (sm *SiteManager) runPlan(ctx context.Context, siteID string, plan orch.Plan) orch.Result {
+	slog.Info("plan starting", "plan", plan.Name, "site", siteID, "steps", len(plan.Steps))
+	cb := orch.Callbacks{
+		OnStepStart: func(s orch.StepResult) {
+			slog.Info("plan step start", "plan", plan.Name, "step", s.Name)
+			if sm.OnStepStart != nil {
+				sm.OnStepStart(siteID, s)
+			}
+		},
+		OnStepDone: func(s orch.StepResult) {
+			attrs := []any{"plan", plan.Name, "step", s.Name, "status", s.Status, "duration_ms", s.Duration.Milliseconds()}
+			if s.Error != nil {
+				slog.Error("plan step failed", append(attrs, "err", s.Error.Error())...)
+			} else {
+				slog.Info("plan step done", attrs...)
+			}
+			if sm.OnStepDone != nil {
+				sm.OnStepDone(siteID, s)
+			}
+		},
+		OnPlanDone: func(r orch.Result) {
+			attrs := []any{"plan", r.PlanName, "duration_ms", r.Duration.Milliseconds(), "rolled_back", r.RolledBack}
+			if r.FinalError != nil {
+				slog.Error("plan failed", append(attrs, "err", r.FinalError.Error())...)
+			} else {
+				slog.Info("plan complete", attrs...)
+			}
+			if sm.OnPlanDone != nil {
+				sm.OnPlanDone(siteID, r)
+			}
+			writeAuditLog(sm.homeDir, r)
+		},
+	}
+	return orch.Run(ctx, plan, cb)
+}
+
+func (sm *SiteManager) pullProgressCallback(siteID string) func(docker.PullProgress) {
+	if sm.OnPullProgress == nil {
+		return nil
+	}
+	return func(p docker.PullProgress) {
+		sm.OnPullProgress(siteID, p)
+	}
+}
+
+// ─── ensureMultisite ────────────────────────────────────────────────────────
+
+func (sm *SiteManager) ensureMultisiteWithHooks(ctx context.Context, site *types.Site) error {
+	if err := sm.runHooks(ctx, hooks.PreMultisite, site); err != nil {
+		return err
+	}
+	if err := sm.ensureMultisite(ctx, site); err != nil {
+		return err
+	}
+	return sm.runHooks(ctx, hooks.PostMultisite, site)
+}
+
+func (sm *SiteManager) ensureMultisite(ctx context.Context, site *types.Site) error {
+	containerName := docker.SiteContainerName(site.Slug, "php")
+
+	if _, err := sm.d.ExecInContainer(ctx, containerName, []string{"wp", "core", "is-installed", "--network"}); err == nil {
+		return nil
+	}
+
+	if _, err := sm.d.ExecInContainer(ctx, containerName, []string{"wp", "core", "is-installed"}); err != nil {
+		_, err = sm.d.ExecInContainer(ctx, containerName, []string{
+			"wp", "core", "install",
+			"--url=https://" + site.Domain,
+			"--title=" + site.Name,
+			"--admin_user=admin",
+			"--admin_password=admin",
+			"--admin_email=admin@" + site.Domain,
+			"--skip-email",
+		})
+		if err != nil {
+			return fmt.Errorf("wp core install: %w", err)
+		}
+	}
+
+	args := []string{"wp", "core", "multisite-convert", "--title=" + site.Name}
+	if site.Multisite == "subdomain" {
+		args = append(args, "--subdomains")
+	}
+
+	if _, err := sm.d.ExecInContainer(ctx, containerName, args); err != nil {
+		return fmt.Errorf("multisite convert: %w", err)
+	}
+
+	return nil
+}
+
+// ─── StopSite ───────────────────────────────────────────────────────────────
+
+func (sm *SiteManager) StopSite(ctx context.Context, id string) error {
+	site, err := sm.st.GetSite(id)
+	if err != nil {
+		slog.Error("Failed to fetch site: " + err.Error())
+		return err
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", id)
+	}
+
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreStop, site); err != nil {
+		return err
+	}
+
+	containers := specNames(sm.serviceSpecs(site))
+
+	plan := orch.Plan{
+		Name: "stop-site:" + site.Slug,
+		Steps: []orch.Step{
+			&sitesteps.StopContainersStep{Engine: sm.d, Containers: containers},
+			&sitesteps.RemoveRoutesStep{Router: sm.rtr, Slug: site.Slug},
+		},
+	}
+	res := sm.runPlan(ctx, site.ID, plan)
+	if res.FinalError != nil {
+		return res.FinalError
+	}
+
+	site.Started = false
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		slog.Error("Failed to update site: " + err.Error())
+		return err
+	}
+
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+
+	return sm.runHooks(ctx, hooks.PostStop, site)
+}
+
+// ─── DeleteSite ─────────────────────────────────────────────────────────────
+
+// DeleteOptions controls whether the database volume is preserved or
+// purged. Mirrors the three-way confirmation modal: Stop / Delete-keep-
+// volume / Purge.
+type DeleteOptions struct {
+	// PurgeVolume removes the database data volume too. Default false —
+	// volumes survive deletion so users can recover sites or reuse data.
+	PurgeVolume bool
+}
+
 func (sm *SiteManager) DeleteSite(ctx context.Context, id string) error {
+	return sm.DeleteSiteWithOptions(ctx, id, DeleteOptions{})
+}
+
+func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opts DeleteOptions) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
 		slog.Error("Failed to fetch site: " + err.Error())
@@ -279,30 +568,39 @@ func (sm *SiteManager) DeleteSite(ctx context.Context, id string) error {
 	defer mu.Unlock()
 
 	// pre-delete fires BEFORE we touch storage, so the runner's hook list
-	// lookup still succeeds. Tear-down operations come after.
+	// lookup still succeeds.
 	if err := sm.runHooks(ctx, hooks.PreDelete, site); err != nil {
 		return err
 	}
 
-	exists, _ := sm.d.SiteContainersExist(site)
-	if exists {
-		if err := sm.d.DeleteSite(site); err != nil {
-			slog.Error("Failed to remove site containers: " + err.Error())
-		}
+	containers := specNames(sm.serviceSpecs(site))
+
+	steps := []orch.Step{
+		&sitesteps.StopContainersStep{Engine: sm.d, Containers: containers},
+		&sitesteps.RemoveContainersStep{Engine: sm.d, Containers: containers},
+		&sitesteps.RemoveRoutesStep{Router: sm.rtr, Slug: site.Slug},
+		&sitesteps.RemoveSiteConfigsStep{HomeDir: sm.homeDir, Site: site},
+		&sitesteps.RemoveNetworkStep{Engine: sm.d, Site: site},
+	}
+	if opts.PurgeVolume {
+		steps = append(steps, &sitesteps.PurgeVolumeStep{Engine: sm.d, Site: site})
 	}
 
-	os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
-	os.Remove(path.Join(sm.homeDir, ".locorum", "config", "apache", "sites", site.Slug+".conf"))
-
-	if err := sm.rtr.RemoveSite(ctx, site.Slug); err != nil {
-		slog.Warn("Failed to remove route on site delete: " + err.Error())
+	plan := orch.Plan{
+		Name:  "delete-site:" + site.Slug,
+		Steps: steps,
+	}
+	res := sm.runPlan(ctx, site.ID, plan)
+	if res.FinalError != nil {
+		// Even on error we continue to delete the SQL row so the GUI
+		// doesn't show a half-deleted site forever; container cleanup is
+		// retryable from a power-cycle.
+		slog.Warn("delete site plan partially failed", "err", res.FinalError.Error())
 	}
 
-	// post-delete fires AFTER container + route teardown but BEFORE the
-	// SQL DELETE: the FK ON DELETE CASCADE would otherwise wipe the
-	// site_hooks rows before the runner could enumerate them. Failure here
-	// is informational — the destructive work has already happened, so we
-	// continue to the SQL DELETE regardless.
+	// post-delete fires AFTER tear-down but BEFORE the SQL DELETE: the FK
+	// ON DELETE CASCADE would otherwise wipe site_hooks rows before the
+	// runner could enumerate them.
 	if err := sm.runHooks(ctx, hooks.PostDelete, site); err != nil {
 		slog.Warn("post-delete hook run failed", "err", err.Error())
 	}
@@ -324,185 +622,6 @@ func (sm *SiteManager) emitSitesUpdate() {
 	if sm.OnSitesUpdated != nil {
 		sm.OnSitesUpdated(sites)
 	}
-}
-
-func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
-	site, err := sm.st.GetSite(id)
-	if err != nil {
-		slog.Error("Failed to fetch site: " + err.Error())
-		return err
-	}
-	if site == nil {
-		return fmt.Errorf("site %q not found", id)
-	}
-
-	mu := sm.siteMutex(id)
-	mu.Lock()
-	defer mu.Unlock()
-
-	if err := sm.runHooks(ctx, hooks.PreStart, site); err != nil {
-		return err
-	}
-
-	ensureWritable(site.FilesDir)
-
-	if err := sm.ensureWordPress(site); err != nil {
-		slog.Error("Failed to ensure WordPress: " + err.Error())
-		return err
-	}
-
-	if site.WebServer == "apache" {
-		err = sm.generateApacheSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "apache", "sites", site.Slug+".conf"))
-	} else {
-		err = sm.generateSiteConfig(site, path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
-	}
-	if err != nil {
-		slog.Error("Failed to generate site web server config: " + err.Error())
-		return err
-	}
-
-	exists, err := sm.d.SiteContainersExist(site)
-	if err != nil {
-		slog.Error("Failed to check if site containers exist: " + err.Error())
-		return err
-	}
-
-	if exists {
-		err = sm.d.StartExistingSite(site)
-	} else {
-		err = sm.d.CreateSite(site, sm.homeDir)
-	}
-	if err != nil {
-		slog.Error("Failed to bring up site containers: " + err.Error())
-		return err
-	}
-
-	site.Started = true
-
-	if _, err := sm.st.UpdateSite(site); err != nil {
-		slog.Error("Failed to update site: " + err.Error())
-		return err
-	}
-
-	if err := sm.upsertRoute(site); err != nil {
-		slog.Error("Failed to register route: " + err.Error())
-		return err
-	}
-
-	if site.Multisite != "" {
-		if err := sm.ensureMultisiteWithHooks(ctx, site); err != nil {
-			slog.Error("Failed to configure multisite: " + err.Error())
-		}
-	}
-
-	if sm.OnSiteUpdated != nil {
-		sm.OnSiteUpdated(site)
-	}
-
-	return sm.runHooks(ctx, hooks.PostStart, site)
-}
-
-func (sm *SiteManager) upsertRoute(site *types.Site) error {
-	route := router.SiteRoute{
-		Slug:        site.Slug,
-		PrimaryHost: site.Domain,
-		Backend:     "http://locorum-" + site.Slug + "-web:80",
-	}
-	if site.Multisite == "subdomain" {
-		route.WildcardHost = "*." + site.Domain
-	}
-	return sm.rtr.UpsertSite(context.Background(), route)
-}
-
-// ensureMultisiteWithHooks fires pre/post-multisite hooks around the
-// existing ensureMultisite work. Public lifecycle methods that themselves
-// fire pre/post-start expect this wrapper rather than ensureMultisite, so
-// users can attach setup commands that run only when multisite conversion
-// happens.
-func (sm *SiteManager) ensureMultisiteWithHooks(ctx context.Context, site *types.Site) error {
-	if err := sm.runHooks(ctx, hooks.PreMultisite, site); err != nil {
-		return err
-	}
-	if err := sm.ensureMultisite(site); err != nil {
-		return err
-	}
-	return sm.runHooks(ctx, hooks.PostMultisite, site)
-}
-
-// ensureMultisite converts a WordPress installation to multisite if not
-// already configured.
-func (sm *SiteManager) ensureMultisite(site *types.Site) error {
-	containerName := "locorum-" + site.Slug + "-php"
-
-	if _, err := sm.d.ExecInContainer(containerName, []string{"wp", "core", "is-installed", "--network"}); err == nil {
-		return nil
-	}
-
-	if _, err := sm.d.ExecInContainer(containerName, []string{"wp", "core", "is-installed"}); err != nil {
-		_, err = sm.d.ExecInContainer(containerName, []string{
-			"wp", "core", "install",
-			"--url=https://" + site.Domain,
-			"--title=" + site.Name,
-			"--admin_user=admin",
-			"--admin_password=admin",
-			"--admin_email=admin@" + site.Domain,
-			"--skip-email",
-		})
-		if err != nil {
-			return fmt.Errorf("wp core install: %w", err)
-		}
-	}
-
-	args := []string{"wp", "core", "multisite-convert", "--title=" + site.Name}
-	if site.Multisite == "subdomain" {
-		args = append(args, "--subdomains")
-	}
-
-	if _, err := sm.d.ExecInContainer(containerName, args); err != nil {
-		return fmt.Errorf("multisite convert: %w", err)
-	}
-
-	return nil
-}
-
-func (sm *SiteManager) StopSite(ctx context.Context, id string) error {
-	site, err := sm.st.GetSite(id)
-	if err != nil {
-		slog.Error("Failed to fetch site: " + err.Error())
-		return err
-	}
-	if site == nil {
-		return fmt.Errorf("site %q not found", id)
-	}
-
-	mu := sm.siteMutex(id)
-	mu.Lock()
-	defer mu.Unlock()
-
-	if err := sm.runHooks(ctx, hooks.PreStop, site); err != nil {
-		return err
-	}
-
-	if err := sm.d.StopSite(site); err != nil {
-		slog.Error("Failed to stop containers: " + err.Error())
-		return err
-	}
-
-	site.Started = false
-	if _, err := sm.st.UpdateSite(site); err != nil {
-		slog.Error("Failed to update site: " + err.Error())
-		return err
-	}
-
-	if err := sm.rtr.RemoveSite(ctx, site.Slug); err != nil {
-		slog.Warn("Failed to remove route on site stop: " + err.Error())
-	}
-
-	if sm.OnSiteUpdated != nil {
-		sm.OnSiteUpdated(site)
-	}
-
-	return sm.runHooks(ctx, hooks.PostStop, site)
 }
 
 // ReconcileState marks all sites as stopped in the database. Called on
@@ -554,7 +673,7 @@ func (sm *SiteManager) PickDirectory() (string, error) {
 
 // GetContainerLogs returns the last N lines of logs for a site's service
 // container. Service should be one of: web, php, database, redis.
-func (sm *SiteManager) GetContainerLogs(siteID, service string, lines int) (string, error) {
+func (sm *SiteManager) GetContainerLogs(ctx context.Context, siteID, service string, lines int) (string, error) {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return "", fmt.Errorf("fetching site: %w", err)
@@ -562,8 +681,8 @@ func (sm *SiteManager) GetContainerLogs(siteID, service string, lines int) (stri
 	if site == nil {
 		return "", fmt.Errorf("site %q not found", siteID)
 	}
-	containerName := "locorum-" + site.Slug + "-" + service
-	return sm.d.ContainerLogs(containerName, lines)
+	containerName := docker.SiteContainerName(site.Slug, service)
+	return sm.d.ContainerLogs(ctx, containerName, lines)
 }
 
 // OpenAdminLogin generates a one-time auto-login URL and opens it in the browser.
@@ -632,7 +751,7 @@ func (sm *SiteManager) OpenSiteShell(siteID string) error {
 		return fmt.Errorf("site must be running")
 	}
 
-	containerName := "locorum-" + site.Slug + "-php"
+	containerName := docker.SiteContainerName(site.Slug, "php")
 	return utils.OpenTerminalWithCommand("docker", "exec", "-it", containerName, "/bin/bash")
 }
 
@@ -677,11 +796,9 @@ func (sm *SiteManager) UpdateSiteVersions(ctx context.Context, siteID, phpVer, m
 		return err
 	}
 
-	exists, _ := sm.d.SiteContainersExist(site)
-	if exists {
-		if err := sm.d.DeleteSite(site); err != nil {
-			slog.Error("Failed to remove old containers for version swap: " + err.Error())
-		}
+	containers := specNames(sm.serviceSpecs(site))
+	if err := (&sitesteps.RemoveContainersStep{Engine: sm.d, Containers: containers}).Apply(ctx); err != nil {
+		slog.Error("Failed to remove old containers for version swap: " + err.Error())
 	}
 
 	if _, err := sm.st.UpdateSite(site); err != nil {
@@ -762,8 +879,8 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 
 	var dbDump string
 	if site.Started {
-		containerName := "locorum-" + site.Slug + "-database"
-		dump, err := sm.d.ExecInContainer(containerName, []string{
+		containerName := docker.SiteContainerName(site.Slug, "database")
+		dump, err := sm.d.ExecInContainer(ctx, containerName, []string{
 			"mysqldump", "-u", "wordpress", "-p" + site.DBPassword, "wordpress",
 		})
 		if err != nil {
@@ -793,8 +910,7 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		return fmt.Errorf("adding cloned site to database: %w", err)
 	}
 
-	// StartSite acquires its own per-site mutex (newSite.ID), so we don't
-	// recurse on the parent site's lock.
+	// StartSite acquires its own per-site mutex (newSite.ID).
 	if err := sm.StartSite(ctx, newSite.ID); err != nil {
 		return fmt.Errorf("starting cloned site: %w", err)
 	}
@@ -807,13 +923,13 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		if err := os.WriteFile(dumpPath, []byte(dbDump), 0666); err != nil {
 			slog.Warn("Failed to write clone dump file: " + err.Error())
 		} else {
-			phpContainer := "locorum-" + newSlug + "-php"
-			if _, err := sm.d.ExecInContainer(phpContainer, []string{
+			phpContainer := docker.SiteContainerName(newSlug, "php")
+			if _, err := sm.d.ExecInContainer(ctx, phpContainer, []string{
 				"wp", "db", "import", "/var/www/html/locorum-clone-dump.sql",
 			}); err != nil {
 				slog.Warn("DB import failed during clone: " + err.Error())
 			}
-			_, _ = sm.d.ExecInContainer(phpContainer, []string{
+			_, _ = sm.d.ExecInContainer(ctx, phpContainer, []string{
 				"wp", "search-replace",
 				"https://" + site.Domain, "https://" + newDomain,
 				"--all-tables",
@@ -823,9 +939,6 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 	}
 
 	sm.emitSitesUpdate()
-	// post-clone fires on the SOURCE site so users can attach commands like
-	// "rename the cloned files dir" or "rsync to a CI bucket". The clone
-	// itself runs its own pre-/post-start chain via StartSite above.
 	return sm.runHooks(ctx, hooks.PostClone, site)
 }
 
@@ -850,7 +963,7 @@ func (sm *SiteManager) CheckLinks(siteID string, onProgress func(string), onDone
 }
 
 // ExecWPCLI runs a WP-CLI command inside the site's PHP container.
-func (sm *SiteManager) ExecWPCLI(siteID string, args []string) (string, error) {
+func (sm *SiteManager) ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return "", fmt.Errorf("fetching site: %w", err)
@@ -859,9 +972,9 @@ func (sm *SiteManager) ExecWPCLI(siteID string, args []string) (string, error) {
 		return "", fmt.Errorf("site %q not found", siteID)
 	}
 
-	containerName := "locorum-" + site.Slug + "-php"
+	containerName := docker.SiteContainerName(site.Slug, "php")
 	cmd := append([]string{"wp"}, args...)
-	output, err := sm.d.ExecInContainer(containerName, cmd)
+	output, err := sm.d.ExecInContainer(ctx, containerName, cmd)
 	if err != nil {
 		return output, fmt.Errorf("wp-cli: %w", err)
 	}
