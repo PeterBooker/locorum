@@ -647,4 +647,3 @@ func (sm *SiteManager) ExecWPCLI(siteID string, args []string) (string, error) {
 	}
 	return strings.TrimRight(output, "\n"), nil
 }
-

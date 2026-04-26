@@ -117,11 +117,11 @@ func TestBuildServiceRule(t *testing.T) {
 
 func TestContainerCertPath(t *testing.T) {
 	tests := []struct {
-		name   string
-		host   string
-		hostR  string
-		ctnrR  string
-		want   string
+		name  string
+		host  string
+		hostR string
+		ctnrR string
+		want  string
 	}{
 		{
 			name:  "translate inside hostRoot",
@@ -191,10 +191,10 @@ func TestRendererSite(t *testing.T) {
 	}
 
 	cases := []struct {
-		name       string
-		route      router.SiteRoute
-		cert       tlspkg.CertPath
-		mustHave   []string
+		name        string
+		route       router.SiteRoute
+		cert        tlspkg.CertPath
+		mustHave    []string
 		mustNotHave []string
 	}{
 		{

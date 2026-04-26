@@ -381,9 +381,9 @@ func (r *Router) createContainer() error {
 		Cmd:    []string{"--configfile=" + ContainerStaticPath},
 		Labels: docker.PlatformLabels(docker.RoleRouter, "", r.cfg.AppVersion),
 		ExposedPorts: nat.PortSet{
-			"80/tcp":                       {},
-			"443/tcp":                      {},
-			nat.Port(AdminPort + "/tcp"):   {},
+			"80/tcp":                     {},
+			"443/tcp":                    {},
+			nat.Port(AdminPort + "/tcp"): {},
 		},
 	}
 
@@ -394,9 +394,9 @@ func (r *Router) createContainer() error {
 			r.hostCertsDir + ":" + ContainerCertsDir + ":ro",
 		},
 		PortBindings: nat.PortMap{
-			"80/tcp":                       {{HostIP: "0.0.0.0", HostPort: "80"}},
-			"443/tcp":                      {{HostIP: "0.0.0.0", HostPort: "443"}},
-			nat.Port(AdminPort + "/tcp"):   {{HostIP: AdminBindHost, HostPort: AdminPort}},
+			"80/tcp":                     {{HostIP: "0.0.0.0", HostPort: "80"}},
+			"443/tcp":                    {{HostIP: "0.0.0.0", HostPort: "443"}},
+			nat.Port(AdminPort + "/tcp"): {{HostIP: AdminBindHost, HostPort: AdminPort}},
 		},
 		NetworkMode:   dcontainer.NetworkMode(NetworkName),
 		RestartPolicy: dcontainer.RestartPolicy{Name: dcontainer.RestartPolicyUnlessStopped},

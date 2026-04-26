@@ -28,7 +28,7 @@ make test              # go test ./...
 make linux-amd64       # cross-compile (see Makefile for all targets)
 ```
 
-After code changes, **always** run `go vet ./...` and `go test ./...` before reporting done. `build/` and a stray `locorum` binary at the repo root are both gitignored — a one-off `go build .` won't pollute `git status`.
+After code changes, **always** run `gofmt -w .`, `go vet ./...`, and `go test ./...` before reporting done. `gofmt` is non-negotiable — every `.go` file must be gofmt-clean (CI will reject otherwise). `build/` and a stray `locorum` binary at the repo root are both gitignored — a one-off `go build .` won't pollute `git status`.
 
 Testing the GUI itself requires running the app; the test suite only covers storage, nginx templating, and utils. If you touch UI code you can't functionally verify without launching the app — **say so explicitly** rather than claiming the change works.
 
