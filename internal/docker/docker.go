@@ -10,13 +10,17 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/PeterBooker/locorum/internal/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
+
+	"github.com/PeterBooker/locorum/internal/types"
+	"github.com/PeterBooker/locorum/internal/version"
 )
+
+const GlobalNetwork = "locorum-global"
 
 type Docker struct {
 	cli *client.Client
@@ -44,163 +48,117 @@ func (d *Docker) CheckDockerAvailable() error {
 		slog.Error("docker is not running or not accessible: " + err.Error())
 		return err
 	}
-
 	return nil
 }
 
+// CreateGlobalNetwork ensures the locorum-global bridge network exists.
+// Idempotent — returns nil if the network is already there.
 func (d *Docker) CreateGlobalNetwork() error {
-	exists, err := d.networkExists("locorum-global")
+	exists, err := d.networkExists(GlobalNetwork)
 	if err != nil {
 		slog.Error("Failed to check if global network exists: " + err.Error())
 	}
-
 	if exists {
-		slog.Info("Global network already exists")
 		return nil
 	}
-
-	err = d.createNetwork("locorum-global", false)
-	if err != nil {
-		slog.Error("Failed to create global network: " + err.Error())
-		return err
+	labels := PlatformLabels(RoleGlobalNetwork, "", version.Version)
+	if err := d.createNetwork(GlobalNetwork, false, labels); err != nil {
+		return fmt.Errorf("creating global network: %w", err)
 	}
-
 	return nil
 }
 
-func (d *Docker) CreateGlobalWebserver(homeDir string) error {
-	exists, err := d.containerExists("locorum-global-webserver")
-	if err != nil {
-		slog.Error("Failed to check if global container exists: " + err.Error())
-	}
-
-	if exists {
-		slog.Info("Global webserver already exists")
-		return nil
-	}
-
-	containerName := "locorum-global-webserver"
-	imageName := "nginx:1.28"
-	networkName := "locorum-global"
-
-	config := &container.Config{
-		Image: imageName,
-		Tty:   true,
-		ExposedPorts: nat.PortSet{
-			"80/tcp":  struct{}{},
-			"443/tcp": struct{}{},
-		},
-	}
-
-	hostConfig := &container.HostConfig{
-		Binds: []string{
-			path.Join(homeDir, ".locorum", "config", "nginx", "global.conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(homeDir, ".locorum", "config", "nginx", "map.conf") + ":/etc/nginx/map.conf:ro",
-		},
-		PortBindings: nat.PortMap{
-			"80/tcp":  {{HostIP: "0.0.0.0", HostPort: "80"}},
-			"443/tcp": {{HostIP: "0.0.0.0", HostPort: "443"}},
-		},
-		NetworkMode: container.NetworkMode(networkName),
-		ExtraHosts:  []string{},
-	}
-
-	networkingConfig := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {},
-		},
-	}
-
-	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	slog.Info("Global webserver container created successfully.")
-	return nil
-}
-
+// CreateGlobalMailserver ensures the mailhog container is running on the
+// global network. Mailhog has no host port binding — Traefik routes to it
+// via its container alias.
 func (d *Docker) CreateGlobalMailserver() error {
 	exists, err := d.containerExists("locorum-global-mail")
 	if err != nil {
 		slog.Error("Failed to check if global mail container exists: " + err.Error())
 	}
-
 	if exists {
-		slog.Info("Global mail server already exists")
 		return nil
 	}
 
-	containerName := "locorum-global-mail"
-	imageName := "mailhog/mailhog"
-	networkName := "locorum-global"
-
-	config := &container.Config{
-		Image: imageName,
+	cfg := &container.Config{
+		Image: version.MailhogImage,
 		Tty:   true,
 		ExposedPorts: nat.PortSet{
 			"1025/tcp": struct{}{},
 			"8025/tcp": struct{}{},
 		},
+		Labels: PlatformLabels(RoleMail, "", version.Version),
 	}
-
-	hostConfig := &container.HostConfig{
-		Binds:        []string{},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
+	hostCfg := &container.HostConfig{
+		NetworkMode: container.NetworkMode(GlobalNetwork),
 	}
-
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {
-				Aliases: []string{"mail"},
-			},
+			GlobalNetwork: {Aliases: []string{"mail"}},
 		},
 	}
-
-	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
+	if err := d.createContainer("locorum-global-mail", version.MailhogImage, cfg, hostCfg, netCfg); err != nil {
 		return err
 	}
-
-	slog.Info("Global mail container created successfully.")
-
 	return nil
 }
 
-// CreateSite creates all containers and the network for a new site.
+// CreateGlobalAdminer ensures the adminer container is running on the
+// global network. Traefik routes to it via its container alias.
+func (d *Docker) CreateGlobalAdminer() error {
+	exists, err := d.containerExists("locorum-global-adminer")
+	if err != nil {
+		slog.Error("Failed to check if global adminer container exists: " + err.Error())
+	}
+	if exists {
+		return nil
+	}
+
+	cfg := &container.Config{
+		Image: version.AdminerImage,
+		Tty:   true,
+		ExposedPorts: nat.PortSet{
+			"8080/tcp": struct{}{},
+		},
+		Env: []string{
+			"ADMINER_DEFAULT_SERVER=database",
+		},
+		Labels: PlatformLabels(RoleAdminer, "", version.Version),
+	}
+	hostCfg := &container.HostConfig{
+		NetworkMode: container.NetworkMode(GlobalNetwork),
+	}
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			GlobalNetwork: {Aliases: []string{"adminer"}},
+		},
+	}
+	if err := d.createContainer("locorum-global-adminer", version.AdminerImage, cfg, hostCfg, netCfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateSite creates the per-site network and all four backend containers
+// for the given site. Volumes are labeled too so cleanup catches them.
 func (d *Docker) CreateSite(site *types.Site, homeDir string) error {
-	err := d.createNetwork("locorum-"+site.Slug, true)
-	if err != nil {
-		slog.Error("Failed to create site network: " + err.Error())
-		return err
+	netLabels := PlatformLabels(RoleSiteNetwork, site.Slug, version.Version)
+	if err := d.createNetwork("locorum-"+site.Slug, true, netLabels); err != nil {
+		return fmt.Errorf("creating site network: %w", err)
 	}
 
-	err = d.addWebContainer(site, homeDir)
-	if err != nil {
-		slog.Error("Failed to add Web Server container: " + err.Error())
-		return err
+	if err := d.addWebContainer(site, homeDir); err != nil {
+		return fmt.Errorf("adding web container: %w", err)
 	}
-
-	err = d.addPhpContainer(site, homeDir)
-	if err != nil {
-		slog.Error("Failed to add PHP container: " + err.Error())
-		return err
+	if err := d.addPhpContainer(site, homeDir); err != nil {
+		return fmt.Errorf("adding php container: %w", err)
 	}
-
-	err = d.addDatabaseContainer(site, homeDir)
-	if err != nil {
-		slog.Error("Failed to add Database container: " + err.Error())
-		return err
+	if err := d.addDatabaseContainer(site, homeDir); err != nil {
+		return fmt.Errorf("adding database container: %w", err)
 	}
-
-	err = d.addRedisContainer(site, homeDir)
-	if err != nil {
-		slog.Error("Failed to add Redis container: " + err.Error())
-		return err
+	if err := d.addRedisContainer(site, homeDir); err != nil {
+		return fmt.Errorf("adding redis container: %w", err)
 	}
-
 	return nil
 }
 
@@ -217,14 +175,11 @@ func (d *Docker) StartExistingSite(site *types.Site) error {
 		"locorum-" + site.Slug + "-php",
 		"locorum-" + site.Slug + "-web",
 	}
-
 	for _, cname := range containerNames {
 		if err := d.cli.ContainerStart(d.ctx, cname, container.StartOptions{}); err != nil {
 			return fmt.Errorf("starting container %q failed: %w", cname, err)
 		}
-		slog.Info(fmt.Sprintf("Container %q started", cname))
 	}
-
 	return nil
 }
 
@@ -236,65 +191,46 @@ func (d *Docker) StopSite(site *types.Site) error {
 		"locorum-" + site.Slug + "-php",
 		"locorum-" + site.Slug + "-web",
 	}
-
 	timeout := 10
-
 	for _, cname := range containerNames {
-		slog.Info(fmt.Sprintf("Stopping container %s", cname))
-		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
-			Timeout: &timeout,
-		}); err != nil {
+		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{Timeout: &timeout}); err != nil {
 			if !errdefs.IsNotFound(err) {
 				slog.Error(fmt.Sprintf("failed to stop container %s: %v", cname, err))
 			}
 		}
 	}
-
 	return nil
 }
 
-// DeleteSite stops and removes all containers and the network for the given site.
-// Volumes are preserved so database data persists.
+// DeleteSite stops and removes all containers and the network for the given
+// site. Volumes are preserved so database data persists across delete.
 func (d *Docker) DeleteSite(site *types.Site) error {
 	networkName := "locorum-" + site.Slug
-
 	containerNames := []string{
 		"locorum-" + site.Slug + "-redis",
 		"locorum-" + site.Slug + "-database",
 		"locorum-" + site.Slug + "-php",
 		"locorum-" + site.Slug + "-web",
 	}
-
 	timeout := 10
-
 	for _, cname := range containerNames {
-		slog.Info(fmt.Sprintf("Removing container %s", cname))
-		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{
-			Timeout: &timeout,
-		}); err != nil {
+		if err := d.cli.ContainerStop(d.ctx, cname, container.StopOptions{Timeout: &timeout}); err != nil {
 			if !errdefs.IsNotFound(err) {
 				slog.Error(fmt.Sprintf("failed to stop container %s: %v", cname, err))
 			}
 		}
-
-		if err := d.cli.ContainerRemove(d.ctx, cname, container.RemoveOptions{
-			RemoveVolumes: false,
-			Force:         true,
-		}); err != nil {
+		if err := d.cli.ContainerRemove(d.ctx, cname, container.RemoveOptions{Force: true}); err != nil {
 			if !errdefs.IsNotFound(err) {
 				slog.Error(fmt.Sprintf("failed to remove container %s: %v", cname, err))
 			}
 		}
 	}
-
-	// Remove the network.
 	if err := d.cli.NetworkRemove(d.ctx, networkName); err != nil {
 		if !errdefs.IsNotFound(err) {
 			slog.Error(fmt.Sprintf("failed to remove network %s: %v", networkName, err))
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -307,32 +243,29 @@ func (d *Docker) addWebContainer(site *types.Site, home string) error {
 
 func (d *Docker) addNginxWebContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-web"
-	imageName := "nginx:1.28-alpine"
+	imageName := version.NginxImage
 	networkName := "locorum-" + site.Slug
 
-	config := &container.Config{
+	cfg := &container.Config{
 		Image: imageName,
 		Tty:   true,
 		ExposedPorts: nat.PortSet{
-			"80/tcp":  struct{}{},
-			"443/tcp": struct{}{},
+			"80/tcp": struct{}{},
 		},
+		Labels: PlatformLabels(RoleWeb, site.Slug, version.Version),
 	}
 
-	hostConfig := &container.HostConfig{
+	hostCfg := &container.HostConfig{
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "nginx", "sites", site.Slug+".conf") + ":/etc/nginx/nginx.conf:ro",
-			path.Join(home, ".locorum", "config", "certs") + ":/etc/nginx/certs:ro",
 			site.FilesDir + ":/var/www/html",
 		},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
+		NetworkMode: container.NetworkMode(networkName),
 	}
 
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {
+			GlobalNetwork: {
 				Aliases: []string{"locorum-" + site.Slug + "-web"},
 			},
 			networkName: {
@@ -341,42 +274,34 @@ func (d *Docker) addNginxWebContainer(site *types.Site, home string) error {
 		},
 	}
 
-	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return d.createContainer(containerName, imageName, cfg, hostCfg, netCfg)
 }
 
 func (d *Docker) addApacheWebContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-web"
-	imageName := "httpd:2.4-alpine"
+	imageName := version.ApacheImage
 	networkName := "locorum-" + site.Slug
 
-	config := &container.Config{
+	cfg := &container.Config{
 		Image: imageName,
 		Tty:   true,
 		ExposedPorts: nat.PortSet{
-			"80/tcp":  struct{}{},
-			"443/tcp": struct{}{},
+			"80/tcp": struct{}{},
 		},
+		Labels: PlatformLabels(RoleWeb, site.Slug, version.Version),
 	}
 
-	hostConfig := &container.HostConfig{
+	hostCfg := &container.HostConfig{
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "apache", "sites", site.Slug+".conf") + ":/usr/local/apache2/conf/httpd.conf:ro",
-			path.Join(home, ".locorum", "config", "certs") + ":/usr/local/apache2/certs:ro",
 			site.FilesDir + ":/var/www/html",
 		},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
+		NetworkMode: container.NetworkMode(networkName),
 	}
 
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {
+			GlobalNetwork: {
 				Aliases: []string{"locorum-" + site.Slug + "-web"},
 			},
 			networkName: {
@@ -385,17 +310,12 @@ func (d *Docker) addApacheWebContainer(site *types.Site, home string) error {
 		},
 	}
 
-	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return d.createContainer(containerName, imageName, cfg, hostCfg, netCfg)
 }
 
 func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-php"
-	imageName := "wodby/php:" + site.PHPVersion
+	imageName := version.WodbyPHPImagePrefix + site.PHPVersion
 	networkName := "locorum-" + site.Slug
 
 	// On Windows os.Getuid()/os.Getgid() return -1; fall back to 1000:1000
@@ -405,12 +325,11 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 		uid, gid = 1000, 1000
 	}
 
-	config := &container.Config{
-		Image:        imageName,
-		User:         fmt.Sprintf("%d:%d", uid, gid),
-		Tty:          true,
-		WorkingDir:   "/var/www/html",
-		ExposedPorts: nat.PortSet{},
+	cfg := &container.Config{
+		Image:      imageName,
+		User:       fmt.Sprintf("%d:%d", uid, gid),
+		Tty:        true,
+		WorkingDir: "/var/www/html",
 		Env: []string{
 			"MYSQL_HOST=database",
 			"MYSQL_DATABASE=wordpress",
@@ -418,169 +337,99 @@ func (d *Docker) addPhpContainer(site *types.Site, home string) error {
 			"MYSQL_PASSWORD=" + site.DBPassword,
 			"WP_CLI_ALLOW_ROOT=true",
 		},
+		Labels: PlatformLabels(RolePHP, site.Slug, version.Version),
 	}
 
-	hostConfig := &container.HostConfig{
+	hostCfg := &container.HostConfig{
 		Binds: []string{
 			path.Join(home, ".locorum", "config", "php", "php.ini") + ":/usr/local/etc/php/conf.d/zzz-php.ini",
 			site.FilesDir + ":/var/www/html",
 		},
-		PortBindings: nat.PortMap{},
-		ExtraHosts:   []string{site.Domain + ":host-gateway"},
+		ExtraHosts: []string{site.Domain + ":host-gateway"},
 	}
 
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
+			GlobalNetwork: {},
 			networkName: {
 				Aliases: []string{"php"},
 			},
 		},
 	}
 
-	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return d.createContainer(containerName, imageName, cfg, hostCfg, netCfg)
 }
 
 func (d *Docker) addDatabaseContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-database"
-	imageName := "mysql:" + site.MySQLVersion
+	imageName := version.MySQLImagePrefix + site.MySQLVersion
 	networkName := "locorum-" + site.Slug
 	volumeName := "locorum-" + site.Slug + "-dbdata"
 
-	err := d.createVolume(volumeName)
-	if err != nil {
+	volumeLabels := PlatformLabels(RoleDatabaseData, site.Slug, version.Version)
+	if err := d.createVolume(volumeName, volumeLabels); err != nil {
 		return err
 	}
 
-	config := &container.Config{
-		Image:        imageName,
-		Tty:          true,
-		Cmd:          []string{"mysqld", "--innodb-flush-method=fsync"},
-		ExposedPorts: nat.PortSet{},
+	cfg := &container.Config{
+		Image: imageName,
+		Tty:   true,
+		Cmd:   []string{"mysqld", "--innodb-flush-method=fsync"},
 		Env: []string{
 			"MYSQL_ROOT_PASSWORD=" + site.DBPassword,
 			"MYSQL_DATABASE=wordpress",
 			"MYSQL_USER=wordpress",
 			"MYSQL_PASSWORD=" + site.DBPassword,
 		},
+		Labels: PlatformLabels(RoleDatabase, site.Slug, version.Version),
 	}
 
-	hostConfig := &container.HostConfig{
+	hostCfg := &container.HostConfig{
 		Binds: []string{
 			volumeName + ":/var/lib/mysql",
 			path.Join(home, ".locorum", "config", "db", "db.cnf") + ":/etc/mysql/conf.d/locorum.cnf:ro",
 		},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
+		NetworkMode: container.NetworkMode(networkName),
 	}
 
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
+			GlobalNetwork: {},
 			networkName: {
 				Aliases: []string{"database"},
 			},
 		},
 	}
 
-	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return d.createContainer(containerName, imageName, cfg, hostCfg, netCfg)
 }
 
 func (d *Docker) addRedisContainer(site *types.Site, home string) error {
 	containerName := "locorum-" + site.Slug + "-redis"
-	imageName := "redis:" + site.RedisVersion + "-alpine"
+	imageName := version.RedisImagePrefix + site.RedisVersion + version.RedisImageSuffix
 	networkName := "locorum-" + site.Slug
 
-	config := &container.Config{
-		Image:        imageName,
-		Tty:          true,
-		Cmd:          []string{"redis-server", "--appendonly", "yes"},
-		ExposedPorts: nat.PortSet{},
+	cfg := &container.Config{
+		Image:  imageName,
+		Tty:    true,
+		Cmd:    []string{"redis-server", "--appendonly", "yes"},
+		Labels: PlatformLabels(RoleRedis, site.Slug, version.Version),
 	}
 
-	hostConfig := &container.HostConfig{
-		Binds:        []string{},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
+	hostCfg := &container.HostConfig{
+		NetworkMode: container.NetworkMode(networkName),
 	}
 
-	networkingConfig := &network.NetworkingConfig{
+	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			"locorum-global": {},
+			GlobalNetwork: {},
 			networkName: {
 				Aliases: []string{"redis"},
 			},
 		},
 	}
 
-	err := d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (d *Docker) CreateGlobalAdminer() error {
-	exists, err := d.containerExists("locorum-global-adminer")
-	if err != nil {
-		slog.Error("Failed to check if global adminer container exists: " + err.Error())
-	}
-
-	if exists {
-		slog.Info("Global adminer already exists")
-		return nil
-	}
-
-	containerName := "locorum-global-adminer"
-	imageName := "adminer:latest"
-	networkName := "locorum-global"
-
-	config := &container.Config{
-		Image: imageName,
-		Tty:   true,
-		ExposedPorts: nat.PortSet{
-			"8080/tcp": struct{}{},
-		},
-		Env: []string{
-			"ADMINER_DEFAULT_SERVER=database",
-		},
-	}
-
-	hostConfig := &container.HostConfig{
-		Binds:        []string{},
-		PortBindings: nat.PortMap{},
-		NetworkMode:  container.NetworkMode(networkName),
-		ExtraHosts:   []string{},
-	}
-
-	networkingConfig := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {
-				Aliases: []string{"adminer"},
-			},
-		},
-	}
-
-	err = d.createContainer(containerName, imageName, config, hostConfig, networkingConfig)
-	if err != nil {
-		return err
-	}
-
-	slog.Info("Global adminer container created successfully.")
-	return nil
+	return d.createContainer(containerName, imageName, cfg, hostCfg, netCfg)
 }
 
 // ContainerLogs returns the last N lines of logs from the named container.
@@ -590,19 +439,16 @@ func (d *Docker) ContainerLogs(containerName string, lines int) (string, error) 
 		ShowStderr: true,
 		Tail:       strconv.Itoa(lines),
 	}
-
 	reader, err := d.cli.ContainerLogs(d.ctx, containerName, opts)
 	if err != nil {
 		return "", fmt.Errorf("fetching logs for %q: %w", containerName, err)
 	}
 	defer reader.Close()
 
-	// Containers use Tty: true, so output is plain text (no stdcopy demux needed).
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, reader); err != nil {
 		return "", fmt.Errorf("reading logs for %q: %w", containerName, err)
 	}
-
 	return buf.String(), nil
 }
 
@@ -614,15 +460,12 @@ func (d *Docker) ExecInContainer(containerName string, cmd []string) (string, er
 		AttachStderr: true,
 		Tty:          true,
 	}
-
 	execIDResp, err := d.cli.ContainerExecCreate(d.ctx, containerName, execConfig)
 	if err != nil {
 		return "", fmt.Errorf("creating exec in %q: %w", containerName, err)
 	}
 
-	attachResp, err := d.cli.ContainerExecAttach(d.ctx, execIDResp.ID, container.ExecAttachOptions{
-		Tty: true,
-	})
+	attachResp, err := d.cli.ContainerExecAttach(d.ctx, execIDResp.ID, container.ExecAttachOptions{Tty: true})
 	if err != nil {
 		return "", fmt.Errorf("attaching to exec in %q: %w", containerName, err)
 	}
@@ -637,11 +480,9 @@ func (d *Docker) ExecInContainer(containerName string, cmd []string) (string, er
 	if err != nil {
 		return outputBuf.String(), fmt.Errorf("inspecting exec in %q: %w", containerName, err)
 	}
-
 	if inspectResp.ExitCode != 0 {
 		return outputBuf.String(), fmt.Errorf("command exited with code %d", inspectResp.ExitCode)
 	}
-
 	return outputBuf.String(), nil
 }
 
@@ -657,7 +498,7 @@ func (d *Docker) ContainerIsRunning(name string) (bool, error) {
 	return info.State.Running, nil
 }
 
-// ContainerExists checks if a Docker container with the specified name exists (exported).
+// ContainerExists checks if a Docker container with the specified name exists.
 func (d *Docker) ContainerExists(name string) (bool, error) {
 	return d.containerExists(name)
 }

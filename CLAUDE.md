@@ -12,7 +12,7 @@ Desktop app providing local WordPress dev environments via Docker. Pure-Go, imme
 | Docker | Go SDK (`github.com/docker/docker`), no Compose |
 | DB | SQLite via `modernc.org/sqlite` (pure Go, no CGO) |
 | Migrations | `golang-migrate/migrate/v4`, embedded SQL |
-| Data dir | `~/.locorum/` (config, SQLite, nginx/apache site confs) |
+| Data dir | `~/.locorum/` (config, SQLite, router state, mkcert certs) |
 | Site files | `~/locorum/sites/{slug}/` (user-visible) |
 | Build | `make build` → `build/bin/locorum` |
 | Test | `go test ./...` |
@@ -39,22 +39,32 @@ Testing the GUI itself requires running the app; the test suite only covers stor
 ```
 main.go                     window + event loop + startup/shutdown
 internal/app                 filesystem setup, global Docker infra
-internal/docker              thin wrapper over Docker SDK
+internal/docker              thin wrapper over Docker SDK (labels, container/network/volume helpers)
+internal/router              Router interface + types (SiteRoute, ServiceRoute, Health)
+internal/router/traefik      Traefik v3 implementation (file provider + admin API)
+internal/router/fake         in-memory Router for tests
+internal/tls                 TLS Provider interface + mkcert implementation
 internal/storage             SQLite CRUD + embedded migrations
 internal/sites               SiteManager — core business logic
 internal/ui                  Gio GUI (immediate-mode)
 internal/types               shared data model (Site struct)
 internal/utils               filesystem/WSL/platform helpers
-config/                      embedded nginx/apache/php/mysql/cert configs
+internal/version             build-time identity + pinned image tags
+config/router/               embedded Traefik static + dynamic YAML templates
+config/nginx/                embedded per-site nginx config template (HTTP-only)
+config/apache/               embedded per-site Apache config template (HTTP-only)
+config/{db,php}/             embedded MySQL + PHP config
 ```
 
 Dependency direction (strict):
 ```
-main ─┬─ app ─┬─ docker
-      │       └─ utils
-      ├─ storage ─ types
-      ├─ sites ─┬─ docker, storage, types, utils
-      └─ ui ────┴─ sites, types
+main ─┬─ app    ─┬─ docker, utils, router (interface)
+      │
+      ├─ router/traefik ─┬─ docker, router, tls, version
+      ├─ tls
+      ├─ storage ─── types
+      ├─ sites   ─┬─ docker, storage, types, utils, router (interface)
+      └─ ui      ─┴─ sites, types
 ```
 
 ### Load-Bearing Invariants
@@ -62,11 +72,12 @@ main ─┬─ app ─┬─ docker
 These are the rules that hold the app together. Don't violate them without discussing first.
 
 1. **UI never calls Docker or Storage directly.** Everything goes through `SiteManager` in `internal/sites/`. The UI only touches `sites.SiteManager` and `internal/types`.
-2. **All Docker resources are prefixed `locorum-`.** Startup and shutdown wipe everything matching this prefix (`app.Initialize` / `app.Shutdown`). Anything else under that prefix will be destroyed.
-3. **Shared UI state is mutex-protected.** Every read/write of `UIState` fields goes through `s.mu`. Background goroutines lock → mutate → unlock → `state.Invalidate()` to wake the event loop.
-4. **UI is redrawn every frame.** There is no widget tree. Persistent state lives in Go structs (`widget.Clickable`, `widget.Editor`, `widget.List`). `Layout()` is called on every `FrameEvent`.
-5. **Long-running ops run in goroutines.** Docker calls, WP downloads, file dialogs, link checks — never call these from `Layout()`. Spawn a goroutine and invalidate when done.
-6. **SiteManager → UI via callbacks.** `sm.OnSitesUpdated` and `sm.OnSiteUpdated` are set by the UI layer in `ui.New()`. The backend never imports `internal/ui`.
+2. **All Docker resources carry the `io.locorum.platform=locorum` label.** Startup and shutdown wipe everything matching this label (`app.Initialize` / `app.Shutdown`). The `locorum-` name prefix is also swept for migration from pre-label installs but the label is the source of truth — never use name-prefix matching in new code; use `docker.RemoveByLabel` / `docker.NetworksByLabel`.
+3. **Routing is owned by `router.Router`.** `internal/sites/` and `internal/app/` only depend on the interface. The Traefik implementation in `internal/router/traefik/` is the only thing that knows about Traefik config files, the admin API, or the global router container. Don't add routing-engine specifics anywhere else.
+4. **Shared UI state is mutex-protected.** Every read/write of `UIState` fields goes through `s.mu`. Background goroutines lock → mutate → unlock → `state.Invalidate()` to wake the event loop.
+5. **UI is redrawn every frame.** There is no widget tree. Persistent state lives in Go structs (`widget.Clickable`, `widget.Editor`, `widget.List`). `Layout()` is called on every `FrameEvent`.
+6. **Long-running ops run in goroutines.** Docker calls, WP downloads, file dialogs, link checks — never call these from `Layout()`. Spawn a goroutine and invalidate when done.
+7. **SiteManager → UI via callbacks.** `sm.OnSitesUpdated` and `sm.OnSiteUpdated` are set by the UI layer in `ui.New()`. The backend never imports `internal/ui`.
 
 ### Background Ops Pattern
 
@@ -91,30 +102,34 @@ No `docker-compose.yml`. Everything is created via the Go SDK in `internal/docke
 
 | Container | Image | Purpose |
 |---|---|---|
-| `locorum-global-webserver` | `nginx:1.28` | HTTPS reverse proxy, SNI routing, ports 80/443 |
+| `locorum-global-router` | `traefik:v3.5` | TLS termination + hostname routing on host ports 80/443; admin API at `127.0.0.1:8888` (basic-auth, password generated per process) |
 | `locorum-global-mail` | `mailhog/mailhog` | SMTP capture at `mail.localhost` |
 | `locorum-global-adminer` | `adminer:latest` | DB UI at `db.localhost` |
 
-All join the `locorum-global` bridge network.
+All join the `locorum-global` bridge network. Image versions are pinned in `internal/version/images.go`.
 
 ### Per-site (created on start)
 
 | Container | Image | Network alias |
 |---|---|---|
-| `locorum-{slug}-web` | `nginx:1.28-alpine` or `httpd:2.4-alpine` | `web` |
+| `locorum-{slug}-web` | `nginx:1.28-alpine` or `httpd:2.4-alpine` (HTTP only — no TLS) | `web` |
 | `locorum-{slug}-php` | `wodby/php:{version}` | `php` |
 | `locorum-{slug}-database` | `mysql:{version}` | `database` |
 | `locorum-{slug}-redis` | `redis:{version}-alpine` | `redis` |
 
-Each site has its own internal bridge network (`locorum-{slug}`). Web and PHP containers also join `locorum-global` so the global nginx can route to them. DB data persists in named volume `locorum-{slug}-dbdata`.
+Each site has its own internal bridge network (`locorum-{slug}`). Web and PHP containers also join `locorum-global` so Traefik can route to them. DB data persists in named volume `locorum-{slug}-dbdata`.
+
+### Routing
+
+The router uses Traefik's file provider — dynamic configs live at `~/.locorum/router/dynamic/{site,svc}-*.yaml` and Traefik watches the directory via fsnotify. Per-site certificates issued by mkcert land at `~/.locorum/certs/{site,svc}-*/{cert,key}.pem` and are bind-mounted into the router. If mkcert is not installed (or `mkcert -install` has not been run), sites still serve over HTTPS — the browser just shows an untrusted-cert warning until the user installs mkcert. A persistent UI banner surfaces the install instructions.
 
 ### Lifecycle
 
-- **Startup** (`app.Initialize`) — wipes all `locorum-*` containers/networks, recreates globals, extracts embedded configs to `~/.locorum/config/`. `ReconcileState` marks all sites as stopped.
-- **Start site** (`sm.StartSite`) — downloads WordPress if empty, generates per-site web server config, creates network + 4 containers (or starts them if they already exist), regenerates the nginx SNI map, reloads global nginx, optionally configures multisite.
-- **Stop site** — stops containers (not removed), disables live-reload, regenerates nginx map. Container state is preserved.
-- **Delete site** — stops + removes containers, removes site network, removes per-site configs, deletes DB row. **Volumes are kept** (so DB data survives deletion by design).
-- **Shutdown** — wipes all `locorum-*` containers/networks. Volumes persist.
+- **Startup** (`app.Initialize`) — wipes all label-matched containers/networks, recreates the global network, brings up mailhog + adminer, calls `router.EnsureRunning` (creates Traefik), then `router.UpsertService` for `mail` and `adminer`. `ReconcileState` marks all sites as stopped. Embedded configs extracted to `~/.locorum/config/`; obsolete `nginx/global.conf`, `nginx/map.tmpl`, and `config/certs/` are scrubbed.
+- **Start site** (`sm.StartSite`) — downloads WordPress if empty, renders per-site web server config (HTTP only), creates network + 4 containers (or starts existing ones), then `router.UpsertSite` writes the dynamic config and waits for the route to load. Multisite is configured if enabled.
+- **Stop site** — stops containers (not removed), calls `router.RemoveSite`. Container state is preserved.
+- **Delete site** — stops + removes containers, removes site network, removes per-site configs, calls `router.RemoveSite` (which also drops the cert), deletes DB row. **Volumes are kept** (so DB data survives deletion by design).
+- **Shutdown** — clears `~/.locorum/router/dynamic/` and per-site configs, then removes everything labeled `io.locorum.platform=locorum`. Volumes persist.
 
 ## UI (Gio) Guide
 

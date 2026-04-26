@@ -1,9 +1,0 @@
-map $ssl_preread_server_name $target {
-    default "";
-{{- range . }}
-    {{ .Slug }}.localhost locorum-{{ .Slug }}-web:443;
-{{- if eq .Multisite "subdomain" }}
-    *.{{ .Slug }}.localhost locorum-{{ .Slug }}-web:443;
-{{- end }}
-{{- end }}
-}

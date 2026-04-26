@@ -1,0 +1,16 @@
+# locorum-generated — do not edit; the auth credentials are regenerated on
+# every Locorum start.
+http:
+  routers:
+    locorum-api:
+      rule: PathPrefix(`/api`) || PathPrefix(`/dashboard`)
+      service: api@internal
+      entryPoints:
+        - traefik
+      middlewares:
+        - locorum-api-auth
+  middlewares:
+    locorum-api-auth:
+      basicAuth:
+        users:
+          - "{{ .Username }}:{{ .Hash }}"
