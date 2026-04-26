@@ -245,6 +245,30 @@ See the `add-ui-component` skill in `.claude/skills/` for a fuller scaffold, and
 
 ---
 
+## Hooks
+
+Hooks let you attach commands to the lifecycle events of a site (start, stop, delete, clone, version-change, multisite, export). Add them from the **Hooks** tab in the site detail panel.
+
+Three task types:
+
+| Type | Where it runs | Use it for |
+|---|---|---|
+| `exec` | Inside one of the site's containers (default: `php`; pick `web`, `database`, or `redis` from the dropdown) | `wp …`, `composer …`, `mysql …`, anything that needs the container environment |
+| `exec-host` | On your machine's shell (`bash -c …` on Linux/macOS/WSL, `cmd /C …` on native Windows) | `rsync`, `git push`, calls to your host's CLI tools |
+| `wp-cli` | Inside the `php` container, prefixed with `wp` | One-liner WordPress CLI commands |
+
+Every task receives a `LOCORUM_*` environment-variable bundle: site id, slug, name, primary URL, file paths, DB credentials, OS, etc. Variables expand at shell evaluation time, e.g. `wp option update siteurl ${LOCORUM_PRIMARY_URL}`.
+
+By default a failing hook *warns* (logs the error and continues). Toggle "Fail the lifecycle method when a hook errors" at the bottom of the Hooks tab to switch the site to *strict* mode — the lifecycle method aborts on the first failure.
+
+Per-run logs are written to `~/.locorum/hooks/runs/<site-slug>/<event>-<timestamp>.log`. Locorum keeps 30 days or 50 runs per site (whichever is fewer) and prunes older logs at startup.
+
+To skip every hook (useful when debugging Locorum itself), set `LOCORUM_SKIP_HOOKS=1` before launching.
+
+> **`pre-start` and other "containers down" events** can only run `exec-host` hooks — `exec` and `wp-cli` are rejected at save time because the containers don't exist yet.
+
+---
+
 ## Migrations
 
 Install the migrate CLI once:

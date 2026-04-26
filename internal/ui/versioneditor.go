@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"gioui.org/layout"
 	"gioui.org/widget"
 
@@ -129,7 +131,7 @@ func (ve *VersionEditor) HandleUserInteractions(gtx layout.Context, site *types.
 		ve.initialRedis = redisVer
 
 		go func() {
-			if err := ve.sm.UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer); err != nil {
+			if err := ve.sm.UpdateSiteVersions(context.Background(), siteID, phpVer, mysqlVer, redisVer); err != nil {
 				ve.state.ShowError("Failed to update versions: " + err.Error())
 				return
 			}

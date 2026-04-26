@@ -14,6 +14,7 @@ import (
 
 	application "github.com/PeterBooker/locorum/internal/app"
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/router/traefik"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -65,7 +66,28 @@ func main() {
 	}
 	defer st.Close()
 
-	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, config, homeDir)
+	hookLogsDir := filepath.Join(homeDir, ".locorum", "hooks", "runs")
+	if err := utils.EnsureDir(hookLogsDir); err != nil {
+		slog.Warn("hooks: could not create logs dir", "err", err.Error())
+	}
+	// Best-effort sweep of stale run logs at startup. Errors are
+	// informational; the app comes up either way.
+	if err := hooks.SweepLogs(hookLogsDir, hooks.DefaultLogMaxAge, hooks.DefaultMaxLogsPerSite); err != nil {
+		slog.Warn("hooks: log sweep failed", "err", err.Error())
+	}
+
+	hookRunner, err := hooks.NewRunner(hooks.Config{
+		Lister:      st,
+		Container:   hooks.DockerContainerExecer{D: d},
+		Host:        hooks.UtilsHostExecer{},
+		Settings:    st,
+		LogsBaseDir: hookLogsDir,
+	})
+	if err != nil {
+		log.Fatalln("Error initializing hooks runner:", err)
+	}
+
+	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir)
 
 	userInterface := ui.New(sm)
 

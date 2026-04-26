@@ -96,6 +96,7 @@ func (n *Notifications) Info(msg string)    { n.Add(msg, NotificationInfo) }
 // ShowError / ShowSuccess preserve the previous toast API.
 func (n *Notifications) ShowError(msg string)   { n.Error(msg) }
 func (n *Notifications) ShowSuccess(msg string) { n.Success(msg) }
+func (n *Notifications) ShowInfo(msg string)    { n.Info(msg) }
 
 // promoteExpired moves any active notification past its TTL into the archive.
 // Caller must hold n.mu.

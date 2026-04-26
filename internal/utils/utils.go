@@ -171,6 +171,28 @@ func OpenURL(url string) error {
 	}
 }
 
+// OpenPath opens a local file in the user's default editor / viewer for
+// that file type. Distinct from OpenURL because the WSL path needs a
+// wslpath translation before cmd.exe can hand it off.
+func OpenPath(path string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("cmd.exe", "/C", "start", "", path).Start()
+	case "darwin":
+		return exec.Command("open", path).Start()
+	default:
+		if isWSL() {
+			out, err := exec.Command("wslpath", "-w", path).Output()
+			if err != nil {
+				return fmt.Errorf("wslpath: %w", err)
+			}
+			win := strings.TrimSpace(string(out))
+			return exec.Command("cmd.exe", "/C", "start", "", win).Start()
+		}
+		return exec.Command("xdg-open", path).Start()
+	}
+}
+
 // OpenTerminalWithCommand opens a terminal emulator running the given command.
 func OpenTerminalWithCommand(args ...string) error {
 	fullCmd := strings.Join(args, " ")

@@ -44,16 +44,18 @@ internal/router              Router interface + types (SiteRoute, ServiceRoute, 
 internal/router/traefik      Traefik v3 implementation (file provider + admin API)
 internal/router/fake         in-memory Router for tests
 internal/tls                 TLS Provider interface + mkcert implementation
-internal/storage             SQLite CRUD + embedded migrations
-internal/sites               SiteManager — core business logic
+internal/storage             SQLite CRUD + embedded migrations (sites, site_hooks, settings)
+internal/sites               SiteManager — core business logic, fires hooks at every lifecycle event
+internal/hooks               Hook engine: Runner interface, env builder, exec/host adapters, fake/ for tests
 internal/ui                  Gio GUI (immediate-mode)
 internal/types               shared data model (Site struct)
-internal/utils               filesystem/WSL/platform helpers
+internal/utils               filesystem/WSL/platform helpers + streaming host-shell exec
 internal/version             build-time identity + pinned image tags
 config/router/               embedded Traefik static + dynamic YAML templates
 config/nginx/                embedded per-site nginx config template (HTTP-only)
 config/apache/               embedded per-site Apache config template (HTTP-only)
 config/{db,php}/             embedded MySQL + PHP config
+config/hooks/                embedded defaults pack (hook templates surfaced in the UI)
 ```
 
 Dependency direction (strict):
@@ -62,9 +64,10 @@ main ─┬─ app    ─┬─ docker, utils, router (interface)
       │
       ├─ router/traefik ─┬─ docker, router, tls, version
       ├─ tls
-      ├─ storage ─── types
-      ├─ sites   ─┬─ docker, storage, types, utils, router (interface)
-      └─ ui      ─┴─ sites, types
+      ├─ storage ─── types, hooks (Hook + Event types only)
+      ├─ hooks  ─┬─ docker, utils, types, version (adapters in adapter.go)
+      ├─ sites   ─┬─ docker, storage, types, utils, router, hooks (interface)
+      └─ ui      ─┴─ sites, types, hooks (read types only — never the runner directly)
 ```
 
 ### Load-Bearing Invariants
@@ -78,6 +81,9 @@ These are the rules that hold the app together. Don't violate them without discu
 5. **UI is redrawn every frame.** There is no widget tree. Persistent state lives in Go structs (`widget.Clickable`, `widget.Editor`, `widget.List`). `Layout()` is called on every `FrameEvent`.
 6. **Long-running ops run in goroutines.** Docker calls, WP downloads, file dialogs, link checks — never call these from `Layout()`. Spawn a goroutine and invalidate when done.
 7. **SiteManager → UI via callbacks.** `sm.OnSitesUpdated` and `sm.OnSiteUpdated` are set by the UI layer in `ui.New()`. The backend never imports `internal/ui`.
+8. **Lifecycle methods take `context.Context`.** `StartSite`, `StopSite`, `DeleteSite`, `CloneSite`, `ExportSite`, `UpdateSiteVersions`, `UpdatePublicDir` all take `ctx` as their first arg. The same `ctx` flows into `runHooks` and any router/Docker calls — propagate, never replace with `context.Background()` mid-call.
+9. **Hooks fire pre/post around every lifecycle method.** `internal/sites/sites.go` calls `sm.runHooks(ctx, hooks.PreX, site)` before the work and `sm.runHooks(ctx, hooks.PostX, site)` after. The runner returns the task error in fail-strict mode and `nil` in fail-warn mode — propagate verbatim. New lifecycle methods get one new `Event` constant in `internal/hooks/events.go` plus two `runHooks` calls.
+10. **Per-site mutex serialises lifecycle calls.** `SiteManager.siteMutex(siteID)` returns a per-site `*sync.Mutex`. Every lifecycle method locks it for the duration. Different sites still run in parallel.
 
 ### Background Ops Pattern
 
@@ -195,6 +201,47 @@ When adding a column:
 5. If the field is user-facing, wire it through `SiteManager` and `UIState`/UI.
 
 See the `add-migration` skill for the full checklist.
+
+## Hooks
+
+User-defined commands attached to site lifecycle events. The engine lives in `internal/hooks/`; the GUI in `internal/ui/hookspanel.go`, `hookeditor.go`, `hookoutput.go`.
+
+### Data flow
+
+```
+GUI ─Add/Update/Delete──► storage.{AddHook,UpdateHook,...}      (SiteManager pass-throughs)
+                                ▼
+                          site_hooks table
+                                ▲
+SiteManager.runHooks  ──Run────► hooks.Runner ──┬─► docker.ExecInContainerStream  (exec, wp-cli)
+                                                └─► utils.RunHostStream            (exec-host)
+                                                  via DockerContainerExecer / UtilsHostExecer
+                                                  adapters in internal/hooks/adapter.go
+```
+
+### Where to add a new lifecycle event
+
+1. Declare the constant in `internal/hooks/events.go` (`Pre*` and `Post*`); add to `allEvents`. Add to `activeEvents` as soon as the firing site exists.
+2. If the event fires while containers are down, list it in `Event.AllowsContainerTasks`.
+3. Add `sm.runHooks(ctx, hooks.PreX, site)` before the work and `sm.runHooks(ctx, hooks.PostX, site)` after, in the relevant `internal/sites/` method. Hold the per-site mutex across both.
+
+### Where to add a new task type
+
+1. Add a `TaskType` constant in `internal/hooks/hooks.go`. Update `Valid()` and `AllTaskTypes()`.
+2. Add a `case` in `taskFromHook` in `internal/hooks/tasks.go`. Implement the `task` interface.
+3. Update `Hook.Validate` for any task-specific constraints (e.g. service column, run-as-user).
+4. Surface the new type in `hookTaskTypeOptions` in `internal/ui/hookeditor.go` plus the related `hookTaskTypeAt` / `hookTaskTypeIndex` mapping.
+
+### Run logs
+
+Every Run writes a complete log to `~/.locorum/hooks/runs/<site-slug>/<event>-<timestamp>.log`. `hooks.SweepLogs` runs at startup with defaults `30 days OR 50 per site` (whichever is fewer). The runner doesn't depend on the sweep — failure to open the log file is non-fatal (warn + continue).
+
+### Testing
+
+- `internal/hooks/runner_test.go` covers the runner with `fake.ContainerExecer`, `fake.HostExecer`, `fake.Lister`, `fake.Settings` — no Docker required.
+- `internal/storage/hooks_test.go` covers the CRUD on `:memory:` SQLite, including FK-cascade-on-delete.
+- `internal/sites/sites_test.go` exercises `runHooks` and the per-site mutex via `internal/hooks/fake`.
+- A test in `main_test.go` validates the embedded `config/hooks/defaults.json` so a packaging mistake fails CI rather than the GUI.
 
 ## Testing
 

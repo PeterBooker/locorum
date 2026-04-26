@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 
 	"gioui.org/layout"
@@ -101,7 +102,7 @@ func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.S
 		siteID := site.ID
 		sc.state.SetSiteToggling(siteID, true)
 		go func() {
-			if err := sc.sm.StartSite(siteID); err != nil {
+			if err := sc.sm.StartSite(context.Background(), siteID); err != nil {
 				sc.state.ShowError("Failed to start site: " + err.Error())
 			}
 			sc.state.SetSiteToggling(siteID, false)
@@ -112,7 +113,7 @@ func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.S
 		siteID := site.ID
 		sc.state.SetSiteToggling(siteID, true)
 		go func() {
-			if err := sc.sm.StopSite(siteID); err != nil {
+			if err := sc.sm.StopSite(context.Background(), siteID); err != nil {
 				sc.state.ShowError("Failed to stop site: " + err.Error())
 			}
 			sc.state.SetSiteToggling(siteID, false)
@@ -135,7 +136,7 @@ func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.S
 			if !strings.HasSuffix(dest, ".tar.gz") {
 				dest += ".tar.gz"
 			}
-			if err := sc.sm.ExportSite(siteID, dest); err != nil {
+			if err := sc.sm.ExportSite(context.Background(), siteID, dest); err != nil {
 				sc.state.ShowError("Export failed: " + err.Error())
 			}
 		}()

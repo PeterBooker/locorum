@@ -1,0 +1,18 @@
+{
+  "templates": [
+    {
+      "name": "Echo on start",
+      "description": "Trivial host hook for tests",
+      "event": "post-start",
+      "taskType": "exec-host",
+      "command": "echo started"
+    },
+    {
+      "name": "WP cache flush",
+      "description": "wp-cli cache flush after start",
+      "event": "post-start",
+      "taskType": "wp-cli",
+      "command": "cache flush"
+    }
+  ]
+}

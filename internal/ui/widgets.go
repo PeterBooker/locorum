@@ -590,6 +590,36 @@ func layoutTab(gtx layout.Context, th *Theme, btn *widget.Clickable, label strin
 	})
 }
 
+// ─── Checkbox ───────────────────────────────────────────────────────────────
+
+// layoutCheckbox draws a 16dp square indicator that fills with the primary
+// accent when checked. Pair with a widget.Clickable that toggles the bool.
+func layoutCheckbox(gtx layout.Context, th *Theme, checked bool) layout.Dimensions {
+	size := gtx.Dp(unit.Dp(16))
+	rect := image.Rectangle{Max: image.Point{X: size, Y: size}}
+	rr := gtx.Dp(th.Radii.SM)
+
+	defer clip.RRect{Rect: rect, NE: rr, NW: rr, SE: rr, SW: rr}.Push(gtx.Ops).Pop()
+	if checked {
+		paint.Fill(gtx.Ops, th.Color.Primary)
+	} else {
+		paint.Fill(gtx.Ops, th.Color.SurfaceAlt)
+	}
+	if checked {
+		// Draw a tick by overlaying a slightly inset white rectangle. The
+		// extra layout pass costs us nothing here and keeps the visual
+		// language consistent with the dropdown's selected indicator.
+		inset := gtx.Dp(unit.Dp(4))
+		inner := image.Rectangle{
+			Min: image.Point{X: inset, Y: inset},
+			Max: image.Point{X: size - inset, Y: size - inset},
+		}
+		defer clip.Rect(inner).Push(gtx.Ops).Pop()
+		paint.Fill(gtx.Ops, th.Color.OnPrimary)
+	}
+	return layout.Dimensions{Size: image.Point{X: size, Y: size}}
+}
+
 // ─── Confirm Dialog ─────────────────────────────────────────────────────────
 
 // ConfirmDialog holds state for a reusable confirmation modal dialog.

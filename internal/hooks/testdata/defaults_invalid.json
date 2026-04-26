@@ -1,0 +1,11 @@
+{
+  "templates": [
+    {
+      "name": "Bad: exec on pre-start",
+      "description": "exec is illegal on pre-start (containers don't exist yet)",
+      "event": "pre-start",
+      "taskType": "exec",
+      "command": "echo nope"
+    }
+  ]
+}

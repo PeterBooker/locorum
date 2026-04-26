@@ -11,10 +11,13 @@ import (
 
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	// :memory: with the default SQL pool size pollutes across connections —
+	// pin the pool to 1 so every test sees a consistent in-memory database.
+	db.SetMaxOpenConns(1)
 	if err := applyMigrations(db); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}
