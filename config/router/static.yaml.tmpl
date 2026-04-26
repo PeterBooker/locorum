@@ -1,0 +1,27 @@
+# locorum-generated — do not edit. Remove this header to opt out of regeneration.
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+  traefik:
+    address: ":8888"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+log:
+  level: {{ .LogLevel }}
+
+accessLog: {}

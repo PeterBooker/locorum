@@ -4,7 +4,7 @@
 
 ## About
 
-Locorum is a local development environment for WordPress. It uses Docker to spin up isolated WordPress sites, each with its own nginx, PHP, MySQL, and Redis containers, routed through a shared HTTPS reverse proxy.
+Locorum is a local development environment for WordPress. It uses Docker to spin up isolated WordPress sites, each with its own nginx, PHP, MySQL, and Redis containers, routed through a shared [Traefik](https://traefik.io/) reverse proxy that terminates TLS using per-site certificates issued by [mkcert](https://github.com/FiloSottile/mkcert).
 
 The desktop UI is built with [Gio](https://gioui.org/), a pure-Go immediate-mode GUI framework.
 
@@ -13,6 +13,8 @@ The desktop UI is built with [Gio](https://gioui.org/), a pure-Go immediate-mode
 ## Install
 
 Pre-built downloads for every release are on the [GitHub Releases page](https://github.com/PeterBooker/locorum/releases/latest). All platforms require Docker (Docker Desktop on macOS / Windows; Docker Engine or rootless Docker on Linux) to be installed and running.
+
+For trusted HTTPS in your browser (no certificate warnings), install [mkcert](https://github.com/FiloSottile/mkcert) and run `mkcert -install` once before launching Locorum. Without mkcert sites still work, but browsers will show an "untrusted certificate" warning that you have to click through.
 
 ### macOS
 
@@ -77,6 +79,7 @@ Click **More info** → **Run anyway**. The warning won't reappear once the app 
 
 - **Go** 1.25+
 - **Docker** (running and accessible)
+- **mkcert** (optional but recommended) — trusted local HTTPS. After installing, run `mkcert -install` once.
 
 #### Linux / WSL2
 
@@ -117,9 +120,9 @@ go run .         # dev iteration
 
 On first launch the app:
 
-1. Sets up `~/.locorum/` (config, SQLite database, per-site nginx confs).
-2. Wipes any leftover `locorum-*` Docker resources, then creates the global network and the proxy / mail / DB-admin containers.
-3. Opens the desktop window.
+1. Sets up `~/.locorum/` (config, SQLite database, per-site web-server configs, Traefik state, mkcert certificates).
+2. Wipes any leftover Locorum-owned Docker resources (matched by the `io.locorum.platform` label), then creates the global network, mail and DB-admin containers, and the Traefik router.
+3. Opens the desktop window. If mkcert isn't installed (or `mkcert -install` hasn't been run), a banner explains the next step — sites still work, just with an untrusted-cert warning.
 
 ### Release builds
 

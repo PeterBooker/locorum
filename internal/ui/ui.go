@@ -87,12 +87,20 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 	ui.HandleUserInteractions(gtx)
 
 	errMsg := ui.State.ActiveError()
+	notice := ui.State.GetNotice()
 
 	return layout.Stack{}.Layout(gtx,
-		// Base layer: error banner + sidebar/content
+		// Base layer: notice banner + error banner + sidebar/content
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				// Error banner (conditional)
+				// Notice banner (persistent info, e.g. mkcert prompt)
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if notice == "" {
+						return layout.Dimensions{}
+					}
+					return ui.layoutNoticeBanner(gtx, notice)
+				}),
+				// Error banner (conditional, transient)
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if errMsg == "" {
 						return layout.Dimensions{}
@@ -175,6 +183,20 @@ func (ui *UI) layoutErrorBanner(gtx layout.Context, msg string) layout.Dimension
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th.Theme, msg)
 			lbl.Color = th.Color.White
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
+func (ui *UI) layoutNoticeBanner(gtx layout.Context, msg string) layout.Dimensions {
+	th := ui.Theme
+	return FillBackground(gtx, th.Color.InfoBg, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top: unit.Dp(10), Bottom: unit.Dp(10),
+			Left: th.Spacing.LG, Right: th.Spacing.LG,
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th.Theme, msg)
+			lbl.Color = th.Color.InfoFg
 			return lbl.Layout(gtx)
 		})
 	})

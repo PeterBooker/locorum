@@ -6,11 +6,11 @@ import (
 	"github.com/docker/docker/api/types/volume"
 )
 
-func (d *Docker) createVolume(volumeName string) error {
+func (d *Docker) createVolume(volumeName string, labels map[string]string) error {
 	_, err := d.cli.VolumeCreate(d.ctx, volume.CreateOptions{
-		Name: volumeName,
+		Name:   volumeName,
+		Labels: labels,
 	})
-
 	if err != nil {
 		return fmt.Errorf("creating volume %q failed: %w", volumeName, err)
 	}

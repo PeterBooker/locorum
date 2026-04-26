@@ -61,8 +61,9 @@ type UIState struct {
 	linkCheckOutput  string
 	linkCheckLoading bool
 
-	// Live reload
-	liveReloadEnabled map[string]bool
+	// Persistent informational notice (e.g. "install mkcert"). Distinct
+	// from errorMessage, which is transient and red.
+	notice string
 
 	// Window reference for triggering invalidation from background goroutines.
 	window *app.Window
@@ -70,8 +71,7 @@ type UIState struct {
 
 func NewUIState() *UIState {
 	return &UIState{
-		siteToggling:      make(map[string]bool),
-		liveReloadEnabled: make(map[string]bool),
+		siteToggling: make(map[string]bool),
 	}
 }
 
@@ -458,17 +458,20 @@ func (s *UIState) GetLinkCheckState() (output string, loading bool) {
 	return s.linkCheckOutput, s.linkCheckLoading
 }
 
-// ─── Live Reload ────────────────────────────────────────────────────────────
+// ─── Notice ─────────────────────────────────────────────────────────────────
 
-func (s *UIState) SetLiveReload(siteID string, enabled bool) {
+// SetNotice sets a persistent informational banner (or clears it with "").
+// Used for non-fatal status like "mkcert not installed — HTTPS will be
+// untrusted".
+func (s *UIState) SetNotice(msg string) {
 	s.mu.Lock()
-	s.liveReloadEnabled[siteID] = enabled
+	s.notice = msg
 	s.mu.Unlock()
 	s.Invalidate()
 }
 
-func (s *UIState) IsLiveReloadEnabled(siteID string) bool {
+func (s *UIState) GetNotice() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.liveReloadEnabled[siteID]
+	return s.notice
 }

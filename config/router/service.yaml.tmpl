@@ -1,0 +1,21 @@
+# locorum-generated — do not edit; regenerated each time the service state changes.
+http:
+  routers:
+    locorum-svc-{{ .Name }}:
+      rule: '{{ .Rule }}'
+      entryPoints:
+        - websecure
+      service: locorum-svc-{{ .Name }}
+      tls: {}
+  services:
+    locorum-svc-{{ .Name }}:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: '{{ .Backend }}'
+{{- if .CertFile }}
+tls:
+  certificates:
+    - certFile: '{{ .CertFile }}'
+      keyFile: '{{ .KeyFile }}'
+{{- end }}

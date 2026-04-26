@@ -17,13 +17,12 @@ type SiteControls struct {
 	state *UIState
 	sm    *sites.SiteManager
 
-	startBtn      widget.Clickable
-	stopBtn       widget.Clickable
-	exportBtn     widget.Clickable
-	openAdminBtn  widget.Clickable
-	shellBtn      widget.Clickable
-	cloneBtn      widget.Clickable
-	liveReloadBtn widget.Clickable
+	startBtn     widget.Clickable
+	stopBtn      widget.Clickable
+	exportBtn    widget.Clickable
+	openAdminBtn widget.Clickable
+	shellBtn     widget.Clickable
+	cloneBtn     widget.Clickable
 }
 
 func NewSiteControls(state *UIState, sm *sites.SiteManager) *SiteControls {
@@ -73,31 +72,20 @@ func (sc *SiteControls) Layout(gtx layout.Context, th *Theme, site *types.Site) 
 					}),
 				)
 			}),
-			// Row 2: Running-only actions (Open Admin, Shell, Live Reload)
+			// Row 2: Running-only actions (Open Admin, Shell)
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if !site.Started {
 					return layout.Dimensions{}
 				}
 				return layout.Inset{Top: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
-						// Open Admin
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return PrimaryButton(gtx, th, &sc.openAdminBtn, "Open Admin")
 							})
 						}),
-						// Shell
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Right: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return SecondaryButton(gtx, th, &sc.shellBtn, "Shell")
-							})
-						}),
-						// Live Reload toggle
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if sc.state.IsLiveReloadEnabled(site.ID) {
-								return SuccessButton(gtx, th, &sc.liveReloadBtn, "Live Reload: On")
-							}
-							return SecondaryButton(gtx, th, &sc.liveReloadBtn, "Live Reload: Off")
+							return SecondaryButton(gtx, th, &sc.shellBtn, "Shell")
 						}),
 					)
 				})
@@ -128,7 +116,6 @@ func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.S
 				sc.state.ShowError("Failed to stop site: " + err.Error())
 			}
 			sc.state.SetSiteToggling(siteID, false)
-			sc.state.SetLiveReload(siteID, false)
 		}()
 	}
 
@@ -174,26 +161,6 @@ func (sc *SiteControls) HandleUserInteractions(gtx layout.Context, site *types.S
 
 	if sc.cloneBtn.Clicked(gtx) {
 		sc.state.ShowCloneModal(site.ID, site.Name)
-	}
-
-	if sc.liveReloadBtn.Clicked(gtx) && site.Started {
-		siteID := site.ID
-		enabled := sc.state.IsLiveReloadEnabled(siteID)
-		go func() {
-			if enabled {
-				if err := sc.sm.DisableLiveReload(siteID); err != nil {
-					sc.state.ShowError("Live reload error: " + err.Error())
-					return
-				}
-				sc.state.SetLiveReload(siteID, false)
-			} else {
-				if err := sc.sm.EnableLiveReload(siteID); err != nil {
-					sc.state.ShowError("Live reload error: " + err.Error())
-					return
-				}
-				sc.state.SetLiveReload(siteID, true)
-			}
-		}()
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -13,9 +14,12 @@ import (
 
 	application "github.com/PeterBooker/locorum/internal/app"
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/router/traefik"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
+	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/ui"
+	"github.com/PeterBooker/locorum/internal/utils"
 	"github.com/PeterBooker/locorum/internal/version"
 )
 
@@ -27,22 +31,33 @@ func main() {
 
 	// On WSL2, force the X11 backend. WSLg's Wayland compositor does not
 	// fully support window-management actions (minimize/maximize).
-	// Unsetting WAYLAND_DISPLAY makes Gio fall back to X11 via XWayland,
-	// where these actions work correctly.
 	if _, ok := os.LookupEnv("WSL_DISTRO_NAME"); ok {
 		os.Unsetenv("WAYLAND_DISPLAY")
-		// Avoid dconf warnings from GTK file dialogs — no D-Bus session bus on WSL2.
 		os.Setenv("GSETTINGS_BACKEND", "memory")
-		// Prevent dconf from trying to auto-launch D-Bus via dbus-launch.
 		if _, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok {
 			os.Setenv("DBUS_SESSION_BUS_ADDRESS", "disabled:")
 		}
 	}
 
+	homeDir, err := utils.GetUserHomeDir()
+	if err != nil {
+		log.Fatalln("Error getting home dir:", err)
+	}
+
 	d := docker.New()
 
-	// Create an instance of the app structure.
-	a := application.New(config, d)
+	mkcert := tlspkg.NewMkcert(filepath.Join(homeDir, ".locorum", "certs"))
+
+	rtr, err := traefik.New(traefik.Config{
+		HomeDir:    homeDir,
+		AppVersion: version.Version,
+		LogLevel:   os.Getenv("LOCORUM_LOG_LEVEL"),
+	}, d, mkcert, config)
+	if err != nil {
+		log.Fatalln("Error initializing router:", err)
+	}
+
+	a := application.New(config, d, homeDir, rtr)
 
 	st, err := storage.NewSQLiteStorage(context.Background())
 	if err != nil {
@@ -50,12 +65,10 @@ func main() {
 	}
 	defer st.Close()
 
-	sm := sites.NewSiteManager(st, a.GetClient(), d, config, a.GetHomeDir())
+	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, config, homeDir)
 
-	// Create UI.
 	userInterface := ui.New(sm)
 
-	// initFunc performs Docker initialization and state reconciliation.
 	initFunc := func() {
 		d.SetContext(context.Background())
 		d.SetClient(a.GetClient())
@@ -66,29 +79,26 @@ func main() {
 			return
 		}
 
-		// Reconcile site state with actual Docker state.
 		if err := sm.ReconcileState(); err != nil {
 			slog.Error("Error reconciling site state: " + err.Error())
 		}
 
-		if err := sm.RegenerateGlobalNginxMap(false); err != nil {
-			slog.Error("Error regenerating nginx map: " + err.Error())
+		if status, err := mkcert.Available(context.Background()); err == nil && !status.CATrusted {
+			userInterface.State.SetNotice(status.Message)
+		} else {
+			userInterface.State.SetNotice("")
 		}
 
 		userInterface.State.SetInitDone()
 	}
 
-	// Set up retry callback for the UI.
 	userInterface.State.SetRetryInit(func() {
 		userInterface.State.ClearInitError()
 		initFunc()
 	})
 
-	// Initialize Docker infrastructure in background.
 	go initFunc()
 
-	// Load initial sites with Started forced to false, since containers
-	// are not running yet. ReconcileState will emit an update after it runs.
 	go func() {
 		loadedSites, err := sm.GetSites()
 		if err == nil {
@@ -99,21 +109,18 @@ func main() {
 		}
 	}()
 
-	// Create and run window.
 	go func() {
 		w := &app.Window{}
 		w.Option(
 			app.Title("Locorum"),
 			app.Size(unit.Dp(1024), unit.Dp(768)),
 		)
-
 		userInterface.State.SetWindow(w)
 
 		if err := eventLoop(w, userInterface); err != nil {
 			slog.Error("Window error: " + err.Error())
 		}
 
-		// Window closed — shut down.
 		_ = a.Shutdown()
 		st.Close()
 		os.Exit(0)
