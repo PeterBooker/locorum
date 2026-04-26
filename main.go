@@ -92,10 +92,10 @@ func main() {
 	userInterface := ui.New(sm)
 
 	initFunc := func() {
-		d.SetContext(context.Background())
 		d.SetClient(a.GetClient())
 
-		if err := a.Initialize(); err != nil {
+		ctx := context.Background()
+		if err := a.Initialize(ctx); err != nil {
 			slog.Error("Error initializing: " + err.Error())
 			userInterface.State.SetInitError(err.Error())
 			return
@@ -143,7 +143,7 @@ func main() {
 			slog.Error("Window error: " + err.Error())
 		}
 
-		_ = a.Shutdown()
+		_ = a.Shutdown(context.Background())
 		st.Close()
 		os.Exit(0)
 	}()

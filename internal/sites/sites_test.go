@@ -2,7 +2,6 @@ package sites
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,8 +15,7 @@ import (
 // tests those dependencies stay nil.
 func minimalSiteManager(runner hooks.Runner) *SiteManager {
 	return &SiteManager{
-		hooks:     runner,
-		siteLocks: make(map[string]*sync.Mutex),
+		hooks: runner,
 	}
 }
 

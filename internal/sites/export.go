@@ -48,7 +48,7 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 
 	// Dump the database via mysqldump in the database container.
 	containerName := "locorum-" + site.Slug + "-database"
-	sqlDump, err := sm.d.ExecInContainer(containerName, []string{
+	sqlDump, err := sm.d.ExecInContainer(ctx, containerName, []string{
 		"mysqldump", "-u", "wordpress", "-p" + site.DBPassword, "wordpress",
 	})
 	if err != nil {

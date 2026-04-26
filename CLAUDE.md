@@ -39,18 +39,21 @@ Testing the GUI itself requires running the app; the test suite only covers stor
 ```
 main.go                     window + event loop + startup/shutdown
 internal/app                 filesystem setup, global Docker infra
-internal/docker              thin wrapper over Docker SDK (labels, container/network/volume helpers)
+internal/docker              Engine interface + SDK implementation; ContainerSpec/NetworkSpec, healthchecks, retry, label-based ops
+internal/docker/fake         in-memory Engine for unit tests
+internal/orch                Plan / Step / Run — site-lifecycle orchestrator with rollback on failure
 internal/router              Router interface + types (SiteRoute, ServiceRoute, Health)
 internal/router/traefik      Traefik v3 implementation (file provider + admin API)
 internal/router/fake         in-memory Router for tests
 internal/tls                 TLS Provider interface + mkcert implementation
 internal/storage             SQLite CRUD + embedded migrations (sites, site_hooks, settings)
-internal/sites               SiteManager — core business logic, fires hooks at every lifecycle event
+internal/sites               SiteManager — core business logic, builds Plans for lifecycle methods
+internal/sites/sitesteps     orch.Step implementations: ensure-network, pull-images, chown, create-containers, wait-ready, register-routes, …
 internal/hooks               Hook engine: Runner interface, env builder, exec/host adapters, fake/ for tests
 internal/ui                  Gio GUI (immediate-mode)
 internal/types               shared data model (Site struct)
 internal/utils               filesystem/WSL/platform helpers + streaming host-shell exec
-internal/version             build-time identity + pinned image tags
+internal/version             build-time identity + pinned image tags (incl. AlpineImage for chown helper)
 config/router/               embedded Traefik static + dynamic YAML templates
 config/nginx/                embedded per-site nginx config template (HTTP-only)
 config/apache/               embedded per-site Apache config template (HTTP-only)
@@ -66,24 +69,31 @@ main ─┬─ app    ─┬─ docker, utils, router (interface)
       ├─ tls
       ├─ storage ─── types, hooks (Hook + Event types only)
       ├─ hooks  ─┬─ docker, utils, types, version (adapters in adapter.go)
-      ├─ sites   ─┬─ docker, storage, types, utils, router, hooks (interface)
-      └─ ui      ─┴─ sites, types, hooks (read types only — never the runner directly)
+      ├─ orch   ── (no internal deps — engine-agnostic Step orchestrator)
+      ├─ sites/sitesteps ── docker, orch, router, types
+      ├─ sites   ─┬─ docker, storage, types, utils, router, hooks, orch, sitesteps
+      └─ ui      ─┴─ sites, types, hooks, orch, docker (orch.StepResult + docker.PullProgress only)
 ```
 
 ### Load-Bearing Invariants
 
 These are the rules that hold the app together. Don't violate them without discussing first.
 
-1. **UI never calls Docker or Storage directly.** Everything goes through `SiteManager` in `internal/sites/`. The UI only touches `sites.SiteManager` and `internal/types`.
-2. **All Docker resources carry the `io.locorum.platform=locorum` label.** Startup and shutdown wipe everything matching this label (`app.Initialize` / `app.Shutdown`). The `locorum-` name prefix is also swept for migration from pre-label installs but the label is the source of truth — never use name-prefix matching in new code; use `docker.RemoveByLabel` / `docker.NetworksByLabel`.
-3. **Routing is owned by `router.Router`.** `internal/sites/` and `internal/app/` only depend on the interface. The Traefik implementation in `internal/router/traefik/` is the only thing that knows about Traefik config files, the admin API, or the global router container. Don't add routing-engine specifics anywhere else.
-4. **Shared UI state is mutex-protected.** Every read/write of `UIState` fields goes through `s.mu`. Background goroutines lock → mutate → unlock → `state.Invalidate()` to wake the event loop.
-5. **UI is redrawn every frame.** There is no widget tree. Persistent state lives in Go structs (`widget.Clickable`, `widget.Editor`, `widget.List`). `Layout()` is called on every `FrameEvent`.
-6. **Long-running ops run in goroutines.** Docker calls, WP downloads, file dialogs, link checks — never call these from `Layout()`. Spawn a goroutine and invalidate when done.
-7. **SiteManager → UI via callbacks.** `sm.OnSitesUpdated` and `sm.OnSiteUpdated` are set by the UI layer in `ui.New()`. The backend never imports `internal/ui`.
-8. **Lifecycle methods take `context.Context`.** `StartSite`, `StopSite`, `DeleteSite`, `CloneSite`, `ExportSite`, `UpdateSiteVersions`, `UpdatePublicDir` all take `ctx` as their first arg. The same `ctx` flows into `runHooks` and any router/Docker calls — propagate, never replace with `context.Background()` mid-call.
-9. **Hooks fire pre/post around every lifecycle method.** `internal/sites/sites.go` calls `sm.runHooks(ctx, hooks.PreX, site)` before the work and `sm.runHooks(ctx, hooks.PostX, site)` after. The runner returns the task error in fail-strict mode and `nil` in fail-warn mode — propagate verbatim. New lifecycle methods get one new `Event` constant in `internal/hooks/events.go` plus two `runHooks` calls.
-10. **Per-site mutex serialises lifecycle calls.** `SiteManager.siteMutex(siteID)` returns a per-site `*sync.Mutex`. Every lifecycle method locks it for the duration. Different sites still run in parallel.
+1. **UI never calls Docker or Storage directly.** Everything goes through `SiteManager` in `internal/sites/`. The UI only touches `sites.SiteManager` and `internal/types` (and `orch.StepResult` + `docker.PullProgress` for progress callbacks).
+2. **All Docker resources carry the `io.locorum.platform=locorum` label.** Startup and shutdown wipe everything matching this label (`app.Initialize` / `app.Shutdown`). The label is the source of truth — never use name-prefix matching in new code; use `Engine.RemoveContainersByLabel` / `Engine.NetworksByLabel` / `Engine.RemoveVolumesByLabel`.
+3. **Every `ContainerSpec` carries `LabelConfigHash`.** `Engine.EnsureContainer` recreates a container only when the hash on the live container differs from the freshly-computed one. The hash deliberately excludes `LabelVersion` and `EnvSecret` *values* so a Locorum upgrade or password rotation alone never forces a recreate.
+4. **Routing is owned by `router.Router`.** `internal/sites/` and `internal/app/` only depend on the interface. The Traefik implementation in `internal/router/traefik/` is the only thing that knows about Traefik config files, the admin API, or the global router container. Don't add routing-engine specifics anywhere else.
+5. **Shared UI state is mutex-protected.** Every read/write of `UIState` fields goes through `s.mu`. Background goroutines lock → mutate → unlock → `state.Invalidate()` to wake the event loop.
+6. **UI is redrawn every frame.** There is no widget tree. Persistent state lives in Go structs (`widget.Clickable`, `widget.Editor`, `widget.List`). `Layout()` is called on every `FrameEvent`.
+7. **Long-running ops run in goroutines.** Docker calls, WP downloads, file dialogs, link checks — never call these from `Layout()`. Spawn a goroutine and invalidate when done.
+8. **SiteManager → UI via callbacks.** `sm.OnSitesUpdated`, `sm.OnSiteUpdated`, and the lifecycle/hook callbacks (`OnStepStart`, `OnStepDone`, `OnPlanDone`, `OnPullProgress`, `OnHook*`) are set by the UI layer in `ui.New()`. The backend never imports `internal/ui`.
+9. **Every Engine method takes `context.Context`.** There is NO shared `ctx` field. `git grep "SetContext\|d\.ctx"` must return empty.
+10. **Lifecycle methods take `context.Context`.** `StartSite`, `StopSite`, `DeleteSite`, `CloneSite`, `ExportSite`, `UpdateSiteVersions`, `UpdatePublicDir` all take `ctx` as their first arg. The same `ctx` flows into `runHooks` and any router/Docker calls — propagate, never replace with `context.Background()` mid-call.
+11. **Hooks fire pre/post around every lifecycle method.** `internal/sites/sites.go` calls `sm.runHooks(ctx, hooks.PreX, site)` before the work and `sm.runHooks(ctx, hooks.PostX, site)` after. The runner returns the task error in fail-strict mode and `nil` in fail-warn mode — propagate verbatim.
+12. **Lifecycle methods are Plans.** `StartSite`, `StopSite`, `DeleteSite` build an `orch.Plan` of named steps and run it via `orch.Run`. A failing step rolls back every prior succeeded step in reverse order. Step `Apply` must be idempotent; `Rollback` is best-effort and never aborts the rollback chain on its own error.
+13. **Per-site mutex serialises lifecycle calls.** `SiteManager.siteMutex(siteID)` returns a per-site `*sync.Mutex` from a `sync.Map`. Every lifecycle method locks it for the duration. Different sites still run in parallel.
+14. **Spec builders bake in security defaults.** `WebSpec`, `PHPSpec`, `DatabaseSpec`, `RedisSpec`, `MailSpec`, `AdminerSpec` produce containers with `CapDrop=ALL`, `NoNewPrivileges=true`, `Init=true`, log size capped at `10m × 3`, and per-role `CapAdd`. Don't hand-roll a `ContainerSpec` for a role that already has a builder.
+15. **DB passwords flow through `EnvSecret`.** Engine never logs the value; error strings are scrubbed via `redactErrSpec` before propagating. `docker inspect` still shows the value (a documented limit).
 
 ### Background Ops Pattern
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"embed"
+	"fmt"
 	"log/slog"
 	"os"
 	"path"
@@ -38,26 +39,34 @@ func New(configFiles embed.FS, d *docker.Docker, homeDir string, rtr router.Rout
 // Initialize runs the startup sequence: filesystem, cleanup, networks,
 // global services, router. Returns the first error encountered so the UI
 // can surface it.
-func (a *App) Initialize() error {
-	ctx := context.Background()
-
+func (a *App) Initialize(ctx context.Context) error {
 	if err := a.SetupFilesystem(); err != nil {
 		return err
 	}
-	if err := a.d.CheckDockerAvailable(); err != nil {
+	if err := a.d.CheckDockerAvailable(ctx); err != nil {
 		return err
 	}
-	if err := a.cleanupExistingResources(); err != nil {
+
+	// Wipe leftover Locorum-owned resources from prior sessions before
+	// creating new ones. ReconcileNetworks is the explicit "remove orphans"
+	// pass that prevents same-name network create from failing after a
+	// daemon crash.
+	if err := a.cleanupExistingResources(ctx); err != nil {
 		return err
 	}
-	if err := a.d.CreateGlobalNetwork(); err != nil {
-		return err
+	if err := a.d.ReconcileNetworks(ctx); err != nil {
+		slog.Warn("reconcile networks: " + err.Error())
 	}
-	if err := a.d.CreateGlobalMailserver(); err != nil {
-		return err
+
+	if _, err := a.d.EnsureNetwork(ctx, docker.GlobalNetworkSpec()); err != nil {
+		return fmt.Errorf("create global network: %w", err)
 	}
-	if err := a.d.CreateGlobalAdminer(); err != nil {
-		return err
+
+	if err := a.ensureGlobalContainer(ctx, docker.MailSpec()); err != nil {
+		return fmt.Errorf("global mail: %w", err)
+	}
+	if err := a.ensureGlobalContainer(ctx, docker.AdminerSpec()); err != nil {
+		return fmt.Errorf("global adminer: %w", err)
 	}
 	if err := a.rtr.EnsureRunning(ctx); err != nil {
 		return err
@@ -79,37 +88,53 @@ func (a *App) Initialize() error {
 	return nil
 }
 
+// ensureGlobalContainer pulls the image, ensures the container, and starts
+// it. EnsureContainer is idempotent — if the container is already at the
+// right config hash, this is a fast no-op.
+func (a *App) ensureGlobalContainer(ctx context.Context, spec docker.ContainerSpec) error {
+	if err := a.d.PullImage(ctx, spec.Image, nil); err != nil {
+		return fmt.Errorf("pull %s: %w", spec.Image, err)
+	}
+	if _, err := a.d.EnsureContainer(ctx, spec); err != nil {
+		return fmt.Errorf("ensure %s: %w", spec.Name, err)
+	}
+	if err := a.d.StartContainer(ctx, spec.Name); err != nil {
+		return fmt.Errorf("start %s: %w", spec.Name, err)
+	}
+	return nil
+}
+
 // cleanupExistingResources wipes Locorum-owned containers and networks.
 // Resources are matched by the io.locorum.platform label.
-func (a *App) cleanupExistingResources() error {
+func (a *App) cleanupExistingResources(ctx context.Context) error {
 	labels := map[string]string{docker.LabelPlatform: docker.PlatformValue}
-	if err := a.d.RemoveByLabel(labels); err != nil {
+	if err := a.d.RemoveContainersByLabel(ctx, labels); err != nil {
 		return err
 	}
-	if err := a.d.RemoveNetworksByLabel(labels); err != nil {
+	if err := a.d.RemoveNetworksByLabel(ctx, labels); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (a *App) Shutdown() error {
+func (a *App) Shutdown(ctx context.Context) error {
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites"))
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "apache", "sites"))
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "router", "dynamic"))
 
 	labels := map[string]string{docker.LabelPlatform: docker.PlatformValue}
-	if err := a.d.RemoveByLabel(labels); err != nil {
+	if err := a.d.RemoveContainersByLabel(ctx, labels); err != nil {
 		return err
 	}
-	if err := a.d.RemoveNetworksByLabel(labels); err != nil {
+	if err := a.d.RemoveNetworksByLabel(ctx, labels); err != nil {
 		return err
 	}
 	return nil
 }
 
 // IsDockerAvailable checks if Docker is available and running.
-func (a *App) IsDockerAvailable() error {
-	if err := a.d.CheckDockerAvailable(); err != nil {
+func (a *App) IsDockerAvailable(ctx context.Context) error {
+	if err := a.d.CheckDockerAvailable(ctx); err != nil {
 		slog.Error("Docker is not running or not accessible: " + err.Error())
 		return err
 	}

@@ -5,8 +5,11 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
@@ -25,6 +28,7 @@ type UI struct {
 	// Modals
 	CloneModal   *CloneModal
 	deleteDialog ConfirmDialog
+	deletePurge  widget.Bool
 }
 
 // SettingKeyThemeMode persists the user's theme preference ("dark", "light",
@@ -68,6 +72,21 @@ func New(sm *sites.SiteManager) *UI {
 	sm.OnHookTaskDone = state.HookTaskDone
 	sm.OnHookAllDone = state.HookAllDone
 
+	// Lifecycle plan callbacks. Fire from the orchestrator's goroutine
+	// during a Plan run; the UI shows step status and pull-progress.
+	sm.OnStepStart = func(siteID string, s orch.StepResult) {
+		state.LifecycleStepStarted(siteID, s)
+	}
+	sm.OnStepDone = func(siteID string, s orch.StepResult) {
+		state.LifecycleStepDone(siteID, s)
+	}
+	sm.OnPlanDone = func(siteID string, r orch.Result) {
+		state.LifecyclePlanDone(siteID, r)
+	}
+	sm.OnPullProgress = func(siteID string, p docker.PullProgress) {
+		state.LifecyclePullProgress(siteID, p)
+	}
+
 	return ui
 }
 
@@ -84,7 +103,7 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 		ui.NewSite.HandleUserInteractions(gtx)
 	}
 
-	if showDelete, _ := ui.State.GetDeleteConfirmState(); showDelete {
+	if showDelete, _, _ := ui.State.GetDeleteConfirmState(); showDelete {
 		ui.handleDeleteConfirm(gtx)
 	}
 
@@ -144,7 +163,7 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				return ui.NewSite.Layout(gtx, ui.Theme)
 			}
 
-			showDelete, deleteName := ui.State.GetDeleteConfirmState()
+			showDelete, deleteName, _ := ui.State.GetDeleteConfirmState()
 			if showDelete {
 				return ui.layoutDeleteConfirm(gtx, ui.Theme, deleteName)
 			}
@@ -170,17 +189,25 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 // drives the delete workflow. Called from HandleUserInteractions when the
 // delete-confirm modal is visible.
 func (ui *UI) handleDeleteConfirm(gtx layout.Context) {
+	// Mirror the checkbox state into UIState so the value survives
+	// confirm-button click → ClearDeleteConfirm.
+	if ui.deletePurge.Update(gtx) {
+		ui.State.SetDeletePurgeVolume(ui.deletePurge.Value)
+	}
+
 	confirmed, cancelled := ui.deleteDialog.HandleUserInteractions(gtx)
 
 	if cancelled {
 		ui.State.DismissDeleteConfirm()
+		ui.deletePurge.Value = false
 	}
 
 	if confirmed {
-		id := ui.State.ClearDeleteConfirm()
+		id, purge := ui.State.ClearDeleteConfirm()
+		ui.deletePurge.Value = false
 		if id != "" {
 			go func() {
-				if err := ui.SM.DeleteSite(context.Background(), id); err != nil {
+				if err := ui.SM.DeleteSiteWithOptions(context.Background(), id, sites.DeleteOptions{PurgeVolume: purge}); err != nil {
 					ui.State.ShowError("Failed to delete site: " + err.Error())
 				}
 			}()
@@ -189,11 +216,26 @@ func (ui *UI) handleDeleteConfirm(gtx layout.Context) {
 }
 
 func (ui *UI) layoutDeleteConfirm(gtx layout.Context, th *Theme, siteName string) layout.Dimensions {
-	return ui.deleteDialog.Layout(gtx, th, ConfirmDialogStyle{
+	// Build the dialog body manually so the purge-volume checkbox sits
+	// between the message and the action buttons. This mirrors the three-
+	// way semantics the plan calls for: the user is choosing between
+	// "delete (keep volume)" and "purge (delete volume too)". "Stop only"
+	// is exposed elsewhere via the Stop button, not this modal.
+	msg := "Delete \"" + siteName + "\"? Containers and configuration will be removed."
+	return ui.deleteDialog.LayoutWithExtras(gtx, th, ConfirmDialogStyle{
 		Title:        "Delete Site",
-		Message:      "Are you sure you want to delete \"" + siteName + "\"? This will remove all containers and configuration for this site.",
+		Message:      msg,
 		ConfirmLabel: "Delete",
 		ConfirmColor: th.Color.Danger,
+	}, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			cb := material.CheckBox(th.Theme, &ui.deletePurge, "Also delete the database volume (cannot be undone)")
+			cb.Color = th.Color.Danger
+			cb.IconColor = th.Color.Danger
+			cb.Size = unit.Dp(20)
+			cb.TextSize = th.Sizes.SM
+			return cb.Layout(gtx)
+		})
 	})
 }
 

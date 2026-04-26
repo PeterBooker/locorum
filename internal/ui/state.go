@@ -6,7 +6,9 @@ import (
 
 	"gioui.org/app"
 
+	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/hooks"
+	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -39,6 +41,7 @@ type UIState struct {
 	showDeleteConfirm bool
 	deleteTargetID    string
 	deleteTargetName  string
+	deletePurgeVolume bool
 
 	// Container log viewer
 	logService string
@@ -78,6 +81,22 @@ type UIState struct {
 	// canonical site UUID; entries are created lazily on the first hook
 	// callback for a site and reset when the user opens a fresh Run Now.
 	hookState map[string]*hookSiteState
+
+	// Lifecycle plan progress — keyed by siteID. Created lazily on the
+	// first OnStepStart callback; reset by ResetLifecycleProgress at the
+	// start of a new lifecycle method (StartSite, StopSite, etc).
+	lifecycleState map[string]*lifecycleSiteState
+}
+
+// lifecycleSiteState captures the progress of a site lifecycle Plan.
+type lifecycleSiteState struct {
+	planName    string
+	steps       []orch.StepResult
+	pullByImage map[string]docker.PullProgress
+	pullOrder   []string
+	finalErr    error
+	rolledBack  bool
+	done        bool
 }
 
 // hookSiteState captures the live output and progress for a site's hook run.
@@ -102,8 +121,9 @@ type hookLine struct {
 
 func NewUIState() *UIState {
 	return &UIState{
-		siteToggling: make(map[string]bool),
-		hookState:    make(map[string]*hookSiteState),
+		siteToggling:   make(map[string]bool),
+		hookState:      make(map[string]*hookSiteState),
+		lifecycleState: make(map[string]*lifecycleSiteState),
 	}
 }
 
@@ -271,19 +291,22 @@ func (s *UIState) ShowDeleteConfirm(id, name string) {
 	s.showDeleteConfirm = true
 	s.deleteTargetID = id
 	s.deleteTargetName = name
+	s.deletePurgeVolume = false
 	s.mu.Unlock()
 }
 
 // ClearDeleteConfirm closes the delete confirmation modal and returns the
-// target site ID (so the caller can proceed with deletion).
-func (s *UIState) ClearDeleteConfirm() string {
+// target site ID and the user's purge choice.
+func (s *UIState) ClearDeleteConfirm() (id string, purgeVolume bool) {
 	s.mu.Lock()
-	id := s.deleteTargetID
+	id = s.deleteTargetID
+	purgeVolume = s.deletePurgeVolume
 	s.showDeleteConfirm = false
 	s.deleteTargetID = ""
 	s.deleteTargetName = ""
+	s.deletePurgeVolume = false
 	s.mu.Unlock()
-	return id
+	return id, purgeVolume
 }
 
 // DismissDeleteConfirm closes the delete confirmation modal without deleting.
@@ -292,14 +315,24 @@ func (s *UIState) DismissDeleteConfirm() {
 	s.showDeleteConfirm = false
 	s.deleteTargetID = ""
 	s.deleteTargetName = ""
+	s.deletePurgeVolume = false
 	s.mu.Unlock()
 }
 
+// SetDeletePurgeVolume toggles the "also delete database volume" choice in
+// the delete-confirm modal.
+func (s *UIState) SetDeletePurgeVolume(purge bool) {
+	s.mu.Lock()
+	s.deletePurgeVolume = purge
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
 // GetDeleteConfirmState returns the current delete confirmation state.
-func (s *UIState) GetDeleteConfirmState() (show bool, name string) {
+func (s *UIState) GetDeleteConfirmState() (show bool, name string, purgeVolume bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.showDeleteConfirm, s.deleteTargetName
+	return s.showDeleteConfirm, s.deleteTargetName, s.deletePurgeVolume
 }
 
 // ─── Container Logs ─────────────────────────────────────────────────────────
@@ -587,6 +620,129 @@ func (s *UIState) ClearHookOutput(siteID string) {
 	delete(s.hookState, siteID)
 	s.mu.Unlock()
 	s.Invalidate()
+}
+
+// ─── Lifecycle plan progress ───────────────────────────────────────────────
+
+// LifecycleSnapshot is a frame-stable copy of a site's running lifecycle
+// Plan. Renderers receive a snapshot so the Layout pass never holds the
+// state mutex while iterating.
+type LifecycleSnapshot struct {
+	PlanName   string
+	Steps      []orch.StepResult
+	Pulls      []docker.PullProgress
+	FinalError error
+	RolledBack bool
+	Done       bool
+}
+
+// HasActivity reports whether there is anything worth displaying.
+func (l LifecycleSnapshot) HasActivity() bool {
+	return l.PlanName != "" || len(l.Steps) > 0
+}
+
+func (s *UIState) lifecycleStateFor(siteID string) *lifecycleSiteState {
+	st, ok := s.lifecycleState[siteID]
+	if !ok {
+		st = &lifecycleSiteState{pullByImage: map[string]docker.PullProgress{}}
+		s.lifecycleState[siteID] = st
+	}
+	return st
+}
+
+// ResetLifecycleProgress clears the cached Plan progress for a site, in
+// preparation for a fresh lifecycle method run.
+func (s *UIState) ResetLifecycleProgress(siteID string) {
+	s.mu.Lock()
+	delete(s.lifecycleState, siteID)
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// LifecycleStepStarted records an in-flight step. Earlier completed steps
+// are preserved so the GUI shows the full trail.
+func (s *UIState) LifecycleStepStarted(siteID string, step orch.StepResult) {
+	s.mu.Lock()
+	st := s.lifecycleStateFor(siteID)
+	idx := indexOfStep(st.steps, step.Name)
+	if idx >= 0 {
+		st.steps[idx] = step
+	} else {
+		st.steps = append(st.steps, step)
+	}
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// LifecycleStepDone updates the recorded step (matched by name) with the
+// final outcome.
+func (s *UIState) LifecycleStepDone(siteID string, step orch.StepResult) {
+	s.mu.Lock()
+	st := s.lifecycleStateFor(siteID)
+	idx := indexOfStep(st.steps, step.Name)
+	if idx >= 0 {
+		st.steps[idx] = step
+	} else {
+		st.steps = append(st.steps, step)
+	}
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// LifecyclePlanDone records the final Result.
+func (s *UIState) LifecyclePlanDone(siteID string, res orch.Result) {
+	s.mu.Lock()
+	st := s.lifecycleStateFor(siteID)
+	st.planName = res.PlanName
+	st.steps = append([]orch.StepResult(nil), res.Steps...)
+	st.finalErr = res.FinalError
+	st.rolledBack = res.RolledBack
+	st.done = true
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// LifecyclePullProgress records the latest pull progress for an image.
+// Per-image: aggregated across layers by the engine before it reaches us.
+func (s *UIState) LifecyclePullProgress(siteID string, p docker.PullProgress) {
+	s.mu.Lock()
+	st := s.lifecycleStateFor(siteID)
+	if _, ok := st.pullByImage[p.Image]; !ok {
+		st.pullOrder = append(st.pullOrder, p.Image)
+	}
+	st.pullByImage[p.Image] = p
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// LifecycleSnapshot returns a frame-stable copy of the lifecycle state.
+func (s *UIState) LifecycleSnapshot(siteID string) LifecycleSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.lifecycleState[siteID]
+	if !ok {
+		return LifecycleSnapshot{}
+	}
+	out := LifecycleSnapshot{
+		PlanName:   st.planName,
+		Steps:      append([]orch.StepResult(nil), st.steps...),
+		FinalError: st.finalErr,
+		RolledBack: st.rolledBack,
+		Done:       st.done,
+	}
+	for _, img := range st.pullOrder {
+		out.Pulls = append(out.Pulls, st.pullByImage[img])
+	}
+	return out
+}
+
+func indexOfStep(steps []orch.StepResult, name string) int {
+	for i, s := range steps {
+		if s.Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // HookSnapshot returns a copy of the per-site hook output for safe reading

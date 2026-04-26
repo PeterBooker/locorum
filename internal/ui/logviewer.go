@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -72,7 +74,7 @@ func (lv *LogViewer) HandleUserInteractions(gtx layout.Context, siteID string) {
 		lv.state.SetLogLoading(true)
 
 		go func() {
-			output, err := lv.sm.GetContainerLogs(siteID, service, 100)
+			output, err := lv.sm.GetContainerLogs(context.Background(), siteID, service, 100)
 			if err != nil {
 				lv.state.SetLogOutput(service, "Error: "+err.Error())
 			} else {

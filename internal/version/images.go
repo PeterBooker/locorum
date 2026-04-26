@@ -8,6 +8,7 @@ const (
 	ApacheImage  = "httpd:2.4-alpine"
 	MailhogImage = "mailhog/mailhog"
 	AdminerImage = "adminer:latest"
+	AlpineImage  = "alpine:3"
 
 	// Per-site backend images get the user-configurable version suffix appended.
 	WodbyPHPImagePrefix = "wodby/php:"

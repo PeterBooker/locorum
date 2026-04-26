@@ -151,7 +151,7 @@ func (r *Router) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("preparing router dirs: %w", err)
 	}
 
-	running, err := r.docker.ContainerIsRunning(ContainerName)
+	running, err := r.docker.ContainerIsRunning(ctx, ContainerName)
 	if err != nil {
 		return fmt.Errorf("inspecting router: %w", err)
 	}
@@ -160,13 +160,13 @@ func (r *Router) EnsureRunning(ctx context.Context) error {
 			return nil
 		}
 		slog.Info("router stale, recreating")
-		if err := r.docker.RemoveContainer(ContainerName); err != nil {
+		if err := r.docker.RemoveContainer(ctx, ContainerName); err != nil {
 			return fmt.Errorf("remove stale router: %w", err)
 		}
 	} else {
 		// Defensive: a stopped-but-existing container would block create.
-		if exists, _ := r.docker.ContainerExists(ContainerName); exists {
-			if err := r.docker.RemoveContainer(ContainerName); err != nil {
+		if exists, _ := r.docker.ContainerExists(ctx, ContainerName); exists {
+			if err := r.docker.RemoveContainer(ctx, ContainerName); err != nil {
 				return fmt.Errorf("remove stopped router: %w", err)
 			}
 		}
@@ -185,7 +185,7 @@ func (r *Router) EnsureRunning(ctx context.Context) error {
 	if err := r.writeAPIConfig(); err != nil {
 		return fmt.Errorf("writing api config: %w", err)
 	}
-	if err := r.createContainer(); err != nil {
+	if err := r.createContainer(ctx); err != nil {
 		return fmt.Errorf("create router container: %w", err)
 	}
 	if err := r.waitReady(ctx); err != nil {
@@ -210,8 +210,8 @@ func (r *Router) cleanStaleSiteConfigs() error {
 	return nil
 }
 
-func (r *Router) Stop(_ context.Context) error {
-	return r.docker.RemoveContainer(ContainerName)
+func (r *Router) Stop(ctx context.Context) error {
+	return r.docker.RemoveContainer(ctx, ContainerName)
 }
 
 func (r *Router) UpsertSite(ctx context.Context, route router.SiteRoute) error {
@@ -375,7 +375,7 @@ func (r *Router) writeAPIConfig() error {
 	return writeAtomic(r.hostAPIPath, payload)
 }
 
-func (r *Router) createContainer() error {
+func (r *Router) createContainer(ctx context.Context) error {
 	cfg := &dcontainer.Config{
 		Image:  version.TraefikImage,
 		Cmd:    []string{"--configfile=" + ContainerStaticPath},
@@ -408,7 +408,7 @@ func (r *Router) createContainer() error {
 		},
 	}
 
-	return r.docker.CreateContainer(ContainerName, version.TraefikImage, cfg, hostCfg, netCfg)
+	return r.docker.CreateContainer(ctx, ContainerName, version.TraefikImage, cfg, hostCfg, netCfg)
 }
 
 func (r *Router) waitReady(ctx context.Context) error {

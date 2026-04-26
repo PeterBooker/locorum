@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 
 	"gioui.org/layout"
@@ -79,7 +80,7 @@ func (wp *WPCLIPanel) HandleUserInteractions(gtx layout.Context, siteID string) 
 		wp.state.SetWPCLILoading(true)
 
 		go func() {
-			output, err := wp.sm.ExecWPCLI(siteID, args)
+			output, err := wp.sm.ExecWPCLI(context.Background(), siteID, args)
 			if err != nil {
 				if output != "" {
 					wp.state.SetWPCLIOutput(output + "\n\nError: " + err.Error())
