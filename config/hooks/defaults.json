@@ -1,0 +1,25 @@
+{
+  "templates": [
+    {
+      "name": "Flush WP cache after start",
+      "description": "Clears WordPress object cache so a fresh start sees an empty cache.",
+      "event": "post-start",
+      "taskType": "wp-cli",
+      "command": "cache flush"
+    },
+    {
+      "name": "Backup DB before stop",
+      "description": "Snapshots the database to wp-content/locorum-backups/ before the site stops.",
+      "event": "pre-stop",
+      "taskType": "wp-cli",
+      "command": "db export wp-content/locorum-backups/pre-stop-${LOCORUM_SITE_SLUG}.sql"
+    },
+    {
+      "name": "Print site URL after start",
+      "description": "Logs the primary URL to the run log — useful as a diagnostic placeholder.",
+      "event": "post-start",
+      "taskType": "exec-host",
+      "command": "echo \"Started ${LOCORUM_SITE_NAME} at ${LOCORUM_PRIMARY_URL}\""
+    }
+  ]
+}

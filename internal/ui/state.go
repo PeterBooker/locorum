@@ -6,8 +6,14 @@ import (
 
 	"gioui.org/app"
 
+	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// MaxHookOutputLinesPerSite caps how many output lines we keep in memory
+// for a site's live-output panel. Older lines are dropped (the on-disk run
+// log retains the full output).
+const MaxHookOutputLinesPerSite = 200
 
 // UIState holds all mutable UI state, protected by a mutex for thread-safe
 // access from background goroutines (Docker operations, site loading, etc.).
@@ -67,11 +73,37 @@ type UIState struct {
 
 	// Window reference for triggering invalidation from background goroutines.
 	window *app.Window
+
+	// Hook live state — keyed by siteID. The siteID is the SiteManager's
+	// canonical site UUID; entries are created lazily on the first hook
+	// callback for a site and reset when the user opens a fresh Run Now.
+	hookState map[string]*hookSiteState
+}
+
+// hookSiteState captures the live output and progress for a site's hook run.
+type hookSiteState struct {
+	// runningHook is set while a task is in flight; nil between tasks.
+	runningHook *hooks.Hook
+	// lastResult is the most recently completed task; nil before the first
+	// completion.
+	lastResult *hooks.Result
+	// lines is a ring of recent output lines (capped at
+	// MaxHookOutputLinesPerSite). Older lines spill to the on-disk log.
+	lines []hookLine
+	// summary is set when OnAllDone fires; cleared on the next Run.
+	summary *hooks.Summary
+}
+
+// hookLine pairs an output line with its stream origin.
+type hookLine struct {
+	Text   string
+	Stderr bool
 }
 
 func NewUIState() *UIState {
 	return &UIState{
 		siteToggling: make(map[string]bool),
+		hookState:    make(map[string]*hookSiteState),
 	}
 }
 
@@ -474,4 +506,112 @@ func (s *UIState) GetNotice() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.notice
+}
+
+// ─── Hook live state ───────────────────────────────────────────────────────
+
+// HookSnapshot is a frame-stable copy of the per-site hook output / progress.
+// Renderers receive a snapshot so the layout pass never holds the state
+// mutex while iterating.
+type HookSnapshot struct {
+	Running *hooks.Hook
+	Last    *hooks.Result
+	Summary *hooks.Summary
+	Lines   []hookLine
+}
+
+// HasActivity reports whether there is anything worth displaying.
+func (h HookSnapshot) HasActivity() bool {
+	return h.Running != nil || h.Last != nil || len(h.Lines) > 0 || h.Summary != nil
+}
+
+func (s *UIState) hookStateFor(siteID string) *hookSiteState {
+	st, ok := s.hookState[siteID]
+	if !ok {
+		st = &hookSiteState{}
+		s.hookState[siteID] = st
+	}
+	return st
+}
+
+// HookTaskStarted clears any prior summary and records that h is running.
+func (s *UIState) HookTaskStarted(siteID string, h hooks.Hook) {
+	s.mu.Lock()
+	st := s.hookStateFor(siteID)
+	hCopy := h
+	st.runningHook = &hCopy
+	st.summary = nil
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// HookTaskOutput appends a line to the site's output ring.
+func (s *UIState) HookTaskOutput(siteID string, line string, stderr bool) {
+	s.mu.Lock()
+	st := s.hookStateFor(siteID)
+	st.lines = append(st.lines, hookLine{Text: line, Stderr: stderr})
+	if overflow := len(st.lines) - MaxHookOutputLinesPerSite; overflow > 0 {
+		// Drop the oldest entries; the on-disk log preserves full history.
+		st.lines = append(st.lines[:0], st.lines[overflow:]...)
+	}
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// HookTaskDone records the result and clears the running marker.
+func (s *UIState) HookTaskDone(siteID string, r hooks.Result) {
+	s.mu.Lock()
+	st := s.hookStateFor(siteID)
+	rc := r
+	st.lastResult = &rc
+	st.runningHook = nil
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// HookAllDone records the run summary.
+func (s *UIState) HookAllDone(siteID string, summary hooks.Summary) {
+	s.mu.Lock()
+	st := s.hookStateFor(siteID)
+	sc := summary
+	st.summary = &sc
+	st.runningHook = nil
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// ClearHookOutput discards the cached output for a site (e.g. when the user
+// switches sites or the panel resets).
+func (s *UIState) ClearHookOutput(siteID string) {
+	s.mu.Lock()
+	delete(s.hookState, siteID)
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// HookSnapshot returns a copy of the per-site hook output for safe reading
+// from a Layout pass.
+func (s *UIState) HookSnapshot(siteID string) HookSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.hookState[siteID]
+	if !ok {
+		return HookSnapshot{}
+	}
+	out := HookSnapshot{}
+	if st.runningHook != nil {
+		h := *st.runningHook
+		out.Running = &h
+	}
+	if st.lastResult != nil {
+		r := *st.lastResult
+		out.Last = &r
+	}
+	if st.summary != nil {
+		sm := *st.summary
+		out.Summary = &sm
+	}
+	out.Lines = make([]hookLine, len(st.lines))
+	copy(out.Lines, st.lines)
+	return out
 }

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -14,9 +16,10 @@ const (
 	tabOverview  = 0
 	tabDatabase  = 1
 	tabUtilities = 2
+	tabHooks     = 3
 )
 
-var tabLabels = []string{"Overview", "Database", "Utilities"}
+var tabLabels = []string{"Overview", "Database", "Utilities", "Hooks"}
 
 // SiteDetail is the main content panel that orchestrates sub-components
 // for the currently selected site.
@@ -28,7 +31,7 @@ type SiteDetail struct {
 
 	// Tabs
 	activeTab int
-	tabClicks [3]widget.Clickable
+	tabClicks [4]widget.Clickable
 
 	// Overview tab interactive widgets
 	openURLBtn      widget.Clickable
@@ -44,6 +47,7 @@ type SiteDetail struct {
 	wpcliPanel    *WPCLIPanel
 	versionEditor *VersionEditor
 	linkChecker   *LinkChecker
+	hooksPanel    *HooksPanel
 
 	// Docker unavailable
 	retryInitBtn widget.Clickable
@@ -59,11 +63,16 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications)
 		wpcliPanel:    NewWPCLIPanel(state, sm),
 		versionEditor: NewVersionEditor(state, sm, toasts),
 		linkChecker:   NewLinkChecker(state, sm),
+		hooksPanel:    NewHooksPanel(state, sm, sm, toasts),
 	}
 	sd.list.List.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
 	return sd
 }
+
+// HooksPanel exposes the hooks tab so the root UI can render its modal
+// overlays above the main chrome.
+func (sd *SiteDetail) HooksPanel() *HooksPanel { return sd.hooksPanel }
 
 // HandleUserInteractions processes retry-init, tab-bar, and per-tab interactions,
 // and delegates to the relevant sub-components. Called by the root UI before Layout.
@@ -103,6 +112,8 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 			sd.wpcliPanel.HandleUserInteractions(gtx, site.ID)
 			sd.linkChecker.HandleUserInteractions(gtx, site.ID)
 		}
+	case tabHooks:
+		sd.hooksPanel.HandleUserInteractions(gtx, site.ID)
 	default: // tabOverview
 		sd.handleOverviewClicks(gtx, site)
 		sd.versionEditor.HandleUserInteractions(gtx, site)
@@ -195,6 +206,8 @@ func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *Theme) layout.Dim
 		return sd.layoutDatabaseTab(gtx, th)
 	case tabUtilities:
 		return sd.layoutUtilitiesTab(gtx, th)
+	case tabHooks:
+		return sd.hooksPanel.Layout(gtx, th, site.ID)
 	default:
 		return sd.layoutOverviewTab(gtx, th)
 	}
@@ -254,7 +267,7 @@ func (sd *SiteDetail) handleOverviewClicks(gtx layout.Context, site *types.Site)
 			return
 		}
 		go func() {
-			if err := sd.sm.UpdatePublicDir(siteID, newDir); err != nil {
+			if err := sd.sm.UpdatePublicDir(context.Background(), siteID, newDir); err != nil {
 				sd.state.ShowError("Failed to update public dir: " + err.Error())
 			}
 		}()

@@ -3,6 +3,7 @@ package sites
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/PeterBooker/locorum/internal/hooks"
 )
 
 type exportMeta struct {
@@ -26,13 +29,21 @@ type exportMeta struct {
 
 // ExportSite creates a .tar.gz archive containing the site's database dump,
 // files directory, and metadata.
-func (sm *SiteManager) ExportSite(id, destPath string) error {
+func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
 	}
 	if site == nil {
 		return fmt.Errorf("site %q not found", id)
+	}
+
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreExport, site); err != nil {
+		return err
 	}
 
 	// Dump the database via mysqldump in the database container.
@@ -132,7 +143,7 @@ func (sm *SiteManager) ExportSite(id, destPath string) error {
 	}
 
 	slog.Info(fmt.Sprintf("Site %q exported to %s", site.Name, destPath))
-	return nil
+	return sm.runHooks(ctx, hooks.PostExport, site)
 }
 
 // addToTar writes a single file entry to the tar writer.

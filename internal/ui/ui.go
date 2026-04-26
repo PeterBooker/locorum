@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
@@ -58,6 +60,14 @@ func New(sm *sites.SiteManager) *UI {
 		state.UpdateSite(*site)
 	}
 
+	// Hook callbacks update the live-output panel. Each fires from the
+	// runner's goroutine; UIState handlers acquire their own mutex so the
+	// UI thread is never blocked.
+	sm.OnHookTaskStart = state.HookTaskStarted
+	sm.OnHookOutput = state.HookTaskOutput
+	sm.OnHookTaskDone = state.HookTaskDone
+	sm.OnHookAllDone = state.HookAllDone
+
 	return ui
 }
 
@@ -81,6 +91,12 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 	if show, _, _ := ui.State.GetCloneModalState(); show {
 		ui.CloneModal.HandleUserInteractions(gtx)
 	}
+	// Hook editor / delete-hook confirm interactions are processed inside
+	// the hooks panel; the panel surfaces a HasActiveModal helper that we
+	// query below to skip the underlying tab interactions when its modal
+	// has focus. We don't gate Sidebar/SiteDetail interactions on it
+	// because the hook editor is a content-level dialog, not a chrome
+	// blocker.
 }
 
 func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
@@ -133,6 +149,13 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				return ui.layoutDeleteConfirm(gtx, ui.Theme, deleteName)
 			}
 
+			// Hook editor or hook-delete confirm — owned by the hooks
+			// panel. We forward Layout here so the modal sits above the
+			// rest of the chrome.
+			if hp := ui.SiteDetail.HooksPanel(); hp != nil && hp.HasActiveModal() {
+				return hp.LayoutModalLayer(gtx, ui.Theme)
+			}
+
 			// Clone modal
 			return ui.CloneModal.Layout(gtx, ui.Theme)
 		}),
@@ -157,7 +180,7 @@ func (ui *UI) handleDeleteConfirm(gtx layout.Context) {
 		id := ui.State.ClearDeleteConfirm()
 		if id != "" {
 			go func() {
-				if err := ui.SM.DeleteSite(id); err != nil {
+				if err := ui.SM.DeleteSite(context.Background(), id); err != nil {
 					ui.State.ShowError("Failed to delete site: " + err.Error())
 				}
 			}()

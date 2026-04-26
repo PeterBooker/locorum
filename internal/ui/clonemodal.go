@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -58,7 +60,7 @@ func (cm *CloneModal) HandleUserInteractions(gtx layout.Context) {
 			cm.state.SetCloneLoading(true)
 			go func() {
 				defer cm.state.SetCloneLoading(false)
-				if err := cm.sm.CloneSite(siteID, newName); err != nil {
+				if err := cm.sm.CloneSite(context.Background(), siteID, newName); err != nil {
 					cm.state.ShowError("Clone failed: " + err.Error())
 					return
 				}

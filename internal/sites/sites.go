@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -21,6 +22,7 @@ import (
 	"github.com/sqweek/dialog"
 
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/router"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
@@ -33,16 +35,32 @@ type SiteManager struct {
 	sites   map[string]types.Site
 	d       *docker.Docker
 	rtr     router.Router
+	hooks   hooks.Runner
 	homeDir string
 	config  embed.FS
+
+	// siteLocks serialises lifecycle calls per site. Created lazily on
+	// first use; the outer mutex protects the map itself, the inner mutex
+	// protects the lifecycle on a single site. Different sites run in
+	// parallel.
+	locksMu   sync.Mutex
+	siteLocks map[string]*sync.Mutex
 
 	// Callbacks invoked when sites data changes. The UI layer sets these
 	// in ui.New() to trigger redraws.
 	OnSitesUpdated func(sites []types.Site)
 	OnSiteUpdated  func(site *types.Site)
+
+	// Hook-stream callbacks. Set by the UI in ui.New(); fired from
+	// goroutines spawned inside runHooks. Implementations are responsible
+	// for thread safety + UI invalidation per the existing pattern.
+	OnHookTaskStart func(siteID string, hook hooks.Hook)
+	OnHookOutput    func(siteID string, line string, stderr bool)
+	OnHookTaskDone  func(siteID string, result hooks.Result)
+	OnHookAllDone   func(siteID string, summary hooks.Summary)
 }
 
-func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, config embed.FS, homeDir string) *SiteManager {
+func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, config embed.FS, homeDir string) *SiteManager {
 	siteTpl = template.Must(
 		template.New("site.tmpl").
 			Funcs(funcMap).
@@ -56,14 +74,104 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, r
 	)
 
 	return &SiteManager{
-		st:      st,
-		cli:     cli,
-		d:       d,
-		rtr:     rtr,
-		config:  config,
-		homeDir: homeDir,
-		sites:   make(map[string]types.Site),
+		st:        st,
+		cli:       cli,
+		d:         d,
+		rtr:       rtr,
+		hooks:     runner,
+		config:    config,
+		homeDir:   homeDir,
+		sites:     make(map[string]types.Site),
+		siteLocks: make(map[string]*sync.Mutex),
 	}
+}
+
+// siteMutex returns the per-site lifecycle mutex, creating it on first use.
+// Different sites get independent mutexes so they can run in parallel; two
+// lifecycle calls on the same site queue.
+func (sm *SiteManager) siteMutex(siteID string) *sync.Mutex {
+	sm.locksMu.Lock()
+	defer sm.locksMu.Unlock()
+	m, ok := sm.siteLocks[siteID]
+	if !ok {
+		m = &sync.Mutex{}
+		sm.siteLocks[siteID] = m
+	}
+	return m
+}
+
+// runHooks fires every enabled hook for ev/site, forwarding results to the
+// UI callbacks. The runner returns nil in warn mode and the task error in
+// strict mode; we propagate verbatim — it is the lifecycle method's
+// decision whether to short-circuit the rest of its work.
+func (sm *SiteManager) runHooks(ctx context.Context, ev hooks.Event, site *types.Site) error {
+	if sm.hooks == nil || site == nil {
+		return nil
+	}
+	siteID := site.ID
+	opts := hooks.RunOptions{
+		OnTaskStart: func(h hooks.Hook) {
+			if sm.OnHookTaskStart != nil {
+				sm.OnHookTaskStart(siteID, h)
+			}
+		},
+		OnOutput: func(line string, stderr bool) {
+			if sm.OnHookOutput != nil {
+				sm.OnHookOutput(siteID, line, stderr)
+			}
+		},
+		OnTaskDone: func(r hooks.Result) {
+			if sm.OnHookTaskDone != nil {
+				sm.OnHookTaskDone(siteID, r)
+			}
+		},
+		OnAllDone: func(s hooks.Summary) {
+			if sm.OnHookAllDone != nil {
+				sm.OnHookAllDone(siteID, s)
+			}
+		},
+	}
+	if err := sm.hooks.Run(ctx, ev, site, opts); err != nil {
+		slog.Error("hook run failed", "event", ev, "site", site.Slug, "err", err.Error())
+		return err
+	}
+	slog.Info("hook run complete", "event", ev, "site", site.Slug)
+	return nil
+}
+
+// RunHookNow executes a single hook for a site outside the lifecycle.
+// Used by the GUI's "Run now" buttons. Streams via the same OnHook*
+// callbacks as runHooks.
+func (sm *SiteManager) RunHookNow(ctx context.Context, h hooks.Hook) (hooks.Result, error) {
+	if sm.hooks == nil {
+		return hooks.Result{}, fmt.Errorf("hooks runner not configured")
+	}
+	site, err := sm.st.GetSite(h.SiteID)
+	if err != nil {
+		return hooks.Result{}, fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return hooks.Result{}, fmt.Errorf("site %q not found", h.SiteID)
+	}
+	siteID := site.ID
+	opts := hooks.RunOptions{
+		OnTaskStart: func(h hooks.Hook) {
+			if sm.OnHookTaskStart != nil {
+				sm.OnHookTaskStart(siteID, h)
+			}
+		},
+		OnOutput: func(line string, stderr bool) {
+			if sm.OnHookOutput != nil {
+				sm.OnHookOutput(siteID, line, stderr)
+			}
+		},
+		OnTaskDone: func(r hooks.Result) {
+			if sm.OnHookTaskDone != nil {
+				sm.OnHookTaskDone(siteID, r)
+			}
+		},
+	}
+	return sm.hooks.RunOne(ctx, h, site, opts)
 }
 
 func (sm *SiteManager) GetSites() ([]types.Site, error) {
@@ -78,6 +186,38 @@ func (sm *SiteManager) GetSetting(key string) (string, error) {
 // SetSetting upserts a user preference.
 func (sm *SiteManager) SetSetting(key, value string) error {
 	return sm.st.SetSetting(key, value)
+}
+
+// ─── Hook persistence pass-throughs ─────────────────────────────────────────
+//
+// These thin wrappers let the UI layer talk to the storage's hook CRUD
+// without importing storage directly. Mirrors the existing GetSetting /
+// SetSetting pattern.
+
+// ListSiteHooks returns every hook attached to siteID.
+func (sm *SiteManager) ListSiteHooks(siteID string) ([]hooks.Hook, error) {
+	return sm.st.ListHooks(siteID)
+}
+
+// AddSiteHook validates h and persists it. h.ID, Position, CreatedAt and
+// UpdatedAt are populated on success.
+func (sm *SiteManager) AddSiteHook(h *hooks.Hook) error {
+	return sm.st.AddHook(h)
+}
+
+// UpdateSiteHook persists changes to an existing hook.
+func (sm *SiteManager) UpdateSiteHook(h *hooks.Hook) error {
+	return sm.st.UpdateHook(h)
+}
+
+// DeleteSiteHook removes a hook by id.
+func (sm *SiteManager) DeleteSiteHook(id int64) error {
+	return sm.st.DeleteHook(id)
+}
+
+// ReorderSiteHooks atomically rewrites positions for an event.
+func (sm *SiteManager) ReorderSiteHooks(siteID string, ev hooks.Event, ids []int64) error {
+	return sm.st.ReorderHooks(siteID, ev, ids)
 }
 
 func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
@@ -122,27 +262,49 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	return nil
 }
 
-func (sm *SiteManager) DeleteSite(id string) error {
+func (sm *SiteManager) DeleteSite(ctx context.Context, id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
 		slog.Error("Failed to fetch site: " + err.Error())
 		return err
 	}
+	if site == nil {
+		// Already gone; nothing to delete. Still emit so UI refreshes.
+		sm.emitSitesUpdate()
+		return nil
+	}
 
-	if site != nil {
-		exists, _ := sm.d.SiteContainersExist(site)
-		if exists {
-			if err := sm.d.DeleteSite(site); err != nil {
-				slog.Error("Failed to remove site containers: " + err.Error())
-			}
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// pre-delete fires BEFORE we touch storage, so the runner's hook list
+	// lookup still succeeds. Tear-down operations come after.
+	if err := sm.runHooks(ctx, hooks.PreDelete, site); err != nil {
+		return err
+	}
+
+	exists, _ := sm.d.SiteContainersExist(site)
+	if exists {
+		if err := sm.d.DeleteSite(site); err != nil {
+			slog.Error("Failed to remove site containers: " + err.Error())
 		}
+	}
 
-		os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
-		os.Remove(path.Join(sm.homeDir, ".locorum", "config", "apache", "sites", site.Slug+".conf"))
+	os.Remove(path.Join(sm.homeDir, ".locorum", "config", "nginx", "sites", site.Slug+".conf"))
+	os.Remove(path.Join(sm.homeDir, ".locorum", "config", "apache", "sites", site.Slug+".conf"))
 
-		if err := sm.rtr.RemoveSite(context.Background(), site.Slug); err != nil {
-			slog.Warn("Failed to remove route on site delete: " + err.Error())
-		}
+	if err := sm.rtr.RemoveSite(ctx, site.Slug); err != nil {
+		slog.Warn("Failed to remove route on site delete: " + err.Error())
+	}
+
+	// post-delete fires AFTER container + route teardown but BEFORE the
+	// SQL DELETE: the FK ON DELETE CASCADE would otherwise wipe the
+	// site_hooks rows before the runner could enumerate them. Failure here
+	// is informational — the destructive work has already happened, so we
+	// continue to the SQL DELETE regardless.
+	if err := sm.runHooks(ctx, hooks.PostDelete, site); err != nil {
+		slog.Warn("post-delete hook run failed", "err", err.Error())
 	}
 
 	if err := sm.st.DeleteSite(id); err != nil {
@@ -164,10 +326,21 @@ func (sm *SiteManager) emitSitesUpdate() {
 	}
 }
 
-func (sm *SiteManager) StartSite(id string) error {
+func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
 		slog.Error("Failed to fetch site: " + err.Error())
+		return err
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", id)
+	}
+
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreStart, site); err != nil {
 		return err
 	}
 
@@ -217,7 +390,7 @@ func (sm *SiteManager) StartSite(id string) error {
 	}
 
 	if site.Multisite != "" {
-		if err := sm.ensureMultisite(site); err != nil {
+		if err := sm.ensureMultisiteWithHooks(ctx, site); err != nil {
 			slog.Error("Failed to configure multisite: " + err.Error())
 		}
 	}
@@ -226,7 +399,7 @@ func (sm *SiteManager) StartSite(id string) error {
 		sm.OnSiteUpdated(site)
 	}
 
-	return nil
+	return sm.runHooks(ctx, hooks.PostStart, site)
 }
 
 func (sm *SiteManager) upsertRoute(site *types.Site) error {
@@ -239,6 +412,21 @@ func (sm *SiteManager) upsertRoute(site *types.Site) error {
 		route.WildcardHost = "*." + site.Domain
 	}
 	return sm.rtr.UpsertSite(context.Background(), route)
+}
+
+// ensureMultisiteWithHooks fires pre/post-multisite hooks around the
+// existing ensureMultisite work. Public lifecycle methods that themselves
+// fire pre/post-start expect this wrapper rather than ensureMultisite, so
+// users can attach setup commands that run only when multisite conversion
+// happens.
+func (sm *SiteManager) ensureMultisiteWithHooks(ctx context.Context, site *types.Site) error {
+	if err := sm.runHooks(ctx, hooks.PreMultisite, site); err != nil {
+		return err
+	}
+	if err := sm.ensureMultisite(site); err != nil {
+		return err
+	}
+	return sm.runHooks(ctx, hooks.PostMultisite, site)
 }
 
 // ensureMultisite converts a WordPress installation to multisite if not
@@ -277,10 +465,21 @@ func (sm *SiteManager) ensureMultisite(site *types.Site) error {
 	return nil
 }
 
-func (sm *SiteManager) StopSite(id string) error {
+func (sm *SiteManager) StopSite(ctx context.Context, id string) error {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
 		slog.Error("Failed to fetch site: " + err.Error())
+		return err
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", id)
+	}
+
+	mu := sm.siteMutex(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreStop, site); err != nil {
 		return err
 	}
 
@@ -295,7 +494,7 @@ func (sm *SiteManager) StopSite(id string) error {
 		return err
 	}
 
-	if err := sm.rtr.RemoveSite(context.Background(), site.Slug); err != nil {
+	if err := sm.rtr.RemoveSite(ctx, site.Slug); err != nil {
 		slog.Warn("Failed to remove route on site stop: " + err.Error())
 	}
 
@@ -303,7 +502,7 @@ func (sm *SiteManager) StopSite(id string) error {
 		sm.OnSiteUpdated(site)
 	}
 
-	return nil
+	return sm.runHooks(ctx, hooks.PostStop, site)
 }
 
 // ReconcileState marks all sites as stopped in the database. Called on
@@ -440,7 +639,7 @@ func (sm *SiteManager) OpenSiteShell(siteID string) error {
 // UpdateSiteVersions changes PHP/MySQL/Redis versions for a stopped site
 // and removes old containers so they are recreated on next start with the
 // new images.
-func (sm *SiteManager) UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer string) error {
+func (sm *SiteManager) UpdateSiteVersions(ctx context.Context, siteID, phpVer, mysqlVer, redisVer string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
@@ -451,6 +650,10 @@ func (sm *SiteManager) UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer str
 	if site.Started {
 		return fmt.Errorf("site must be stopped to change versions")
 	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
 
 	changed := false
 	if phpVer != "" && phpVer != site.PHPVersion {
@@ -470,6 +673,10 @@ func (sm *SiteManager) UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer str
 		return nil
 	}
 
+	if err := sm.runHooks(ctx, hooks.PreVersionsChange, site); err != nil {
+		return err
+	}
+
 	exists, _ := sm.d.SiteContainersExist(site)
 	if exists {
 		if err := sm.d.DeleteSite(site); err != nil {
@@ -484,7 +691,7 @@ func (sm *SiteManager) UpdateSiteVersions(siteID, phpVer, mysqlVer, redisVer str
 	if sm.OnSiteUpdated != nil {
 		sm.OnSiteUpdated(site)
 	}
-	return nil
+	return sm.runHooks(ctx, hooks.PostVersionsChange, site)
 }
 
 func (sm *SiteManager) OpenSiteURL(siteID string) error {
@@ -499,7 +706,7 @@ func (sm *SiteManager) OpenSiteURL(siteID string) error {
 }
 
 // UpdatePublicDir changes the public directory for a stopped site.
-func (sm *SiteManager) UpdatePublicDir(siteID, publicDir string) error {
+func (sm *SiteManager) UpdatePublicDir(ctx context.Context, siteID, publicDir string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
@@ -525,13 +732,21 @@ func (sm *SiteManager) UpdatePublicDir(siteID, publicDir string) error {
 }
 
 // CloneSite duplicates an existing site with a new name, copying files and database.
-func (sm *SiteManager) CloneSite(siteID, newName string) error {
+func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
 	}
 	if site == nil {
 		return fmt.Errorf("site %q not found", siteID)
+	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := sm.runHooks(ctx, hooks.PreClone, site); err != nil {
+		return err
 	}
 
 	newSlug := slug.Make(newName)
@@ -578,7 +793,9 @@ func (sm *SiteManager) CloneSite(siteID, newName string) error {
 		return fmt.Errorf("adding cloned site to database: %w", err)
 	}
 
-	if err := sm.StartSite(newSite.ID); err != nil {
+	// StartSite acquires its own per-site mutex (newSite.ID), so we don't
+	// recurse on the parent site's lock.
+	if err := sm.StartSite(ctx, newSite.ID); err != nil {
 		return fmt.Errorf("starting cloned site: %w", err)
 	}
 
@@ -606,7 +823,10 @@ func (sm *SiteManager) CloneSite(siteID, newName string) error {
 	}
 
 	sm.emitSitesUpdate()
-	return nil
+	// post-clone fires on the SOURCE site so users can attach commands like
+	// "rename the cloned files dir" or "rsync to a CI bucket". The clone
+	// itself runs its own pre-/post-start chain via StartSite above.
+	return sm.runHooks(ctx, hooks.PostClone, site)
 }
 
 // CheckLinks crawls a running site and reports broken links via the onProgress callback.

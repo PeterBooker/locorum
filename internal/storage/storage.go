@@ -33,7 +33,9 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// _pragma=foreign_keys(1) enables FK enforcement on every new connection
+	// in modernc.org/sqlite's pool. Required for ON DELETE CASCADE.
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
