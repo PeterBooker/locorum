@@ -30,6 +30,8 @@ make linux-amd64       # cross-compile (see Makefile for all targets)
 
 After code changes, **always** run `gofmt -w .`, `go vet ./...`, and `go test ./...` before reporting done. `gofmt` is non-negotiable — every `.go` file must be gofmt-clean (CI will reject otherwise). `build/` and a stray `locorum` binary at the repo root are both gitignored — a one-off `go build .` won't pollute `git status`.
 
+**Use `go install` for testing UI changes.** The user runs the app from `~/go/bin/locorum` (on `$PATH`), so `go install .` is the only build step that updates the binary the user actually launches. `go build` to a temp path leaves the user looking at stale UI and wastes a feedback cycle. After every UI edit you want the user to see, run `go install .` — not `go build`.
+
 Testing the GUI itself requires running the app; the test suite only covers storage, nginx templating, and utils. If you touch UI code you can't functionally verify without launching the app — **say so explicitly** rather than claiming the change works.
 
 ## Architecture
@@ -181,6 +183,78 @@ Gio is immediate-mode: the entire UI is laid out on every `FrameEvent`. Read `in
 - **Text sizes:** minimum 18sp (accessibility). Use `TextXS`/`TextSM`/`TextBase`/`TextLG`.
 - **Buttons:** use `PrimaryButton`, `SecondaryButton`, `DangerButton`, `SuccessButton`, `SmallButton` from `widgets.go` — don't hand-roll `material.Button` unless you need custom colors.
 - **Sidebar width:** `SidebarWidth` (300dp). Modal width: `ModalWidth` (560dp).
+
+### Responsive sizing in Gio
+
+Gio is immediate-mode and constraint-based. Every widget receives `gtx.Constraints` (a `Min`/`Max` rectangle in *pixels*, not Dp), reports `layout.Dimensions{Size}`, and the parent decides where to place those dims. There is no CSS, no "fill: 100%", no implicit centering. Everything responsive in this codebase boils down to **what `Min`/`Max` does the child see, and what dims does it report back**.
+
+Read this before writing anything that has to fill, center, or resize.
+
+#### The constraint model
+
+| | What this means |
+|---|---|
+| `Constraints.Max` | The largest size the parent allows. Children should not exceed it. |
+| `Constraints.Min` | The smallest size the parent expects. `layout.Center` and many helpers use `Min` to know what box to center within — if `Min` is `(0,0)`, they treat the child's own dims as the whole world. |
+| `Dimensions.Size` | What the child actually consumed. The parent positions other siblings around this. |
+
+A child that returns dims smaller than `Min` will not be magically expanded — it will just be drawn at top-left of whatever box the parent assumed.
+
+#### Parents that zero out `Min` on you
+
+These are the two recurring traps. Both make `layout.Center` look broken.
+
+1. **`layout.Flex` Rigid children get cross-axis `Min = 0`.** In a vertical Flex, Rigid children see `Min.X = 0`. A `layout.Center` placed inside such a Rigid can't center horizontally — it returns the child's own dims and the icon hugs the left edge of the rail. Setting `Flex.Alignment = layout.Middle` does *not* fix this: alignment positions the child *after* layout, but the child's reported width is still just its own content. Re-pin the cross-axis at the Rigid boundary:
+
+   ```go
+   layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+       gtx.Constraints.Min.X = gtx.Constraints.Max.X
+       return layout.Center.Layout(gtx, child)
+   })
+   ```
+
+   The `railRow` helper in `internal/ui/navrail.go` exists for exactly this. Reuse it (or copy the pattern) in any vertical-rail layout.
+
+2. **`layout.Stack` Stacked children get `Min = (0, 0)` on both axes.** This bites when wrapping content in `RoundedFill` (which is `Stack` internally): the bg paints at the right size because `Expanded` reuses the maxSz of stacked dims, but the `Stacked` callback — typically a `layout.Center` — sees `Min = 0` and reports the child's own size, painting at the Stack's top-left. Re-pin inside the Stacked callback:
+
+   ```go
+   return RoundedFill(gtx, bg, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+       gtx.Constraints.Min = image.Pt(pillSz, pillSz)
+       return layout.Center.Layout(gtx, child)
+   })
+   ```
+
+When something looks "stuck top-left" in a sized container, the answer is almost always one of these two — not a bug in `layout.Center`.
+
+#### Geometry: declared size = visible size
+
+Custom-painted glyphs (icons, logos, marks) are usually described on a design grid (24×24 for icons, 32×32 for the brand). The grid almost always has padding — visible strokes occupy something like 3..21 of a 24-grid, never 0..24. If you naively scale by `px/24`, the rendered glyph is 60–75% of the requested size, and every caller ends up over-declaring sizes to "see" the glyph (e.g. asking for a 40dp icon to fill a 28dp space).
+
+Fix it once, in the geometry primitive:
+
+1. Scale by the **visible span**, not the grid: `scale = px / visibleSpan`. For our icons, `visibleSpan = 18`.
+2. Push an `op.Offset` so the design-center (e.g. (12, 12) in a 24-grid) lands at the geometric center of the `px × px` box. For a content range centered on (12, 12) in a span-18 design, that's `op.Offset(image.Pt(-px/6, -px/6))`.
+3. Return the `op.TransformStack` so the caller can `defer st.Pop()`.
+4. Stroke width scales with the same `scale` so glyph weight stays proportional.
+
+`internal/ui/icons.go:iconBase` and `internal/ui/logo.go:LayoutLogo` are the canonical implementations. New geometry primitives should follow the same contract: **a declared `unit.Dp` size always means the size of the visible content, never a padded grid.**
+
+#### Centering: pick the right tool
+
+| Want | Use |
+|---|---|
+| Center one widget in the available cross-axis of a Flex | `Flex.Alignment = layout.Middle` *and* re-pin Min cross-axis on each Rigid (see above) |
+| Center within a fixed box (a pill, button, modal frame) | Set `Constraints.Min = Max = box size`, then `layout.Center.Layout(gtx, child)` |
+| Pad uniformly inside a parent | `layout.UniformInset(dp)` — does not expand, only shrinks |
+| Make a child fill a parent | Set `Constraints.Min = Constraints.Max` and have the child honour `Min` (most do) |
+
+`layout.Center` is reliable — but only when both `Min` and `Max` describe the box you want to center within. If you set just `Max`, you'll fight it forever.
+
+#### Things that won't help (but it's tempting to try)
+
+- `layout.Spacer` between Flex children to "push centered" — works for a single sibling, not for centering a widget that has no symmetric counterpart.
+- `Flex.Alignment` alone — see above; it positions known-size children, it doesn't tell the child what size to report.
+- Pushing a hand-rolled `op.Offset` to "nudge" something into place — fragile under resize, breaks click-handling, almost always means you missed a `Min` somewhere upstream.
 
 ### Adding a UI Component
 

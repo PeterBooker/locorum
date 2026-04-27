@@ -38,6 +38,13 @@ func (d *Docker) SetClient(cli *client.Client) {
 	d.cli = cli
 }
 
+// HasClient reports whether SetClient has been called yet. Background
+// pollers that start before app.Initialize completes can use this to
+// short-circuit instead of dereferencing a nil daemon client.
+func (d *Docker) HasClient() bool {
+	return d.cli != nil
+}
+
 // Ping verifies the engine is reachable. Wraps client.Ping with our context
 // plumbing.
 func (d *Docker) Ping(ctx context.Context) error {

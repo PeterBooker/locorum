@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -131,6 +133,8 @@ func main() {
 		}
 	}()
 
+	go pollServicesHealth(d, userInterface.State)
+
 	go func() {
 		w := &app.Window{}
 		w.Option(
@@ -149,6 +153,66 @@ func main() {
 	}()
 
 	app.Main()
+}
+
+// pollServicesHealth refreshes the rolled-up health of Locorum's global
+// services (router, mail, adminer) on a 5-second cadence and pushes the
+// result into UIState for the top status bar. Runs forever; stopped by
+// process exit.
+func pollServicesHealth(d *docker.Docker, state *ui.UIState) {
+	requiredRoles := []string{docker.RoleRouter, docker.RoleMail, docker.RoleAdminer}
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		state.SetServicesHealth(currentServicesHealth(d, requiredRoles))
+		<-tick.C
+	}
+}
+
+func currentServicesHealth(d *docker.Docker, requiredRoles []string) ui.ServicesHealth {
+	if !d.HasClient() {
+		return ui.ServicesHealth{Status: ui.ServicesHealthUnknown}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	containers, err := d.ContainersByLabel(ctx, map[string]string{docker.LabelPlatform: docker.PlatformValue})
+	if err != nil {
+		return ui.ServicesHealth{Status: ui.ServicesHealthDown, Detail: err.Error()}
+	}
+
+	roleStates := make(map[string]string, len(requiredRoles))
+	for _, c := range containers {
+		role := c.Labels[docker.LabelRole]
+		if role == "" {
+			continue
+		}
+		// Prefer the running entry if multiple labelled containers exist.
+		if existing, ok := roleStates[role]; !ok || existing != "running" {
+			roleStates[role] = strings.ToLower(c.State)
+		}
+	}
+
+	missing, notRunning := 0, 0
+	for _, role := range requiredRoles {
+		state, ok := roleStates[role]
+		switch {
+		case !ok:
+			missing++
+		case state != "running":
+			notRunning++
+		}
+	}
+
+	switch {
+	case missing == len(requiredRoles):
+		return ui.ServicesHealth{Status: ui.ServicesHealthDown}
+	case missing > 0 || notRunning > 0:
+		return ui.ServicesHealth{Status: ui.ServicesHealthDegraded}
+	default:
+		return ui.ServicesHealth{Status: ui.ServicesHealthHealthy}
+	}
 }
 
 func eventLoop(w *app.Window, u *ui.UI) error {

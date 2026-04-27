@@ -41,7 +41,11 @@ func NewVersionEditor(state *UIState, sm *sites.SiteManager, toasts *Notificatio
 
 func (ve *VersionEditor) Layout(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	if site.Started {
-		return layoutVersionsSection(gtx, th, site)
+		return KVRows(gtx, th, []KV{
+			{"PHP", site.PHPVersion},
+			{"MySQL", site.MySQLVersion},
+			{"Redis", site.RedisVersion},
+		})
 	}
 
 	// Sync dropdown selections to current site values when site changes.
