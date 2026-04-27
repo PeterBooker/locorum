@@ -31,6 +31,49 @@ func FillBackground(gtx layout.Context, col color.NRGBA, w layout.Widget) layout
 	)
 }
 
+// RoundedFill paints a rounded-rect background behind the widget.
+func RoundedFill(gtx layout.Context, col color.NRGBA, radius unit.Dp, w layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			r := gtx.Dp(radius)
+			rect := image.Rectangle{Max: gtx.Constraints.Min}
+			defer clip.RRect{Rect: rect, NE: r, NW: r, SE: r, SW: r}.Push(gtx.Ops).Pop()
+			paint.Fill(gtx.Ops, col)
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		}),
+		layout.Stacked(w),
+	)
+}
+
+// EdgeLine paints a 1-px line along one edge of the constrained area.
+// edge: "top" | "bottom" | "left" | "right". The widget reports its size
+// as gtx.Constraints.Min so it doesn't inflate the surrounding Stack —
+// inside a Stack's Expanded pass, Min equals the largest Stacked child.
+func EdgeLine(gtx layout.Context, col color.NRGBA, edge string) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(1))
+	mx, my := gtx.Constraints.Min.X, gtx.Constraints.Min.Y
+	if mx == 0 {
+		mx = gtx.Constraints.Max.X
+	}
+	if my == 0 {
+		my = gtx.Constraints.Max.Y
+	}
+	var rect image.Rectangle
+	switch edge {
+	case "top":
+		rect = image.Rectangle{Max: image.Point{X: mx, Y: w}}
+	case "bottom":
+		rect = image.Rectangle{Min: image.Point{Y: my - w}, Max: image.Point{X: mx, Y: my}}
+	case "left":
+		rect = image.Rectangle{Max: image.Point{X: w, Y: my}}
+	case "right":
+		rect = image.Rectangle{Min: image.Point{X: mx - w}, Max: image.Point{X: mx, Y: my}}
+	}
+	defer clip.Rect(rect).Push(gtx.Ops).Pop()
+	paint.Fill(gtx.Ops, col)
+	return layout.Dimensions{Size: image.Point{X: mx, Y: my}}
+}
+
 // ─── Text Inputs ────────────────────────────────────────────────────────────
 
 // LabeledInput draws a label above a styled text editor.
@@ -238,68 +281,6 @@ func CopyToClipboard(gtx layout.Context, text string) {
 		Type: "application/text",
 		Data: io.NopCloser(strings.NewReader(text)),
 	})
-}
-
-// ─── Status Badge ───────────────────────────────────────────────────────────
-
-// StatusBadge renders a pill-shaped badge showing "Running" or "Stopped"
-// with a colored dot and tinted background.
-func StatusBadge(gtx layout.Context, th *Theme, started bool) layout.Dimensions {
-	var (
-		bg    color.NRGBA
-		fg    color.NRGBA
-		dot   color.NRGBA
-		label string
-	)
-	if started {
-		bg = th.Color.SuccessBg
-		fg = th.Color.SuccessFg
-		dot = th.Color.Success
-		label = "Running"
-	} else {
-		bg = th.Color.SurfaceAlt
-		fg = th.Color.TextStrong
-		dot = th.Color.TextMuted
-		label = "Stopped"
-	}
-
-	return FillBackground(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-		rr := gtx.Dp(th.Radii.LG)
-		defer clip.RRect{
-			Rect: image.Rectangle{Max: gtx.Constraints.Min},
-			NE:   rr, NW: rr, SE: rr, SW: rr,
-		}.Push(gtx.Ops).Pop()
-
-		return layout.Inset{
-			Top: th.Spacing.XS, Bottom: th.Spacing.XS,
-			Left: th.Spacing.SM, Right: th.Spacing.SM,
-		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layoutDot(gtx, dot, unit.Dp(6))
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th.Theme, label)
-					lbl.Color = fg
-					lbl.TextSize = th.Sizes.SM
-					return lbl.Layout(gtx)
-				}),
-			)
-		})
-	})
-}
-
-// layoutDot draws a small filled circle.
-func layoutDot(gtx layout.Context, col color.NRGBA, diameter unit.Dp) layout.Dimensions {
-	size := gtx.Dp(diameter)
-	defer clip.Ellipse{
-		Min: image.Point{},
-		Max: image.Point{X: size, Y: size},
-	}.Push(gtx.Ops).Pop()
-	paint.Fill(gtx.Ops, col)
-	return layout.Dimensions{Size: image.Point{X: size, Y: size}}
 }
 
 // ─── Divider ────────────────────────────────────────────────────────────────

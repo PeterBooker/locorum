@@ -139,7 +139,24 @@ func OpenDirectory(path string) error {
 			return exec.Command("cmd.exe", "/C", "start", "", wslPath).Start()
 		}
 
-		// Native Linux environment.
+		// Native Linux environment. Prefer a known file-manager binary
+		// because `xdg-open <dir>` silently no-ops when no MIME handler
+		// is registered for inode/directory (common on minimal/tiling
+		// setups like Hyprland without a full GNOME or KDE session).
+		// Honour $FILE_MANAGER first if it points at something on PATH.
+		fileManagers := []string{
+			"nautilus", "dolphin", "nemo", "thunar", "pcmanfm", "caja",
+		}
+		if envFM := os.Getenv("FILE_MANAGER"); envFM != "" {
+			if _, err := exec.LookPath(envFM); err == nil {
+				return exec.Command(envFM, path).Start()
+			}
+		}
+		for _, fm := range fileManagers {
+			if _, err := exec.LookPath(fm); err == nil {
+				return exec.Command(fm, path).Start()
+			}
+		}
 		return exec.Command("xdg-open", path).Start()
 	}
 }
@@ -211,20 +228,44 @@ func OpenTerminalWithCommand(args ...string) error {
 			}
 			return exec.Command("cmd.exe", "/C", "start", "wsl.exe", "-d", distro, "--", fullCmd).Start()
 		}
-		// Native Linux: try common terminal emulators.
-		terminals := []struct {
-			name string
-			flag string
-		}{
-			{"x-terminal-emulator", "-e"},
-			{"gnome-terminal", "--"},
-			{"konsole", "-e"},
-			{"xfce4-terminal", "-e"},
-			{"xterm", "-e"},
+		// Native Linux: try common terminal emulators. The `prefix` is the
+		// arg sequence that must come before the command — empty for
+		// terminals that take the program as positional args (kitty), a
+		// flag like "-e" for most others, and a multi-token "start --"
+		// for wezterm.
+		type termCandidate struct {
+			name   string
+			prefix []string
+		}
+		terminals := []termCandidate{
+			{"kitty", nil},
+			{"alacritty", []string{"-e"}},
+			{"foot", []string{"-e"}},
+			{"wezterm", []string{"start", "--"}},
+			{"ghostty", []string{"-e"}},
+			{"x-terminal-emulator", []string{"-e"}},
+			{"gnome-terminal", []string{"--"}},
+			{"konsole", []string{"-e"}},
+			{"xfce4-terminal", []string{"-e"}},
+			{"xterm", []string{"-e"}},
+		}
+		// Honour $TERMINAL first if it points at a known emulator.
+		if envTerm := os.Getenv("TERMINAL"); envTerm != "" {
+			if _, err := exec.LookPath(envTerm); err == nil {
+				prefix := []string{"-e"}
+				for _, t := range terminals {
+					if t.name == envTerm {
+						prefix = t.prefix
+						break
+					}
+				}
+				cmdArgs := append(append([]string{}, prefix...), args...)
+				return exec.Command(envTerm, cmdArgs...).Start()
+			}
 		}
 		for _, t := range terminals {
 			if _, err := exec.LookPath(t.name); err == nil {
-				cmdArgs := append([]string{t.flag}, args...)
+				cmdArgs := append(append([]string{}, t.prefix...), args...)
 				return exec.Command(t.name, cmdArgs...).Start()
 			}
 		}

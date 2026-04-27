@@ -36,11 +36,11 @@ type Theme struct {
 	Sizes   *TextSizes
 	Radii   *Radii
 	Dims    *Dims
-	Mode    ThemeMode // effective mode; ThemeSystem resolved to Dark or Light
+	Mode    ThemeMode // user preference (Dark, Light, or System)
 }
 
-// NewTheme constructs a Theme with the dark palette as default. Use
-// (*Theme).SetMode to switch palettes at runtime.
+// NewTheme constructs a Theme with the system-resolved palette as default.
+// Use (*Theme).SetMode to switch palettes at runtime.
 func NewTheme() *Theme {
 	mt := material.NewTheme()
 
@@ -53,7 +53,7 @@ func NewTheme() *Theme {
 	mt.Face = font.Typeface("Inter")
 
 	sizes := DefaultTextSizes()
-	mt.TextSize = sizes.Base
+	mt.TextSize = sizes.Body
 
 	t := &Theme{
 		Theme:   mt,
@@ -62,7 +62,7 @@ func NewTheme() *Theme {
 		Radii:   DefaultRadii(),
 		Dims:    DefaultDims(),
 	}
-	t.SetMode(ThemeDark)
+	t.SetMode(ThemeSystem)
 	return t
 }
 
@@ -70,31 +70,36 @@ func NewTheme() *Theme {
 // to Dark or Light via DetectSystemTheme().
 func (t *Theme) SetMode(mode ThemeMode) {
 	t.Mode = mode
-	resolved := mode
-	if mode == ThemeSystem {
-		resolved = DetectSystemTheme()
-	}
-	if resolved == ThemeLight {
+	if t.ResolvedMode() == ThemeLight {
 		t.Color = LightPalette()
 	} else {
 		t.Color = DarkPalette()
 	}
-	t.Theme.Fg = t.Color.TextPrimary
-	t.Theme.Bg = t.Color.ContentBg
-	t.Theme.ContrastBg = t.Color.Primary
-	t.Theme.ContrastFg = t.Color.OnPrimary
+	t.Theme.Fg = t.Color.Fg
+	t.Theme.Bg = t.Color.Bg
+	t.Theme.ContrastBg = t.Color.Accent
+	t.Theme.ContrastFg = t.Color.AccentFg
 }
 
-// ParseThemeMode converts a stored string into a ThemeMode. Unknown values
-// fall back to ThemeDark.
+// ResolvedMode returns the effective theme mode, resolving ThemeSystem to
+// either ThemeDark or ThemeLight via DetectSystemTheme.
+func (t *Theme) ResolvedMode() ThemeMode {
+	if t.Mode == ThemeSystem {
+		return DetectSystemTheme()
+	}
+	return t.Mode
+}
+
+// ParseThemeMode converts a stored string into a ThemeMode. Unknown / empty
+// values fall back to ThemeSystem (so a freshly-installed app follows the OS).
 func ParseThemeMode(s string) ThemeMode {
 	switch s {
 	case "light":
 		return ThemeLight
-	case "system":
-		return ThemeSystem
-	default:
+	case "dark":
 		return ThemeDark
+	default:
+		return ThemeSystem
 	}
 }
 
@@ -103,10 +108,10 @@ func (m ThemeMode) String() string {
 	switch m {
 	case ThemeLight:
 		return "light"
-	case ThemeSystem:
-		return "system"
-	default:
+	case ThemeDark:
 		return "dark"
+	default:
+		return "system"
 	}
 }
 
@@ -115,7 +120,7 @@ func (m ThemeMode) String() string {
 // Hovered returns a slightly lighter (dark theme) or darker (light theme)
 // variant of the input color, suitable for hover states.
 func (t *Theme) Hovered(c color.NRGBA) color.NRGBA {
-	if t.Mode == ThemeLight {
+	if t.ResolvedMode() == ThemeLight {
 		return darken(c, 0.08)
 	}
 	return lighten(c, 0.10)
@@ -132,13 +137,12 @@ func (t *Theme) Disabled(c color.NRGBA) color.NRGBA {
 // ContrastText returns black or white depending on whether the input
 // background color is light or dark, optimised for body text legibility.
 func (t *Theme) ContrastText(bg color.NRGBA) color.NRGBA {
-	// Relative luminance (sRGB approximation).
 	r := float32(bg.R) / 255
 	g := float32(bg.G) / 255
 	b := float32(bg.B) / 255
 	luma := 0.2126*r + 0.7152*g + 0.0722*b
 	if luma > 0.5 {
-		return color.NRGBA{R: 13, G: 13, B: 43, A: 255}
+		return color.NRGBA{R: 19, G: 19, B: 22, A: 255}
 	}
 	return color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 }
@@ -171,149 +175,240 @@ func clamp8(v float32) uint8 {
 	return uint8(v)
 }
 
+// withAlpha returns a copy of c with its alpha replaced by a (0–255).
+func withAlpha(c color.NRGBA, a uint8) color.NRGBA {
+	return color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}
+}
+
 // ─── Palette ────────────────────────────────────────────────────────────────
 
-// Palette holds the semantic color set for a single theme mode (dark or light).
+// Palette holds the semantic color set for a single theme mode (dark or
+// light). The "design token" fields (Bg, Bg1, Fg, Accent, etc.) are the
+// canonical names used by new layout code; the legacy fields below them
+// (SidebarBg, Surface, TextPrimary, etc.) are aliases retained so existing
+// widgets keep compiling — they map onto the same underlying colors.
 type Palette struct {
-	// Surface hierarchy
-	SidebarBg       color.NRGBA // deepest — sidebar background
-	ContentBg       color.NRGBA // main content area
-	SurfaceDeep     color.NRGBA // deep elevated surface
-	Surface         color.NRGBA // elevated surface (output areas)
-	SurfaceAlt      color.NRGBA // secondary surface (compact buttons)
-	SurfaceElevated color.NRGBA // modal / dropdown popup background
+	// ── Design tokens ─────────────────────────────────────────────────
+	// Surface hierarchy: Bg flush / Bg1 panels / Bg2 hover-active /
+	// Bg3 input fills.
+	Bg  color.NRGBA
+	Bg1 color.NRGBA
+	Bg2 color.NRGBA
+	Bg3 color.NRGBA
 
-	// Text hierarchy
-	TextPrimary   color.NRGBA // body text
-	TextStrong    color.NRGBA // labels
-	TextSecondary color.NRGBA // secondary labels
-	TextMuted     color.NRGBA // muted text / icons
+	// Lines: Line for muted dividers; LineStrong for input/button borders.
+	Line       color.NRGBA
+	LineStrong color.NRGBA
 
-	// Contrast text on colored surfaces
-	OnPrimary color.NRGBA // text on Primary-colored surfaces
+	// Foreground hierarchy.
+	Fg  color.NRGBA // body text
+	Fg2 color.NRGBA // secondary
+	Fg3 color.NRGBA // muted
 
-	// Brand
-	Brand color.NRGBA // gold accent
+	// Accent (single retro cyan, used sparingly).
+	Accent     color.NRGBA
+	AccentSoft color.NRGBA // tint background
+	AccentLine color.NRGBA // tint border
+	AccentFg   color.NRGBA // text on accent surface
 
-	// Semantic
-	Primary    color.NRGBA // primary action (neon cyan in dark)
-	Danger     color.NRGBA // destructive (hot pink in dark)
-	DangerDeep color.NRGBA // error banner
-	Success    color.NRGBA // success (neon green in dark)
+	// Status: each pair is solid (foreground / dot / border-base) and
+	// soft (background tint).
+	Ok       color.NRGBA
+	OkSoft   color.NRGBA
+	Warn     color.NRGBA
+	WarnSoft color.NRGBA
+	Err      color.NRGBA
+	ErrSoft  color.NRGBA
 
-	// Toast/badge surfaces
-	InfoBg    color.NRGBA
-	InfoFg    color.NRGBA
-	SuccessBg color.NRGBA
-	SuccessFg color.NRGBA
-	DangerBg  color.NRGBA
-	DangerFg  color.NRGBA
+	// Active/hover row tint (semi-transparent — paint over Bg1).
+	RowActive color.NRGBA
 
-	// Structural
-	Border        color.NRGBA // muted border
-	BorderFocused color.NRGBA // focused input border
-	Separator     color.NRGBA // divider line
+	// Modal backdrop overlay.
+	Overlay color.NRGBA
 
-	// Overlay
-	Overlay color.NRGBA // modal backdrop (alpha-blended black)
+	// ── Legacy aliases (back-compat with existing widget code) ───────
+	// Surface aliases.
+	SidebarBg       color.NRGBA // Bg
+	ContentBg       color.NRGBA // Bg
+	SurfaceDeep     color.NRGBA // Bg1
+	Surface         color.NRGBA // Bg1
+	SurfaceAlt      color.NRGBA // Bg2
+	SurfaceElevated color.NRGBA // Bg1
 
-	// Utility
+	// Text aliases.
+	TextPrimary   color.NRGBA // Fg
+	TextStrong    color.NRGBA // Fg
+	TextSecondary color.NRGBA // Fg2
+	TextMuted     color.NRGBA // Fg3
+	OnPrimary     color.NRGBA // AccentFg
+
+	// Brand alias — formerly gold; now the cyan accent.
+	Brand color.NRGBA // Accent
+
+	// Action aliases.
+	Primary    color.NRGBA // Accent
+	Danger     color.NRGBA // Err
+	DangerDeep color.NRGBA // Err
+	Success    color.NRGBA // Ok
+
+	// Banner aliases.
+	InfoBg    color.NRGBA // pre-blended cyan-tinted surface
+	InfoFg    color.NRGBA // Accent
+	SuccessBg color.NRGBA // pre-blended green-tinted surface
+	SuccessFg color.NRGBA // Ok
+	DangerBg  color.NRGBA // pre-blended red-tinted surface
+	DangerFg  color.NRGBA // Err
+
+	// Structural aliases.
+	Border        color.NRGBA // Line
+	BorderFocused color.NRGBA // Accent
+	Separator     color.NRGBA // Line
+
+	// Utility.
 	White color.NRGBA
 }
 
-// LightPalette returns the light-mode palette: warm white surfaces, navy
-// text, and the same accent hues (teal primary, pink danger, gold brand,
-// green success) tuned for contrast on a light background.
+// LightPalette returns the light-mode palette: warm whites + neutral grays
+// with the same retro-cyan accent.
 func LightPalette() *Palette {
-	primary := color.NRGBA{R: 0, G: 122, B: 153, A: 255} // deep teal
-	border := color.NRGBA{R: 210, G: 214, B: 230, A: 255}
+	bg := color.NRGBA{R: 254, G: 254, B: 254, A: 255}
+	bg1 := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	bg2 := color.NRGBA{R: 244, G: 244, B: 246, A: 255}
+	bg3 := color.NRGBA{R: 233, G: 233, B: 236, A: 255}
+
+	line := color.NRGBA{R: 0, G: 0, B: 0, A: 20}       // ~8% black
+	lineStrong := color.NRGBA{R: 0, G: 0, B: 0, A: 36} // ~14% black
+
+	fg := color.NRGBA{R: 19, G: 19, B: 22, A: 255}
+	fg2 := color.NRGBA{R: 63, G: 63, B: 70, A: 255}
+	fg3 := color.NRGBA{R: 107, G: 107, B: 115, A: 255}
+
+	accent := color.NRGBA{R: 79, G: 177, B: 199, A: 255}
+	accentSoft := withAlpha(accent, 31) // 12%
+	accentLine := withAlpha(accent, 82) // 32%
+	accentFg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+
+	ok := color.NRGBA{R: 26, G: 159, B: 109, A: 255}
+	okSoft := withAlpha(ok, 31)
+	warn := color.NRGBA{R: 181, G: 138, B: 44, A: 255}
+	warnSoft := withAlpha(warn, 36)
+	errc := color.NRGBA{R: 188, G: 44, B: 44, A: 255}
+	errSoft := withAlpha(errc, 31)
+
+	rowActive := color.NRGBA{R: 0, G: 0, B: 0, A: 15} // 6% black
+	overlay := color.NRGBA{R: 0, G: 0, B: 0, A: 96}
+
+	// Pre-blended banner backgrounds (alpha-flattened over Bg1).
+	infoBg := color.NRGBA{R: 233, G: 245, B: 248, A: 255}
+	successBg := color.NRGBA{R: 226, G: 245, B: 235, A: 255}
+	dangerBg := color.NRGBA{R: 250, G: 230, B: 230, A: 255}
+
 	return &Palette{
-		SidebarBg:       color.NRGBA{R: 240, G: 241, B: 248, A: 255},
-		ContentBg:       color.NRGBA{R: 250, G: 250, B: 253, A: 255},
-		SurfaceDeep:     color.NRGBA{R: 235, G: 236, B: 244, A: 255},
-		Surface:         color.NRGBA{R: 255, G: 255, B: 255, A: 255},
-		SurfaceAlt:      color.NRGBA{R: 244, G: 245, B: 251, A: 255},
-		SurfaceElevated: color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		Bg: bg, Bg1: bg1, Bg2: bg2, Bg3: bg3,
+		Line: line, LineStrong: lineStrong,
+		Fg: fg, Fg2: fg2, Fg3: fg3,
+		Accent: accent, AccentSoft: accentSoft, AccentLine: accentLine, AccentFg: accentFg,
+		Ok: ok, OkSoft: okSoft,
+		Warn: warn, WarnSoft: warnSoft,
+		Err: errc, ErrSoft: errSoft,
+		RowActive: rowActive,
+		Overlay:   overlay,
 
-		TextPrimary:   color.NRGBA{R: 13, G: 13, B: 43, A: 255},
-		TextStrong:    color.NRGBA{R: 24, G: 24, B: 64, A: 255},
-		TextSecondary: color.NRGBA{R: 80, G: 80, B: 120, A: 255},
-		TextMuted:     color.NRGBA{R: 130, G: 130, B: 160, A: 255},
-
-		OnPrimary: color.NRGBA{R: 255, G: 255, B: 255, A: 255},
-
-		Brand: color.NRGBA{R: 200, G: 150, B: 0, A: 255}, // dimmed gold
-
-		Primary:    primary,
-		Danger:     color.NRGBA{R: 200, G: 30, B: 90, A: 255},
-		DangerDeep: color.NRGBA{R: 160, G: 20, B: 70, A: 255},
-		Success:    color.NRGBA{R: 0, G: 150, B: 90, A: 255},
-
-		InfoBg:    color.NRGBA{R: 224, G: 242, B: 254, A: 255},
-		InfoFg:    color.NRGBA{R: 14, G: 116, B: 144, A: 255},
-		SuccessBg: color.NRGBA{R: 220, G: 252, B: 231, A: 255},
-		SuccessFg: color.NRGBA{R: 22, G: 101, B: 52, A: 255},
-		DangerBg:  color.NRGBA{R: 254, G: 226, B: 226, A: 255},
-		DangerFg:  color.NRGBA{R: 153, G: 27, B: 27, A: 255},
-
-		Border:        border,
-		BorderFocused: primary,
-		Separator:     border,
-
-		Overlay: color.NRGBA{R: 0, G: 0, B: 0, A: 96},
-
-		White: color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		// Aliases.
+		SidebarBg: bg, ContentBg: bg,
+		SurfaceDeep: bg1, Surface: bg1,
+		SurfaceAlt: bg2, SurfaceElevated: bg1,
+		TextPrimary: fg, TextStrong: fg, TextSecondary: fg2, TextMuted: fg3,
+		OnPrimary:  accentFg,
+		Brand:      accent,
+		Primary:    accent,
+		Danger:     errc,
+		DangerDeep: errc,
+		Success:    ok,
+		InfoBg:     infoBg, InfoFg: accent,
+		SuccessBg: successBg, SuccessFg: ok,
+		DangerBg: dangerBg, DangerFg: errc,
+		Border:        line,
+		BorderFocused: accent,
+		Separator:     line,
+		White:         color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 	}
 }
 
-// DarkPalette returns the hacktoberfest-inspired dark palette
-// (navy backgrounds + neon cyan primary + gold brand).
+// DarkPalette returns the dark-mode palette: deep neutral grays with the
+// same retro-cyan accent.
 func DarkPalette() *Palette {
-	primary := color.NRGBA{R: 0, G: 212, B: 255, A: 255} // #00d4ff
-	border := color.NRGBA{R: 53, G: 53, B: 102, A: 255}  // #353566
+	bg := color.NRGBA{R: 14, G: 15, B: 18, A: 255}
+	bg1 := color.NRGBA{R: 22, G: 23, B: 27, A: 255}
+	bg2 := color.NRGBA{R: 28, G: 29, B: 34, A: 255}
+	bg3 := color.NRGBA{R: 37, G: 38, B: 44, A: 255}
+
+	line := color.NRGBA{R: 255, G: 255, B: 255, A: 18}       // ~7% white
+	lineStrong := color.NRGBA{R: 255, G: 255, B: 255, A: 33} // ~13% white
+
+	fg := color.NRGBA{R: 244, G: 244, B: 246, A: 255}
+	fg2 := color.NRGBA{R: 190, G: 190, B: 194, A: 255}
+	fg3 := color.NRGBA{R: 151, G: 151, B: 156, A: 255}
+
+	accent := color.NRGBA{R: 79, G: 177, B: 199, A: 255}
+	accentSoft := withAlpha(accent, 31)
+	accentLine := withAlpha(accent, 82)
+	accentFg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+
+	ok := color.NRGBA{R: 79, G: 203, B: 139, A: 255}
+	okSoft := withAlpha(ok, 41)
+	warn := color.NRGBA{R: 221, G: 178, B: 99, A: 255}
+	warnSoft := withAlpha(warn, 41)
+	errc := color.NRGBA{R: 229, G: 94, B: 84, A: 255}
+	errSoft := withAlpha(errc, 41)
+
+	rowActive := color.NRGBA{R: 255, G: 255, B: 255, A: 13} // ~5% white
+	overlay := color.NRGBA{R: 0, G: 0, B: 0, A: 160}
+
+	// Pre-blended banner backgrounds for dark mode.
+	infoBg := color.NRGBA{R: 28, G: 44, B: 53, A: 255}
+	successBg := color.NRGBA{R: 28, G: 50, B: 38, A: 255}
+	dangerBg := color.NRGBA{R: 53, G: 28, B: 28, A: 255}
+
 	return &Palette{
-		SidebarBg:       color.NRGBA{R: 7, G: 7, B: 26, A: 255},   // #07071a
-		ContentBg:       color.NRGBA{R: 13, G: 13, B: 43, A: 255}, // #0d0d2b
-		SurfaceDeep:     color.NRGBA{R: 18, G: 18, B: 42, A: 255}, // #12122a
-		Surface:         color.NRGBA{R: 26, G: 26, B: 62, A: 255}, // #1a1a3e
-		SurfaceAlt:      color.NRGBA{R: 42, G: 42, B: 80, A: 255}, // #2a2a50
-		SurfaceElevated: color.NRGBA{R: 37, G: 37, B: 80, A: 255}, // #252550
+		Bg: bg, Bg1: bg1, Bg2: bg2, Bg3: bg3,
+		Line: line, LineStrong: lineStrong,
+		Fg: fg, Fg2: fg2, Fg3: fg3,
+		Accent: accent, AccentSoft: accentSoft, AccentLine: accentLine, AccentFg: accentFg,
+		Ok: ok, OkSoft: okSoft,
+		Warn: warn, WarnSoft: warnSoft,
+		Err: errc, ErrSoft: errSoft,
+		RowActive: rowActive,
+		Overlay:   overlay,
 
-		TextPrimary:   color.NRGBA{R: 232, G: 232, B: 255, A: 255}, // #e8e8ff
-		TextStrong:    color.NRGBA{R: 200, G: 200, B: 230, A: 255}, // #c8c8e6
-		TextSecondary: color.NRGBA{R: 144, G: 144, B: 200, A: 255}, // #9090c8
-		TextMuted:     color.NRGBA{R: 120, G: 120, B: 180, A: 255}, // #7878b4
-
-		OnPrimary: color.NRGBA{R: 13, G: 13, B: 43, A: 255}, // navy dark
-
-		Brand: color.NRGBA{R: 255, G: 215, B: 0, A: 255}, // #ffd700
-
-		Primary:    primary,
-		Danger:     color.NRGBA{R: 255, G: 45, B: 117, A: 255}, // #ff2d75
-		DangerDeep: color.NRGBA{R: 180, G: 30, B: 80, A: 255},  // #b41e50
-		Success:    color.NRGBA{R: 0, G: 230, B: 118, A: 255},  // #00e676
-
-		InfoBg:    color.NRGBA{R: 13, G: 33, B: 55, A: 255},    // #0d2137
-		InfoFg:    color.NRGBA{R: 79, G: 195, B: 247, A: 255},  // #4fc3f7
-		SuccessBg: color.NRGBA{R: 13, G: 55, B: 33, A: 255},    // #0d3721
-		SuccessFg: color.NRGBA{R: 105, G: 240, B: 174, A: 255}, // #69f0ae
-		DangerBg:  color.NRGBA{R: 55, G: 13, B: 25, A: 255},    // #370d19
-		DangerFg:  color.NRGBA{R: 255, G: 82, B: 82, A: 255},   // #ff5252
-
-		Border:        border,
-		BorderFocused: primary,
-		Separator:     border,
-
-		Overlay: color.NRGBA{R: 0, G: 0, B: 0, A: 160},
-
-		White: color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		// Aliases.
+		SidebarBg: bg, ContentBg: bg,
+		SurfaceDeep: bg1, Surface: bg1,
+		SurfaceAlt: bg2, SurfaceElevated: bg1,
+		TextPrimary: fg, TextStrong: fg, TextSecondary: fg2, TextMuted: fg3,
+		OnPrimary:  accentFg,
+		Brand:      accent,
+		Primary:    accent,
+		Danger:     errc,
+		DangerDeep: errc,
+		Success:    ok,
+		InfoBg:     infoBg, InfoFg: accent,
+		SuccessBg: successBg, SuccessFg: ok,
+		DangerBg: dangerBg, DangerFg: errc,
+		Border:        line,
+		BorderFocused: accent,
+		Separator:     line,
+		White:         color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 	}
 }
 
 // ─── Spacing ────────────────────────────────────────────────────────────────
 
-// Spacing is the padding/margin scale. Minimum 6dp for visual breathing room.
+// Spacing is the padding/margin scale, calibrated to the design's em rhythm
+// at an 18px base (so 1em ≈ 18dp). XS≈0.35em, SM≈0.55em, MD≈0.85em,
+// LG≈1.1em, XL≈1.55em.
 type Spacing struct {
+	XXS unit.Dp
 	XS  unit.Dp
 	SM  unit.Dp
 	MD  unit.Dp
@@ -324,19 +419,40 @@ type Spacing struct {
 
 func DefaultSpacing() *Spacing {
 	return &Spacing{
+		XXS: unit.Dp(4),
 		XS:  unit.Dp(6),
 		SM:  unit.Dp(10),
-		MD:  unit.Dp(16),
+		MD:  unit.Dp(15),
 		LG:  unit.Dp(20),
-		XL:  unit.Dp(32),
+		XL:  unit.Dp(28),
 		XXL: unit.Dp(40),
 	}
 }
 
 // ─── Text Sizes ─────────────────────────────────────────────────────────────
 
-// TextSizes is the typography scale. Minimum 18sp for accessibility.
+// TextSizes is the typography scale, em-based at an 18sp base.
+//
+//	Micro   12sp — uppercase mono labels (~0.65em)
+//	Mono    13sp — mono captions, status, domain (~0.72em)
+//	MonoSM  14sp — mono values (~0.78em)
+//	Body    15sp — body text, nav items (~0.85em)
+//	Tab     15sp — tab labels (~0.82em, rounded up)
+//	Header  17sp — detail header name, section heading (~0.92em)
+//	H1      22sp — modal titles
+//
+// XS/SM/Base/LG are aliases retained for back-compat with existing widgets.
 type TextSizes struct {
+	Micro   unit.Sp
+	Mono    unit.Sp
+	MonoSM  unit.Sp
+	Body    unit.Sp
+	Tab     unit.Sp
+	Header  unit.Sp
+	Section unit.Sp
+	H1      unit.Sp
+
+	// Legacy aliases.
 	XS   unit.Sp
 	SM   unit.Sp
 	Base unit.Sp
@@ -344,51 +460,89 @@ type TextSizes struct {
 }
 
 func DefaultTextSizes() *TextSizes {
+	micro := unit.Sp(12)
+	mono := unit.Sp(13)
+	monoSM := unit.Sp(14)
+	body := unit.Sp(15)
+	tab := unit.Sp(15)
+	header := unit.Sp(17)
+	section := unit.Sp(17)
+	h1 := unit.Sp(22)
 	return &TextSizes{
-		XS:   unit.Sp(18),
-		SM:   unit.Sp(18),
-		Base: unit.Sp(20),
-		LG:   unit.Sp(24),
+		Micro: micro, Mono: mono, MonoSM: monoSM,
+		Body: body, Tab: tab,
+		Header: header, Section: section,
+		H1: h1,
+
+		XS:   mono,
+		SM:   monoSM,
+		Base: body,
+		LG:   section,
 	}
 }
 
 // ─── Radii ──────────────────────────────────────────────────────────────────
 
-// Radii is the corner-radius scale.
+// Radii is the corner-radius scale: R1 (4dp) for tight chips, R2 (6dp) for
+// buttons/inputs, R3 (10dp) for panels, R4 (14dp) for the outer window.
+// SM/MD/LG aliases retained for back-compat.
 type Radii struct {
+	R1 unit.Dp
+	R2 unit.Dp
+	R3 unit.Dp
+	R4 unit.Dp
+
 	SM unit.Dp
 	MD unit.Dp
 	LG unit.Dp
 }
 
 func DefaultRadii() *Radii {
+	r1 := unit.Dp(4)
+	r2 := unit.Dp(6)
+	r3 := unit.Dp(10)
+	r4 := unit.Dp(14)
 	return &Radii{
-		SM: unit.Dp(6),
-		MD: unit.Dp(8),
-		LG: unit.Dp(12),
+		R1: r1, R2: r2, R3: r3, R4: r4,
+		SM: r2, MD: r2, LG: r3,
 	}
 }
 
 // ─── Dimensions ─────────────────────────────────────────────────────────────
 
-// Dims holds fixed layout dimensions (sidebar width, modal width, loader
-// sizes, etc.) that are independent of theme mode.
+// Dims holds fixed layout dimensions independent of theme mode.
+//
+//	RailExpanded   — Column 1 nav rail width, expanded.
+//	RailCollapsed  — Column 1 nav rail width, collapsed (icons only).
+//	SitesListWidth — Column 2 sites-list panel width.
 type Dims struct {
-	SidebarWidth  unit.Dp
-	ModalWidth    unit.Dp
-	LoaderSize    unit.Dp
-	LoaderSizeSM  unit.Dp
-	OutputAreaMax unit.Dp
-	LabelColWidth unit.Dp
+	RailExpanded   unit.Dp
+	RailCollapsed  unit.Dp
+	SitesListWidth unit.Dp
+	ModalWidth     unit.Dp
+	LoaderSize     unit.Dp
+	LoaderSizeSM   unit.Dp
+	OutputAreaMax  unit.Dp
+	LabelColWidth  unit.Dp
+
+	// Legacy alias for the old single-sidebar layout.
+	SidebarWidth unit.Dp
 }
 
 func DefaultDims() *Dims {
+	rail := unit.Dp(216)
+	railSm := unit.Dp(80)
+	listW := unit.Dp(360)
 	return &Dims{
-		SidebarWidth:  unit.Dp(300),
-		ModalWidth:    unit.Dp(560),
-		LoaderSize:    unit.Dp(40),
-		LoaderSizeSM:  unit.Dp(32),
-		OutputAreaMax: unit.Dp(350),
-		LabelColWidth: unit.Dp(140),
+		RailExpanded:   rail,
+		RailCollapsed:  railSm,
+		SitesListWidth: listW,
+		ModalWidth:     unit.Dp(560),
+		LoaderSize:     unit.Dp(40),
+		LoaderSizeSM:   unit.Dp(32),
+		OutputAreaMax:  unit.Dp(350),
+		LabelColWidth:  unit.Dp(140),
+
+		SidebarWidth: listW,
 	}
 }

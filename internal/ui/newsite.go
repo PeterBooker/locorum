@@ -37,6 +37,7 @@ type NewSiteModal struct {
 	browseDirBtn widget.Clickable
 	createBtn    widget.Clickable
 	cancelBtn    widget.Clickable
+	closeBtn     widget.Clickable
 
 	keys *ModalFocus
 	anim *modalShowState
@@ -69,7 +70,7 @@ func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *Notification
 func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 	keys := ProcessModalKeys(gtx, m.keys.Tag)
 
-	if m.cancelBtn.Clicked(gtx) || keys.Escape {
+	if m.cancelBtn.Clicked(gtx) || m.closeBtn.Clicked(gtx) || keys.Escape {
 		m.state.SetShowNewSiteModal(false)
 		m.keys.OnHide()
 		m.anim.Hide()
@@ -150,10 +151,25 @@ func (m *NewSiteModal) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 
 func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Title
+		// Title + close
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H5(th.Theme, "Create New Site")
-			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, lbl.Layout)
+			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(material.H5(th.Theme, "Create New Site").Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Dimensions{Size: gtx.Constraints.Min}
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return material.Clickable(gtx, &m.closeBtn, func(gtx layout.Context) layout.Dimensions {
+							return RoundedFill(gtx, th.Color.Bg1, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+								return layout.UniformInset(unit.Dp(6)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return IconClose(gtx, th, unit.Dp(16), th.Color.Fg2)
+								})
+							})
+						})
+					}),
+				)
+			})
 		}),
 		// Site Name
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {

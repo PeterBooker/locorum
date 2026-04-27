@@ -17,6 +17,15 @@ import (
 // log retains the full output).
 const MaxHookOutputLinesPerSite = 200
 
+// NavView identifies which root area is shown in columns 2+3. The nav rail
+// in column 1 toggles this; the chrome adapts accordingly.
+type NavView string
+
+const (
+	NavViewSites    NavView = "sites"
+	NavViewSettings NavView = "settings"
+)
+
 // UIState holds all mutable UI state, protected by a mutex for thread-safe
 // access from background goroutines (Docker operations, site loading, etc.).
 type UIState struct {
@@ -26,6 +35,10 @@ type UIState struct {
 	sites      []types.Site
 	selectedID string
 	searchTerm string
+
+	// Navigation
+	navView      NavView
+	navCollapsed bool
 
 	// Modal state
 	showNewSiteModal bool
@@ -86,7 +99,29 @@ type UIState struct {
 	// first OnStepStart callback; reset by ResetLifecycleProgress at the
 	// start of a new lifecycle method (StartSite, StopSite, etc).
 	lifecycleState map[string]*lifecycleSiteState
+
+	// Aggregate health of the global services (router, mail, adminer).
+	// Polled from the main goroutine; written via SetServicesHealth.
+	servicesHealth ServicesHealth
 }
+
+// ServicesHealth captures the rolled-up health of Locorum's global
+// services. Status is the worst observed state across the three; Detail
+// is a human-readable suffix shown in the top status bar.
+type ServicesHealth struct {
+	Status ServicesHealthStatus
+	Detail string
+}
+
+// ServicesHealthStatus is a tri-state for the global-services bar.
+type ServicesHealthStatus int
+
+const (
+	ServicesHealthUnknown ServicesHealthStatus = iota
+	ServicesHealthHealthy
+	ServicesHealthDegraded
+	ServicesHealthDown
+)
 
 // lifecycleSiteState captures the progress of a site lifecycle Plan.
 type lifecycleSiteState struct {
@@ -121,10 +156,44 @@ type hookLine struct {
 
 func NewUIState() *UIState {
 	return &UIState{
+		navView:        NavViewSites,
 		siteToggling:   make(map[string]bool),
 		hookState:      make(map[string]*hookSiteState),
 		lifecycleState: make(map[string]*lifecycleSiteState),
 	}
+}
+
+// ─── Navigation ─────────────────────────────────────────────────────────────
+
+// NavView returns the active root view ("sites" or "settings").
+func (s *UIState) NavView() NavView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.navView
+}
+
+// SetNavView switches the active root view. Triggers a redraw so the chrome
+// can swap columns 2 and 3 immediately.
+func (s *UIState) SetNavView(v NavView) {
+	s.mu.Lock()
+	s.navView = v
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// NavCollapsed reports whether the nav rail is in icon-only collapsed mode.
+func (s *UIState) NavCollapsed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.navCollapsed
+}
+
+// SetNavCollapsed toggles the rail's collapsed state.
+func (s *UIState) SetNavCollapsed(c bool) {
+	s.mu.Lock()
+	s.navCollapsed = c
+	s.mu.Unlock()
+	s.Invalidate()
 }
 
 // ─── Window ─────────────────────────────────────────────────────────────────
@@ -144,6 +213,27 @@ func (s *UIState) Invalidate() {
 	if w != nil {
 		w.Invalidate()
 	}
+}
+
+// ─── Services health ────────────────────────────────────────────────────────
+
+// SetServicesHealth replaces the rolled-up global-services health snapshot
+// shown in the top status bar.
+func (s *UIState) SetServicesHealth(h ServicesHealth) {
+	s.mu.Lock()
+	changed := s.servicesHealth != h
+	s.servicesHealth = h
+	s.mu.Unlock()
+	if changed {
+		s.Invalidate()
+	}
+}
+
+// ServicesHealthSnapshot returns the current global-services health.
+func (s *UIState) ServicesHealthSnapshot() ServicesHealth {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.servicesHealth
 }
 
 // ─── Sites ──────────────────────────────────────────────────────────────────
