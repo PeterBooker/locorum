@@ -91,6 +91,7 @@ dist-windows-arm64: appicon.png
 
 msi-windows-amd64: dist-windows-amd64
 	$(WIX_BIN) build -arch x64 \
+		-ext WixToolset.UI.wixext \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-amd64.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-amd64.msi \
@@ -98,6 +99,7 @@ msi-windows-amd64: dist-windows-amd64
 
 msi-windows-arm64: dist-windows-arm64
 	$(WIX_BIN) build -arch arm64 \
+		-ext WixToolset.UI.wixext \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-arm64.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-arm64.msi \

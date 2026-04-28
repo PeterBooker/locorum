@@ -103,10 +103,14 @@ func RunHostStream(ctx context.Context, opts HostExecOptions, onLine HostLineHan
 }
 
 // buildHostCommand returns an *exec.Cmd that will run command via the host's
-// shell. It uses bash on Unix/WSL, cmd.exe on native Windows.
+// shell. It uses bash on Unix/WSL, cmd.exe on native Windows. The cmd.exe
+// branch sets the CREATE_NO_WINDOW flag so the GUI process does not flash a
+// transient console window for each task.
 func buildHostCommand(ctx context.Context, command string) *exec.Cmd {
 	if runtime.GOOS == "windows" && !isWSL() {
-		return exec.CommandContext(ctx, "cmd.exe", "/C", command)
+		cmd := exec.CommandContext(ctx, "cmd.exe", "/C", command)
+		HideConsole(cmd)
+		return cmd
 	}
 	return exec.CommandContext(ctx, "bash", "-c", command)
 }

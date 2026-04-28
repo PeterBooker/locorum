@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 // DetectSystemTheme inspects the host OS for a light/dark preference.
@@ -62,10 +64,12 @@ func detectMacOS() ThemeMode {
 }
 
 func detectWindows() ThemeMode {
-	out, err := exec.Command("reg", "query",
+	cmd := exec.Command("reg", "query",
 		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
 		"/v", "AppsUseLightTheme",
-	).Output()
+	)
+	utils.HideConsole(cmd)
+	out, err := cmd.Output()
 	if err == nil {
 		// Output contains "AppsUseLightTheme    REG_DWORD    0x0" (dark) or 0x1 (light)
 		s := string(out)

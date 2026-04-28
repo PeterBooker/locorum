@@ -123,8 +123,12 @@ jobs:
         run: go install gioui.org/cmd/gogio@v0.9.0
 
       - name: Install WiX
-        # .NET SDK is preinstalled on windows-latest runners.
-        run: dotnet tool install --global wix --version 5.0.2
+        # .NET SDK is preinstalled on windows-latest runners. The UI
+        # extension provides WixUI_Minimal, referenced by locorum.wxs.
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+        shell: pwsh
 
       - name: Build Windows MSIs (amd64 + arm64)
         run: |
