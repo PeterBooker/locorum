@@ -36,6 +36,21 @@ func PHPUserGroup() (int, int) {
 	return uid, gid
 }
 
+// normaliseDocroot collapses the various forms of "WordPress is at the bind
+// mount root" — empty string, "/", "." — into a canonical empty value, and
+// strips a leading slash from explicit subdirectories so callers can
+// concatenate without doubling slashes.
+func normaliseDocroot(publicDir string) string {
+	d := publicDir
+	if d == "" || d == "/" || d == "." {
+		return ""
+	}
+	for len(d) > 0 && d[0] == '/' {
+		d = d[1:]
+	}
+	return d
+}
+
 // hardenedSecurity is the default security profile applied by every spec
 // builder. CapDrop=ALL + NoNewPrivileges=true is the production-grade
 // baseline; per-role caps are added back via WithCapAdd.
@@ -158,6 +173,10 @@ func WebSpec(site *types.Site, homeDir string) ContainerSpec {
 // PHPSpec builds the per-site PHP-FPM container spec. Database credentials
 // flow through EnvSecrets so the password is redacted from any error
 // message Locorum itself emits.
+//
+// LOCORUM_* env vars are read at PHP request time by wp-config-locorum.php
+// to resolve WP_HOME/WP_SITEURL. They participate in the container's
+// config hash, so a domain or docroot change forces a recreate.
 func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 	name := SiteContainerName(site.Slug, "php")
 	netName := SiteNetworkName(site.Slug)
@@ -175,6 +194,11 @@ func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 			"MYSQL_DATABASE=wordpress",
 			"MYSQL_USER=wordpress",
 			"WP_CLI_ALLOW_ROOT=true",
+			"LOCORUM_PRIMARY_URL=https://" + site.Domain,
+			"LOCORUM_DOCROOT=" + normaliseDocroot(site.PublicDir),
+			"LOCORUM_APPROOT=/var/www/html",
+			"LOCORUM_SITE_SLUG=" + site.Slug,
+			"LOCORUM_MULTISITE=" + site.Multisite,
 		},
 		EnvSecrets: []EnvSecret{
 			{Key: "MYSQL_PASSWORD", Value: site.DBPassword},

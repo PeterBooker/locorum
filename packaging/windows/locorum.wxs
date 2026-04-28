@@ -6,6 +6,7 @@
   source path and product version are passed in as preprocessor variables:
 
     wix build -arch x64 \
+      -ext WixToolset.UI.wixext \
       -d Version=0.1.0.0 \
       -d SourceExe=build/dist/Locorum-windows-amd64.exe \
       -o build/dist/Locorum-0.1.0-windows-amd64.msi \
@@ -15,7 +16,8 @@
   Do NOT change it once a release ships, or upgrades will silently
   install a second copy alongside the old one.
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
     Name="Locorum"
     Manufacturer="Peter Booker"
@@ -32,6 +34,17 @@
       DowngradeErrorMessage="A newer version of Locorum is already installed." />
 
     <Media Id="1" Cabinet="locorum.cab" EmbedCab="yes" />
+
+    <!-- Add/Remove Programs cosmetics. ARPPRODUCTICON pulls the icon from
+         the installed exe (gogio embedded it). The URL fields are picked
+         up by Windows Settings > Apps so the user has a way back to the
+         project page for support / uninstall help. -->
+    <Icon Id="LocorumIcon.exe" SourceFile="$(SourceExe)" />
+    <Property Id="ARPPRODUCTICON" Value="LocorumIcon.exe" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/PeterBooker/locorum" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/PeterBooker/locorum" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Locorum">
@@ -58,9 +71,36 @@
       </Component>
     </StandardDirectory>
 
+    <!-- Per-user Desktop shortcut. Lives under HKCU rather than HKLM so
+         each user on a shared machine gets their own shortcut on first
+         launch via advertised-shortcut semantics. -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="9f7f4a34-2d1c-4e1f-9d62-2a3f3b7c6e2a">
+        <Shortcut Id="LocorumDesktop"
+                  Name="Locorum"
+                  Description="Local WordPress dev environments"
+                  Target="[INSTALLFOLDER]Locorum.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\PeterBooker\Locorum"
+                       Name="desktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
     <Feature Id="Main" Title="Locorum" Level="1">
       <ComponentRef Id="MainExe" />
       <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
     </Feature>
+
+    <!-- WixUI_Minimal: a single welcome dialog that displays the license
+         and an Install button. Without this reference the MSI runs with
+         no progress UI beyond the UAC prompt, which is jarring for end
+         users. Requires `-ext WixToolset.UI.wixext` at build time. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="packaging/windows/license.rtf" />
   </Package>
 </Wix>

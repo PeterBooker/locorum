@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 // Mkcert issues per-site and per-service certs by shelling out to the mkcert
@@ -67,7 +69,9 @@ func (m *Mkcert) detect(ctx context.Context) Status {
 		}
 	}
 
-	out, err := exec.CommandContext(ctx, "mkcert", "-CAROOT").Output()
+	cmd := exec.CommandContext(ctx, "mkcert", "-CAROOT")
+	utils.HideConsole(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return Status{
 			Installed: true,
@@ -153,7 +157,9 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 
 	args := []string{"-cert-file", tmpCert, "-key-file", tmpKey}
 	args = append(args, spec.Hostnames...)
-	if out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput(); err != nil {
+	issueCmd := exec.CommandContext(ctx, bin, args...)
+	utils.HideConsole(issueCmd)
+	if out, err := issueCmd.CombinedOutput(); err != nil {
 		return CertPath{}, fmt.Errorf("mkcert: %w; output: %s", err, strings.TrimSpace(string(out)))
 	}
 

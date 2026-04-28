@@ -303,6 +303,12 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 				},
 			},
 			&sitesteps.FuncStep{
+				Label: "ensure-wp-config",
+				Do: func(_ context.Context) error {
+					return sm.EnsureWPConfig(site)
+				},
+			},
+			&sitesteps.FuncStep{
 				Label: "generate-site-config",
 				Do: func(_ context.Context) error {
 					return sm.generateWebServerConfig(site)
@@ -456,36 +462,15 @@ func (sm *SiteManager) ensureMultisiteWithHooks(ctx context.Context, site *types
 }
 
 func (sm *SiteManager) ensureMultisite(ctx context.Context, site *types.Site) error {
-	containerName := docker.SiteContainerName(site.Slug, "php")
-
-	if _, err := sm.d.ExecInContainer(ctx, containerName, []string{"wp", "core", "is-installed", "--network"}); err == nil {
+	if _, network := sm.wpIsInstalled(ctx, site); network {
 		return nil
 	}
-
-	if _, err := sm.d.ExecInContainer(ctx, containerName, []string{"wp", "core", "is-installed"}); err != nil {
-		_, err = sm.d.ExecInContainer(ctx, containerName, []string{
-			"wp", "core", "install",
-			"--url=https://" + site.Domain,
-			"--title=" + site.Name,
-			"--admin_user=admin",
-			"--admin_password=admin",
-			"--admin_email=admin@" + site.Domain,
-			"--skip-email",
-		})
-		if err != nil {
-			return fmt.Errorf("wp core install: %w", err)
-		}
+	if err := sm.wpInstallDefault(ctx, site); err != nil {
+		return fmt.Errorf("wp core install: %w", err)
 	}
-
-	args := []string{"wp", "core", "multisite-convert", "--title=" + site.Name}
-	if site.Multisite == "subdomain" {
-		args = append(args, "--subdomains")
-	}
-
-	if _, err := sm.d.ExecInContainer(ctx, containerName, args); err != nil {
+	if err := sm.wpMultisiteConvert(ctx, site, site.Multisite); err != nil {
 		return fmt.Errorf("multisite convert: %w", err)
 	}
-
 	return nil
 }
 
@@ -545,6 +530,12 @@ type DeleteOptions struct {
 	// PurgeVolume removes the database data volume too. Default false —
 	// volumes survive deletion so users can recover sites or reuse data.
 	PurgeVolume bool
+
+	// SkipSnapshot disables the automatic pre-delete database snapshot.
+	// Default false — every delete on a running site emits a snapshot to
+	// ~/.locorum/snapshots/ first. Set true when the caller has already
+	// taken a snapshot or is intentionally discarding data.
+	SkipSnapshot bool
 }
 
 func (sm *SiteManager) DeleteSite(ctx context.Context, id string) error {
@@ -575,13 +566,34 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 
 	containers := specNames(sm.serviceSpecs(site))
 
-	steps := []orch.Step{
+	var steps []orch.Step
+	if !opts.SkipSnapshot && site.Started {
+		// Best-effort snapshot. Captured BEFORE containers stop so the
+		// DB is reachable. A snapshot failure is logged but does NOT
+		// abort the delete — refusing to delete on a snapshot error
+		// would strand the user with an undeletable site (e.g. if the
+		// DB is corrupt). The snapshot label is "pre_delete" so it's
+		// easy to find in ListSnapshots.
+		steps = append(steps, &sitesteps.FuncStep{
+			Label: "auto-snapshot",
+			Do: func(ctx context.Context) error {
+				path, err := sm.snapshotLocked(ctx, site, "pre_delete")
+				if err != nil {
+					slog.Warn("auto-snapshot before delete failed", "site", site.Slug, "err", err.Error())
+					return nil
+				}
+				slog.Info("auto-snapshot before delete written", "path", path)
+				return nil
+			},
+		})
+	}
+	steps = append(steps,
 		&sitesteps.StopContainersStep{Engine: sm.d, Containers: containers},
 		&sitesteps.RemoveContainersStep{Engine: sm.d, Containers: containers},
 		&sitesteps.RemoveRoutesStep{Router: sm.rtr, Slug: site.Slug},
 		&sitesteps.RemoveSiteConfigsStep{HomeDir: sm.homeDir, Site: site},
 		&sitesteps.RemoveNetworkStep{Engine: sm.d, Site: site},
-	}
+	)
 	if opts.PurgeVolume {
 		steps = append(steps, &sitesteps.PurgeVolumeStep{Engine: sm.d, Site: site})
 	}
@@ -920,20 +932,15 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		time.Sleep(5 * time.Second)
 
 		dumpPath := filepath.Join(newFilesDir, "locorum-clone-dump.sql")
-		if err := os.WriteFile(dumpPath, []byte(dbDump), 0666); err != nil {
+		if err := os.WriteFile(dumpPath, []byte(dbDump), 0o666); err != nil {
 			slog.Warn("Failed to write clone dump file: " + err.Error())
 		} else {
-			phpContainer := docker.SiteContainerName(newSlug, "php")
-			if _, err := sm.d.ExecInContainer(ctx, phpContainer, []string{
-				"wp", "db", "import", "/var/www/html/locorum-clone-dump.sql",
-			}); err != nil {
+			if _, err := sm.wpDBImport(ctx, &newSite, "/var/www/html/locorum-clone-dump.sql"); err != nil {
 				slog.Warn("DB import failed during clone: " + err.Error())
 			}
-			_, _ = sm.d.ExecInContainer(ctx, phpContainer, []string{
-				"wp", "search-replace",
-				"https://" + site.Domain, "https://" + newDomain,
-				"--all-tables",
-			})
+			if _, err := sm.wpSearchReplace(ctx, &newSite, "https://"+site.Domain, "https://"+newDomain); err != nil {
+				slog.Warn("Search-replace failed during clone: " + err.Error())
+			}
 			os.Remove(dumpPath)
 		}
 	}
