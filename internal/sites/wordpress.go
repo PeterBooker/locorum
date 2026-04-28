@@ -19,6 +19,11 @@ const wordpressDownloadURL = "https://wordpress.org/latest.tar.gz"
 
 // ensureWordPress checks if the site's public directory contains WordPress.
 // If the directory is empty, it downloads and extracts WordPress into it.
+//
+// Ambiguity rule (LEARNINGS.md §3.3): if wp-settings.php is found in more
+// than one location under the docroot, abort with an explicit error rather
+// than guessing which install to use. The user must remove the duplicate
+// or set the site's PublicDir to disambiguate.
 func (sm *SiteManager) ensureWordPress(site *types.Site) error {
 	targetDir := site.FilesDir
 	if site.PublicDir != "" && site.PublicDir != "/" {
@@ -29,11 +34,24 @@ func (sm *SiteManager) ensureWordPress(site *types.Site) error {
 		return fmt.Errorf("ensure target dir: %w", err)
 	}
 
+	matches, err := detectWordPress(site.FilesDir, site.PublicDir)
+	if err != nil {
+		return err
+	}
+	if len(matches) > 0 {
+		// WordPress already present (at the docroot or one level
+		// deeper). Respect what the user has and skip the download.
+		return nil
+	}
+
 	empty, err := isDirEmpty(targetDir)
 	if err != nil {
 		return fmt.Errorf("checking target dir: %w", err)
 	}
 	if !empty {
+		// Directory has *something* but no wp-settings.php. Don't
+		// clobber the user's files; they may be in the middle of
+		// setting up Bedrock or restoring a partial backup.
 		return nil
 	}
 

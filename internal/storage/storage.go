@@ -57,9 +57,15 @@ func now() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+// siteColumns is the canonical column list for sites SELECT/INSERT/UPDATE.
+// Keep ordering aligned with the Scan / Exec arg order below — adding a
+// column means editing four call sites; the constant centralises the
+// SELECT/INSERT lists so two of those four stay in lockstep.
+const siteColumns = "id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, salts, createdAt, updatedAt"
+
 // GetSites returns all sites stored in SQLite.
 func (s *Storage) GetSites() ([]types.Site, error) {
-	rows, err := s.db.Query("SELECT id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, createdAt, updatedAt FROM sites")
+	rows, err := s.db.Query("SELECT " + siteColumns + " FROM sites")
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +74,7 @@ func (s *Storage) GetSites() ([]types.Site, error) {
 	var result []types.Site
 	for rows.Next() {
 		var site types.Site
-		if err := rows.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.CreatedAt, &site.UpdatedAt); err != nil {
+		if err := rows.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.Salts, &site.CreatedAt, &site.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, site)
@@ -79,10 +85,10 @@ func (s *Storage) GetSites() ([]types.Site, error) {
 
 // GetSite returns a single Site by ID.
 func (s *Storage) GetSite(id string) (*types.Site, error) {
-	row := s.db.QueryRow("SELECT id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, createdAt, updatedAt FROM sites WHERE id = ?", id)
+	row := s.db.QueryRow("SELECT "+siteColumns+" FROM sites WHERE id = ?", id)
 	var site types.Site
 
-	if err := row.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.CreatedAt, &site.UpdatedAt); err != nil {
+	if err := row.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.Salts, &site.CreatedAt, &site.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -100,8 +106,8 @@ func (s *Storage) AddSite(site *types.Site) error {
 	site.UpdatedAt = ts
 
 	_, err := s.db.Exec(
-		"INSERT INTO sites (id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.CreatedAt, site.UpdatedAt,
+		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.Salts, site.CreatedAt, site.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -115,8 +121,8 @@ func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	site.UpdatedAt = now()
 
 	_, err := s.db.Exec(
-		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, updatedAt = ? WHERE id = ?",
-		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.UpdatedAt, site.ID,
+		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, updatedAt = ? WHERE id = ?",
+		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.Salts, site.UpdatedAt, site.ID,
 	)
 	if err != nil {
 		return nil, err

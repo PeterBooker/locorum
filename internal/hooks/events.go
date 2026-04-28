@@ -29,20 +29,20 @@ const (
 
 	PreExport  Event = "pre-export"
 	PostExport Event = "post-export"
+
+	PreImportDB  Event = "pre-import-db"
+	PostImportDB Event = "post-import-db"
+
+	PreSnapshot  Event = "pre-snapshot"
+	PostSnapshot Event = "post-snapshot"
 )
 
 // Reserved events — declared but not yet fired by any lifecycle method.
 // Adding the firing site is a one-line runner.Run(...) addition once the
 // underlying feature lands.
 const (
-	PreImportDB  Event = "pre-import-db"
-	PostImportDB Event = "post-import-db"
-
 	PreImportFiles  Event = "pre-import-files"
 	PostImportFiles Event = "post-import-files"
-
-	PreSnapshot  Event = "pre-snapshot"
-	PostSnapshot Event = "post-snapshot"
 
 	PreRestoreSnapshot  Event = "pre-restore-snapshot"
 	PostRestoreSnapshot Event = "post-restore-snapshot"
@@ -80,6 +80,8 @@ var activeEvents = []Event{
 	PreVersionsChange, PostVersionsChange,
 	PreMultisite, PostMultisite,
 	PreExport, PostExport,
+	PreImportDB, PostImportDB,
+	PreSnapshot, PostSnapshot,
 }
 
 var eventSet = func() map[Event]struct{} {

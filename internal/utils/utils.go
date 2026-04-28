@@ -103,7 +103,9 @@ func GetUserHomeDir() (string, error) {
 	}
 
 	if runtime.GOOS == "windows" && HasWSL() {
-		out, err := exec.Command("wsl", "wslpath", "-w", "$HOME").Output()
+		cmd := exec.Command("wsl", "wslpath", "-w", "$HOME")
+		HideConsole(cmd)
+		out, err := cmd.Output()
 		if err != nil {
 			return homeDir, fmt.Errorf("wslpath failed: %w", err)
 		}
@@ -119,10 +121,14 @@ func OpenDirectory(path string) error {
 	switch runtime.GOOS {
 	case "windows":
 		if HasWSL() && strings.Contains(path, "\\wsl") {
-			return exec.Command("cmd.exe", "/C", "start", "", path).Start()
+			cmd := exec.Command("cmd.exe", "/C", "start", "", path)
+			HideConsole(cmd)
+			return cmd.Start()
 		}
 
-		return exec.Command("explorer.exe", path).Start()
+		cmd := exec.Command("explorer.exe", path)
+		HideConsole(cmd)
+		return cmd.Start()
 	case "darwin":
 		return exec.Command("open", path).Start()
 	default:
@@ -177,7 +183,9 @@ func isWSL() bool {
 func OpenURL(url string) error {
 	switch runtime.GOOS {
 	case "windows":
-		return exec.Command("cmd.exe", "/C", "start", "", url).Start()
+		cmd := exec.Command("cmd.exe", "/C", "start", "", url)
+		HideConsole(cmd)
+		return cmd.Start()
 	case "darwin":
 		return exec.Command("open", url).Start()
 	default:
@@ -194,7 +202,9 @@ func OpenURL(url string) error {
 func OpenPath(path string) error {
 	switch runtime.GOOS {
 	case "windows":
-		return exec.Command("cmd.exe", "/C", "start", "", path).Start()
+		cmd := exec.Command("cmd.exe", "/C", "start", "", path)
+		HideConsole(cmd)
+		return cmd.Start()
 	case "darwin":
 		return exec.Command("open", path).Start()
 	default:
@@ -295,6 +305,7 @@ func CopyDir(src, dst string) error {
 // HasWSL returns true if WSL is available (Windows only).
 func HasWSL() bool {
 	cmd := exec.Command("wsl.exe", "echo", "wsl-test")
+	HideConsole(cmd)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -308,7 +319,9 @@ func HasWSL() bool {
 // PickDirectoryInWSL opens a directory picker dialog inside WSL using zenity.
 // Returns the selected Linux path (e.g., /home/user/projects).
 func PickDirectoryInWSL() (string, error) {
-	out, err := exec.Command("wsl.exe", "zenity", "--file-selection", "--directory").Output()
+	cmd := exec.Command("wsl.exe", "zenity", "--file-selection", "--directory")
+	HideConsole(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("WSL directory picker failed (is zenity installed in WSL?): %w", err)
 	}
