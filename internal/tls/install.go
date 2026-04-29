@@ -60,21 +60,38 @@ func (m *Mkcert) EnsureBinary(ctx context.Context) (string, error) {
 	return dst, nil
 }
 
+// installTimeout caps the mkcert -install run. The trust-store updates are
+// fast under normal conditions; a longer hang almost always means an
+// interactive prompt (sudo, polkit) we can't service from a GUI process.
+// Killing the child process via context cancellation is preferable to
+// freezing the banner.
+const installTimeout = 90 * time.Second
+
 // InstallCA runs `mkcert -install` to generate (if needed) and install the
 // local CA into the OS / browser trust stores. Calls EnsureBinary first so
 // the user doesn't need a separate setup step. mkcert prints non-fatal
 // warnings (e.g. failed sudo for the system store on Linux) but still
 // succeeds and writes the rootCA file — combined output is captured and
 // surfaced verbatim on error so the UI can show what happened.
+//
+// On Linux the system trust store install needs sudo, which would hang a
+// GUI process with no TTY; we set TRUST_STORES=nss so mkcert only writes
+// to user-level NSS DBs (Firefox + Chromium-family). Users who want full
+// curl/wget/java trust can re-run `mkcert -install` from a terminal.
 func (m *Mkcert) InstallCA(ctx context.Context) error {
 	bin, err := m.EnsureBinary(ctx)
 	if err != nil {
 		return err
 	}
 
-	// CAROOT may not exist yet on first install; mkcert creates it.
-	cmd := exec.CommandContext(ctx, bin, "-install")
+	ictx, cancel := context.WithTimeout(ctx, installTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ictx, bin, "-install")
 	utils.HideConsole(cmd)
+	if runtime.GOOS == "linux" {
+		cmd.Env = append(os.Environ(), "TRUST_STORES=nss")
+	}
 	out, err := cmd.CombinedOutput()
 	m.invalidate()
 	if err != nil {

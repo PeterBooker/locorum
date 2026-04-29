@@ -26,12 +26,23 @@ GOGIO   ?= gogio
 # the WIX env var to that install dir, which would override `?= wix`.
 WIX_BIN ?= wix
 
+# Bundled mkcert. Pinned to match internal/tls/install.go's MkcertVersion;
+# downloaded from the upstream GitHub release into build/vendor/mkcert and
+# copied next to the locorum binary in each release artifact. Locorum's
+# binary resolver prefers a sibling mkcert before falling back to $PATH or
+# auto-download, so a bundled binary turns this into a true zero-dependency
+# install.
+MKCERT_VERSION := v1.4.4
+MKCERT_DIR     := build/vendor/mkcert
+MKCERT_BASE    := https://github.com/FiloSottile/mkcert/releases/download/$(MKCERT_VERSION)
+
 .PHONY: build linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64 all clean test icons \
         dist-windows dist-windows-amd64 dist-windows-arm64 \
         msi-windows-amd64 msi-windows-arm64 \
         dist-linux dist-linux-amd64 dist-linux-arm64 \
         tarball-linux-amd64 tarball-linux-arm64 \
-        dist-macos dist-macos-app dmg-macos
+        dist-macos dist-macos-app dmg-macos \
+        mkcert-binaries
 
 build:
 	go build -ldflags "$(LDFLAGS_DEV)" -o $(BUILD_DIR)/$(APP_NAME) .
@@ -71,6 +82,48 @@ clean:
 test:
 	go test ./...
 
+# --- Bundled mkcert ---------------------------------------------------------
+# Each rule downloads one platform's mkcert into build/vendor/mkcert/<os>-<arch>/
+# and chmods it executable. Release-packaging targets depend on the matching
+# rule and copy the binary alongside the locorum executable so users never
+# need to install mkcert themselves.
+
+mkcert-binaries: \
+        $(MKCERT_DIR)/linux-amd64/mkcert \
+        $(MKCERT_DIR)/linux-arm64/mkcert \
+        $(MKCERT_DIR)/darwin-amd64/mkcert \
+        $(MKCERT_DIR)/darwin-arm64/mkcert \
+        $(MKCERT_DIR)/windows-amd64/mkcert.exe \
+        $(MKCERT_DIR)/windows-arm64/mkcert.exe
+
+$(MKCERT_DIR)/linux-amd64/mkcert:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-linux-amd64 -o $@
+	chmod +x $@
+
+$(MKCERT_DIR)/linux-arm64/mkcert:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-linux-arm64 -o $@
+	chmod +x $@
+
+$(MKCERT_DIR)/darwin-amd64/mkcert:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-darwin-amd64 -o $@
+	chmod +x $@
+
+$(MKCERT_DIR)/darwin-arm64/mkcert:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-darwin-arm64 -o $@
+	chmod +x $@
+
+$(MKCERT_DIR)/windows-amd64/mkcert.exe:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-windows-amd64.exe -o $@
+
+$(MKCERT_DIR)/windows-arm64/mkcert.exe:
+	@mkdir -p $(dir $@)
+	curl -fsSL $(MKCERT_BASE)/mkcert-$(MKCERT_VERSION)-windows-arm64.exe -o $@
+
 # --- Windows release packaging (gogio .exe + WiX .msi) ---------------------
 # gogio embeds icon (from appicon.png), DPI manifest, version metadata, and
 # the GUI subsystem flag. No CGO required for Windows targets in Gio v0.9.
@@ -89,19 +142,21 @@ dist-windows-arm64: appicon.png
 	$(GOGIO) -target windows -arch arm64 -appid $(APP_ID) -version $(SEMVER) -ldflags "$(LDFLAGS_RELEASE)" -o $(DIST_DIR)/Locorum-windows-arm64.exe .
 	@rm -f *.syso
 
-msi-windows-amd64: dist-windows-amd64
+msi-windows-amd64: dist-windows-amd64 $(MKCERT_DIR)/windows-amd64/mkcert.exe
 	$(WIX_BIN) build -arch x64 \
 		-ext WixToolset.UI.wixext \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-amd64.exe \
+		-d SourceMkcert=$(MKCERT_DIR)/windows-amd64/mkcert.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-amd64.msi \
 		packaging/windows/locorum.wxs
 
-msi-windows-arm64: dist-windows-arm64
+msi-windows-arm64: dist-windows-arm64 $(MKCERT_DIR)/windows-arm64/mkcert.exe
 	$(WIX_BIN) build -arch arm64 \
 		-ext WixToolset.UI.wixext \
 		-d Version=$(SEMVER) \
 		-d SourceExe=$(DIST_DIR)/Locorum-windows-arm64.exe \
+		-d SourceMkcert=$(MKCERT_DIR)/windows-arm64/mkcert.exe \
 		-o $(DIST_DIR)/Locorum-$(VERSION)-windows-arm64.msi \
 		packaging/windows/locorum.wxs
 
@@ -125,17 +180,19 @@ dist-linux-arm64:
 	@mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS_RELEASE)" -o $(DIST_DIR)/locorum-linux-arm64 .
 
-tarball-linux-amd64: dist-linux-amd64 icons
+tarball-linux-amd64: dist-linux-amd64 icons $(MKCERT_DIR)/linux-amd64/mkcert
 	@mkdir -p $(DIST_DIR)/stage-linux-amd64/locorum-$(VERSION)-linux-amd64
 	cp $(DIST_DIR)/locorum-linux-amd64 $(DIST_DIR)/stage-linux-amd64/locorum-$(VERSION)-linux-amd64/locorum
+	cp $(MKCERT_DIR)/linux-amd64/mkcert $(DIST_DIR)/stage-linux-amd64/locorum-$(VERSION)-linux-amd64/mkcert
 	cp LICENSE README.md packaging/linux/locorum.desktop $(DIST_DIR)/stage-linux-amd64/locorum-$(VERSION)-linux-amd64/
 	cp $(ICON_DIR)/icon-256.png $(DIST_DIR)/stage-linux-amd64/locorum-$(VERSION)-linux-amd64/locorum.png
 	tar -czf $(DIST_DIR)/locorum-$(VERSION)-linux-amd64.tar.gz -C $(DIST_DIR)/stage-linux-amd64 locorum-$(VERSION)-linux-amd64
 	rm -rf $(DIST_DIR)/stage-linux-amd64
 
-tarball-linux-arm64: dist-linux-arm64 icons
+tarball-linux-arm64: dist-linux-arm64 icons $(MKCERT_DIR)/linux-arm64/mkcert
 	@mkdir -p $(DIST_DIR)/stage-linux-arm64/locorum-$(VERSION)-linux-arm64
 	cp $(DIST_DIR)/locorum-linux-arm64 $(DIST_DIR)/stage-linux-arm64/locorum-$(VERSION)-linux-arm64/locorum
+	cp $(MKCERT_DIR)/linux-arm64/mkcert $(DIST_DIR)/stage-linux-arm64/locorum-$(VERSION)-linux-arm64/mkcert
 	cp LICENSE README.md packaging/linux/locorum.desktop $(DIST_DIR)/stage-linux-arm64/locorum-$(VERSION)-linux-arm64/
 	cp $(ICON_DIR)/icon-256.png $(DIST_DIR)/stage-linux-arm64/locorum-$(VERSION)-linux-arm64/locorum.png
 	tar -czf $(DIST_DIR)/locorum-$(VERSION)-linux-arm64.tar.gz -C $(DIST_DIR)/stage-linux-arm64 locorum-$(VERSION)-linux-arm64
@@ -150,9 +207,17 @@ tarball-linux-arm64: dist-linux-arm64 icons
 
 dist-macos: dmg-macos
 
-dist-macos-app: appicon.png
+dist-macos-app: appicon.png $(MKCERT_DIR)/darwin-amd64/mkcert $(MKCERT_DIR)/darwin-arm64/mkcert
 	@mkdir -p $(DIST_DIR)
 	$(GOGIO) -target macos -arch amd64,arm64 -appid $(APP_ID) -version $(SEMVER) -ldflags "$(LDFLAGS_RELEASE)" -o $(DIST_DIR)/Locorum.app .
+	# Drop a universal mkcert next to the locorum binary inside the .app
+	# bundle so resolveBinary finds it without touching $$PATH. lipo merges
+	# the two architecture-specific binaries into one fat binary; macOS
+	# picks the right slice at exec time.
+	lipo -create -output $(DIST_DIR)/Locorum.app/Contents/MacOS/mkcert \
+		$(MKCERT_DIR)/darwin-amd64/mkcert \
+		$(MKCERT_DIR)/darwin-arm64/mkcert
+	chmod +x $(DIST_DIR)/Locorum.app/Contents/MacOS/mkcert
 
 dmg-macos: dist-macos-app
 	bash packaging/macos/make-dmg.sh $(DIST_DIR)/Locorum.app $(DIST_DIR)/Locorum-$(VERSION)-macos-universal.dmg "$(VERSION)"

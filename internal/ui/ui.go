@@ -339,7 +339,6 @@ func topBarStatus(gtx layout.Context, th *Theme, key, label string) layout.Dimen
 func (ui *UI) layoutNoticeBanner(gtx layout.Context, n NoticeSnapshot) layout.Dimensions {
 	th := ui.Theme
 	if ui.noticeBtn.Clicked(gtx) && n.HasAction && !n.Busy {
-		ui.State.SetNoticeBusy(true)
 		ui.State.TriggerNoticeAction()
 	}
 	return FillBackground(gtx, th.Color.InfoBg, func(gtx layout.Context) layout.Dimensions {

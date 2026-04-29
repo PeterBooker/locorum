@@ -707,17 +707,20 @@ func (s *UIState) NoticeSnapshot() NoticeSnapshot {
 	}
 }
 
-// TriggerNoticeAction invokes the banner's action callback (if any). Returns
-// true if a callback was registered. Read under the mutex so a concurrent
-// SetNotice can't race the read against execution.
+// TriggerNoticeAction atomically claims the busy slot and invokes the
+// banner's action callback. Returns true if an action was started, false
+// when no callback is registered or one is already in flight. The action
+// is responsible for clearing the busy state when it completes.
 func (s *UIState) TriggerNoticeAction() bool {
 	s.mu.Lock()
-	action := s.noticeAction
-	busy := s.noticeBusy
-	s.mu.Unlock()
-	if action == nil || busy {
+	if s.noticeAction == nil || s.noticeBusy {
+		s.mu.Unlock()
 		return false
 	}
+	s.noticeBusy = true
+	action := s.noticeAction
+	s.mu.Unlock()
+	s.Invalidate()
 	action()
 	return true
 }
