@@ -51,6 +51,12 @@
         <Component Id="MainExe" Guid="08d57442-8d6b-4ba1-8e09-566549b67c7c">
           <File Id="LocorumExe" Source="$(SourceExe)" Name="Locorum.exe" KeyPath="yes" />
         </Component>
+        <!-- Bundled mkcert. Installed next to Locorum.exe so the binary
+             resolver picks it up without consulting $PATH or downloading.
+             See SourceMkcert preprocessor variable in the Makefile MSI rule. -->
+        <Component Id="MkcertExe" Guid="6dc4c1f9-1e1a-4b2d-9b3a-4e2c5d2b9a01">
+          <File Id="MkcertExeFile" Source="$(SourceMkcert)" Name="mkcert.exe" KeyPath="yes" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
@@ -92,6 +98,7 @@
 
     <Feature Id="Main" Title="Locorum" Level="1">
       <ComponentRef Id="MainExe" />
+      <ComponentRef Id="MkcertExe" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="DesktopShortcut" />
     </Feature>

@@ -72,6 +72,12 @@ type SiteManager struct {
 	// Pull progress callback. Fired during the PullImages step. Called
 	// per pull tick; aggregated across layers.
 	OnPullProgress func(siteID string, progress docker.PullProgress)
+
+	// OnActivityAppended fires after a Plan outcome is persisted to the
+	// activity_events table. The UI subscribes so the overview feed +
+	// Activity tab update live without polling. Fired only on a
+	// successful insert; failed writes are logged and silently dropped.
+	OnActivityAppended func(siteID string, ev storage.ActivityEvent)
 }
 
 func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, config embed.FS, homeDir string) *SiteManager {
@@ -221,6 +227,41 @@ func (sm *SiteManager) ReorderSiteHooks(siteID string, ev hooks.Event, ids []int
 	return sm.st.ReorderHooks(siteID, ev, ids)
 }
 
+// ─── Activity feed pass-throughs ────────────────────────────────────────────
+
+// activityRecentLimit caps the overview-panel row count. Five fits the
+// design grid; anything beyond is reachable via the Activity tab.
+const activityRecentLimit = 5
+
+// GetActivity returns up to limit newest-first activity rows for siteID.
+// A non-positive limit defaults to storage.ActivityRetentionDefault.
+func (sm *SiteManager) GetActivity(siteID string, limit int) ([]storage.ActivityEvent, error) {
+	return sm.st.GetActivity(siteID, limit)
+}
+
+// RecentActivity returns the small slice the overview panel renders. The
+// Activity tab uses GetActivity directly with a higher limit.
+func (sm *SiteManager) RecentActivity(siteID string) ([]storage.ActivityEvent, error) {
+	return sm.st.GetActivity(siteID, activityRecentLimit)
+}
+
+// SweepActivity trims the per-site row count for every existing site to
+// the retention cap. Idempotent and cheap; AppendActivity already enforces
+// the cap on every insert, so this is a defensive sweep for cases where
+// the cap is reduced or rows are inserted by a different process.
+func (sm *SiteManager) SweepActivity() error {
+	sites, err := sm.st.GetSites()
+	if err != nil {
+		return err
+	}
+	for _, s := range sites {
+		if err := sm.st.TrimActivity(s.ID, storage.ActivityRetentionDefault); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 	site, err := sm.st.GetSite(id)
 	if err != nil {
@@ -360,7 +401,7 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 		},
 	}
 
-	res := sm.runPlan(ctx, site.ID, plan)
+	res := sm.runPlan(ctx, site, plan)
 	if res.FinalError != nil {
 		return res.FinalError
 	}
@@ -428,7 +469,15 @@ func specNames(specs []docker.ContainerSpec) []string {
 // also emits structured slog records at start, per step, and at the plan
 // boundary — so the lifecycle log on disk and the in-app logs both have
 // the same view.
-func (sm *SiteManager) runPlan(ctx context.Context, siteID string, plan orch.Plan) orch.Result {
+//
+// site is captured by value into the OnPlanDone closure so message
+// rendering still has the slug / version fields after a delete-site Plan
+// has removed the row from storage.
+func (sm *SiteManager) runPlan(ctx context.Context, site *types.Site, plan orch.Plan) orch.Result {
+	siteID := ""
+	if site != nil {
+		siteID = site.ID
+	}
 	slog.Info("plan starting", "plan", plan.Name, "site", siteID, "steps", len(plan.Steps))
 	cb := orch.Callbacks{
 		OnStepStart: func(s orch.StepResult) {
@@ -459,6 +508,7 @@ func (sm *SiteManager) runPlan(ctx context.Context, siteID string, plan orch.Pla
 				sm.OnPlanDone(siteID, r)
 			}
 			writeAuditLog(sm.homeDir, r)
+			sm.recordActivity(site, plan, r)
 		},
 	}
 	return orch.Run(ctx, plan, cb)
@@ -527,7 +577,7 @@ func (sm *SiteManager) StopSite(ctx context.Context, id string) error {
 			&sitesteps.RemoveRoutesStep{Router: sm.rtr, Slug: site.Slug},
 		},
 	}
-	res := sm.runPlan(ctx, site.ID, plan)
+	res := sm.runPlan(ctx, site, plan)
 	if res.FinalError != nil {
 		return res.FinalError
 	}
@@ -626,7 +676,7 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 		Name:  "delete-site:" + site.Slug,
 		Steps: steps,
 	}
-	res := sm.runPlan(ctx, site.ID, plan)
+	res := sm.runPlan(ctx, site, plan)
 	if res.FinalError != nil {
 		// Even on error we continue to delete the SQL row so the GUI
 		// doesn't show a half-deleted site forever; container cleanup is

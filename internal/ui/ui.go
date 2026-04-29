@@ -13,6 +13,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/sites"
+	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -33,6 +34,9 @@ type UI struct {
 	CloneModal   *CloneModal
 	deleteDialog ConfirmDialog
 	deletePurge  widget.Bool
+
+	// Banner action button (e.g. "Set up trusted HTTPS").
+	noticeBtn widget.Clickable
 }
 
 // SettingKeyThemeMode persists the user's theme preference ("dark", "light",
@@ -93,6 +97,12 @@ func New(sm *sites.SiteManager) *UI {
 		state.LifecyclePullProgress(siteID, p)
 	}
 
+	// Activity feed: prepend each freshly-persisted row to the per-site
+	// caches so the overview panel and Activity tab update live.
+	sm.OnActivityAppended = func(siteID string, ev storage.ActivityEvent) {
+		state.AppendActivity(siteID, ev)
+	}
+
 	return ui
 }
 
@@ -126,7 +136,7 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 	ui.HandleUserInteractions(gtx)
 
 	errMsg := ui.State.ActiveError()
-	notice := ui.State.GetNotice()
+	notice := ui.State.NoticeSnapshot()
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -135,7 +145,7 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 					return ui.layoutTopBar(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if notice == "" {
+					if notice.Message == "" {
 						return layout.Dimensions{}
 					}
 					return ui.layoutNoticeBanner(gtx, notice)
@@ -326,17 +336,36 @@ func topBarStatus(gtx layout.Context, th *Theme, key, label string) layout.Dimen
 	)
 }
 
-func (ui *UI) layoutNoticeBanner(gtx layout.Context, msg string) layout.Dimensions {
+func (ui *UI) layoutNoticeBanner(gtx layout.Context, n NoticeSnapshot) layout.Dimensions {
 	th := ui.Theme
+	if ui.noticeBtn.Clicked(gtx) && n.HasAction && !n.Busy {
+		ui.State.TriggerNoticeAction()
+	}
 	return FillBackground(gtx, th.Color.InfoBg, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
 			Top: unit.Dp(10), Bottom: unit.Dp(10),
 			Left: th.Spacing.LG, Right: th.Spacing.LG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th.Theme, msg)
-			lbl.Color = th.Color.InfoFg
-			lbl.TextSize = th.Sizes.Body
-			return lbl.Layout(gtx)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th.Theme, n.Message)
+					lbl.Color = th.Color.InfoFg
+					lbl.TextSize = th.Sizes.Body
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !n.HasAction {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Left: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						label := n.ActionLabel
+						if n.Busy {
+							label = "Working…"
+						}
+						return th.SmallGated(gtx, &ui.noticeBtn, label, !n.Busy)
+					})
+				}),
+			)
 		})
 	})
 }

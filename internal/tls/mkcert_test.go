@@ -92,7 +92,7 @@ func TestCertCovers(t *testing.T) {
 }
 
 func TestMkcertAvailable(t *testing.T) {
-	m := NewMkcert(t.TempDir())
+	m := NewMkcert(t.TempDir(), "")
 	status, err := m.Available(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestMkcertIssue_Idempotent(t *testing.T) {
 	if _, err := exec.LookPath("mkcert"); err != nil {
 		t.Skip("mkcert not on PATH")
 	}
-	m := NewMkcert(t.TempDir())
+	m := NewMkcert(t.TempDir(), "")
 	status, _ := m.Available(context.Background())
 	if !status.CATrusted {
 		t.Skip("mkcert -install has not been run on this host")

@@ -334,11 +334,23 @@ func drawStopGlyph(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 
 // ─── Activity panel ─────────────────────────────────────────────────────────
 
-// activityEntry is one row in the activity feed. Backend wiring is deferred:
-// the panel currently renders a fixed list passed in by the caller.
+// activityRowKind tells the row renderer which status colour to use for the
+// leading dot. UI-only — it does not reach storage.
+type activityRowKind int
+
+const (
+	activityRowOK activityRowKind = iota
+	activityRowFailed
+	activityRowRolledBack
+)
+
+// activityEntry is one row in the activity feed. Constructed by
+// activityEntryFor(ev) in activitytab.go from a storage.ActivityEvent, or
+// hand-built by callers that want an empty/placeholder row.
 type activityEntry struct {
 	Time    string
 	Message string
+	Kind    activityRowKind
 }
 
 // activityPanel renders the "Activity" card with a header (title + ghost
@@ -417,24 +429,61 @@ func activityHeader(gtx layout.Context, th *Theme, viewAll *widget.Clickable) la
 }
 
 func activityRow(gtx layout.Context, th *Theme, e activityEntry) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
+	dotCol := activityRowDotColor(th, e.Kind)
+	msgCol := th.Color.Fg2
+	if e.Kind == activityRowFailed {
+		msgCol = th.Color.Err
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(72))
+			return activityStatusDot(gtx, dotCol, unit.Dp(6))
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(96))
 			gtx.Constraints.Max.X = gtx.Constraints.Min.X
 			lbl := material.Body2(th.Theme, e.Time)
 			lbl.Color = th.Color.Fg3
 			lbl.TextSize = th.Sizes.Mono
 			lbl.Font = MonoFont
+			lbl.MaxLines = 1
 			return lbl.Layout(gtx)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th.Theme, e.Message)
-			lbl.Color = th.Color.Fg2
+			lbl.Color = msgCol
 			lbl.TextSize = th.Sizes.Mono
 			lbl.Font = MonoFont
+			lbl.MaxLines = 1
+			lbl.Truncator = "…"
 			return lbl.Layout(gtx)
 		}),
 	)
+}
+
+// activityRowDotColor maps the row kind to its leading status dot colour.
+// Succeeded uses the muted Fg3 (a quiet bullet); failed uses Err; rolled
+// back uses Warn so the user can distinguish "we noticed and reverted"
+// from "this just blew up".
+func activityRowDotColor(th *Theme, kind activityRowKind) color.NRGBA {
+	switch kind {
+	case activityRowFailed:
+		return th.Color.Err
+	case activityRowRolledBack:
+		return th.Color.Warn
+	}
+	return th.Color.Fg3
+}
+
+// activityStatusDot draws a filled circle of size diameter in col. Used as
+// the leading marker on each activity row.
+func activityStatusDot(gtx layout.Context, col color.NRGBA, diameter unit.Dp) layout.Dimensions {
+	d := gtx.Dp(diameter)
+	defer clip.Ellipse{Max: image.Point{X: d, Y: d}}.Push(gtx.Ops).Pop()
+	paint.Fill(gtx.Ops, col)
+	return layout.Dimensions{Size: image.Point{X: d, Y: d}}
 }
 
 // ─── Placeholders ───────────────────────────────────────────────────────────
