@@ -10,11 +10,31 @@ type Site struct {
 	Started   bool   `json:"started"`
 
 	PHPVersion   string `json:"phpVersion"`
-	MySQLVersion string `json:"mysqlVersion"`
 	RedisVersion string `json:"redisVersion"`
 	DBPassword   string `json:"dbPassword"`
 	WebServer    string `json:"webServer"` // "nginx" or "apache"
 	Multisite    string `json:"multisite"` // "", "subdirectory", or "subdomain"
+
+	// DBEngine is the database engine name ("mysql" or "mariadb"). Read
+	// through dbengine.Resolve(site) which falls back to MySQL for legacy
+	// rows.
+	DBEngine string `json:"dbEngine"`
+
+	// DBVersion is the engine-specific version tag (e.g. "8.4", "11.4").
+	// The combination of (DBEngine, DBVersion) selects the Docker image.
+	DBVersion string `json:"dbVersion"`
+
+	// MySQLVersion is the pre-multi-engine field. Kept readable for one
+	// minor release so legacy rows continue to start; new code writes
+	// only DBVersion. Will be dropped after the next minor.
+	//
+	// Deprecated: use DBVersion + DBEngine.
+	MySQLVersion string `json:"mysqlVersion,omitempty"`
+
+	// PublishDBPort opts in to publishing the database container's port
+	// to 127.0.0.1 on the host (random ephemeral). Surfaced in the DB
+	// Credentials panel as a "Host port" row + connection URL.
+	PublishDBPort bool `json:"publishDBPort"`
 
 	// Salts is a JSON-encoded map[string]string of the eight WordPress
 	// secret keys (AUTH_KEY, SECURE_AUTH_KEY, …, NONCE_SALT). Generated

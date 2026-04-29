@@ -23,18 +23,14 @@ if ( ! defined( 'DB_PASSWORD' ) ) define( 'DB_PASSWORD', getenv( 'MYSQL_PASSWORD
 if ( ! defined( 'DB_HOST' ) )     define( 'DB_HOST',     'database' );
 
 // ── URLs ────────────────────────────────────────────────────────────────
-// Resolved at request time from env vars set on the PHP container by
-// Locorum (internal/docker/specs_builders.go PHPSpec). Changing the
-// site's domain in the GUI recreates the container with new env — no
-// file rewrite, no wp-cli search-replace required.
-if ( ! defined( 'WP_HOME' ) ) {
-	$_locorum_url = getenv( 'LOCORUM_PRIMARY_URL' );
-	define( 'WP_HOME', $_locorum_url !== false && $_locorum_url !== '' ? $_locorum_url : 'http://localhost' );
-}
-if ( ! defined( 'WP_SITEURL' ) ) {
-	$_locorum_doc = getenv( 'LOCORUM_DOCROOT' );
-	define( 'WP_SITEURL', $_locorum_doc !== false && $_locorum_doc !== '' ? WP_HOME . '/' . $_locorum_doc : WP_HOME );
-}
+// Baked in by Locorum at site-start time (internal/sites/wpconfig.go,
+// computeWPURLs). PHP-FPM's default clear_env=yes strips Docker-set env
+// vars before scripts run, so getenv('LOCORUM_PRIMARY_URL') would silently
+// return false and any fallback would replace the real domain. Locorum
+// regenerates this file on every start anyway; baking the resolved URL in
+// is robust regardless of php-fpm pool config.
+if ( ! defined( 'WP_HOME' ) )    define( 'WP_HOME',    '{{ phpEscape .WPHome }}' );
+if ( ! defined( 'WP_SITEURL' ) ) define( 'WP_SITEURL', '{{ phpEscape .WPSiteURL }}' );
 
 // ── Debug ───────────────────────────────────────────────────────────────
 if ( ! defined( 'WP_DEBUG' ) )         define( 'WP_DEBUG',         true );

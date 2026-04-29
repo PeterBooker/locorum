@@ -40,6 +40,12 @@ type ImportDBOptions struct {
 	// import. Default: false. Set true for debugging only — a 5 GB
 	// retained dump can fill the user's filesystem fast.
 	KeepDump bool
+
+	// SkipSnapshot disables the automatic pre_import snapshot. Default
+	// false — every import takes a snapshot first so the user can roll
+	// back if the imported dump turns out to be wrong / partial. A
+	// failure to snapshot fails the import unless this is true.
+	SkipSnapshot bool
 }
 
 // SearchReplacePair is a single from→to URL substitution applied via
@@ -87,6 +93,17 @@ func (sm *SiteManager) ImportDB(ctx context.Context, siteID, hostPath string, op
 	mu := sm.siteMutex(siteID)
 	mu.Lock()
 	defer mu.Unlock()
+
+	// Pre-import snapshot. Provides a one-click restore path if the
+	// imported dump turns out to be the wrong one, or if a search-replace
+	// runs over a column it shouldn't have touched.
+	if !opts.SkipSnapshot {
+		if path, err := sm.snapshotLocked(ctx, site, "pre_import"); err != nil {
+			return fmt.Errorf("pre-import snapshot failed: %w (pass SkipSnapshot to override)", err)
+		} else {
+			slog.Info("import: pre-import snapshot saved", "path", path)
+		}
+	}
 
 	if err := sm.runHooks(ctx, hooks.PreImportDB, site); err != nil {
 		return err

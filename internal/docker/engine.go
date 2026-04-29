@@ -97,6 +97,12 @@ type Engine interface {
 
 	// Ping verifies the engine is reachable. Used by health checks.
 	Ping(ctx context.Context) error
+
+	// RunOneShotCapture launches a transient container, captures stdout
+	// + stderr + exit code, and removes the container. Used by
+	// EnsureMarkerStep to inspect a volume before the service container
+	// owning it has booted.
+	RunOneShotCapture(ctx context.Context, name, image string, cmd []string, mounts []OneShotMount) (OneShotResult, error)
 }
 
 // PullProgress is one tick of image-pull progress. Aggregated across layers

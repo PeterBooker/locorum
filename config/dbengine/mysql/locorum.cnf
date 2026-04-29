@@ -1,0 +1,26 @@
+# locorum-generated — managed by Locorum.
+#
+# Edits to THIS file are overwritten on the next start. To customise
+# without losing changes, drop a `*.cnf` into the matching conf.d
+# directory at ~/.locorum/config/dbengine/mysql/conf.d/ and Locorum
+# will leave it alone forever.
+
+[mysqld]
+character-set-server  = utf8mb4
+collation-server      = utf8mb4_unicode_ci
+
+# Dev-only durability tradeoffs — never use in prod.
+innodb_flush_log_at_trx_commit = 2
+innodb_doublewrite             = 0
+sync_binlog                    = 0
+
+# Fits comfortably on a 16GB dev machine; users with more RAM can
+# override via the conf.d directory above.
+innodb_buffer_pool_size = 1024M
+
+skip-log-bin
+local-infile       = 1
+max_allowed_packet = 256M
+
+[client]
+default-character-set = utf8mb4

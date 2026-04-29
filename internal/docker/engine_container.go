@@ -122,6 +122,39 @@ func (d *Docker) RemoveContainer(ctx context.Context, name string) error {
 	return nil
 }
 
+// PublishedHostPort returns the host-side TCP port assigned to the
+// given container's containerPort, or 0 if the port isn't published.
+// Used by SiteManager to surface the ephemeral DB port to the user when
+// db.publish_port is enabled.
+func (d *Docker) PublishedHostPort(ctx context.Context, name string, containerPort int) (int, error) {
+	info, err := d.cli.ContainerInspect(ctx, name)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return 0, fmt.Errorf("%w: container %q", ErrNotFound, name)
+		}
+		return 0, fmt.Errorf("inspect %q: %w", name, err)
+	}
+	if info.NetworkSettings == nil {
+		return 0, nil
+	}
+	want := fmt.Sprintf("%d/tcp", containerPort)
+	for portKey, bindings := range info.NetworkSettings.Ports {
+		if string(portKey) != want {
+			continue
+		}
+		for _, b := range bindings {
+			if b.HostPort == "" {
+				continue
+			}
+			var n int
+			if _, err := fmt.Sscanf(b.HostPort, "%d", &n); err == nil && n > 0 {
+				return n, nil
+			}
+		}
+	}
+	return 0, nil
+}
+
 // ContainerLogs returns the last `lines` lines of the container's logs.
 // The Docker logs API multiplexes stdout+stderr into a single stream when
 // the container was created with Tty:false, and returns un-multiplexed

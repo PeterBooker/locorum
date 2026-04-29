@@ -293,6 +293,45 @@ func drawPlayGlyph(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 	return layout.Dimensions{Size: image.Point{X: s, Y: s}}
 }
 
+// stopButton renders a red "Stop" primary button with a square glyph.
+// Used in the site detail header when the site is running, in the same
+// position Start occupies when stopped — toggling Start ↔ Stop must not
+// shift visually.
+func stopButton(gtx layout.Context, th *Theme, btn *widget.Clickable) layout.Dimensions {
+	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+		return RoundedFill(gtx, th.Color.Danger, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Top: unit.Dp(7), Bottom: unit.Dp(7),
+				Left: unit.Dp(14), Right: unit.Dp(14),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return drawStopGlyph(gtx, unit.Dp(10), th.Color.AccentFg)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th.Theme, "Stop")
+							lbl.Color = th.Color.AccentFg
+							lbl.TextSize = th.Sizes.MonoSM
+							lbl.Font.Weight = font.Medium
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						})
+					}),
+				)
+			})
+		})
+	})
+}
+
+// drawStopGlyph paints a filled square (stop icon) at the given size.
+func drawStopGlyph(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dimensions {
+	s := gtx.Dp(size)
+	defer clip.Rect{Max: image.Point{X: s, Y: s}}.Push(gtx.Ops).Pop()
+	paint.Fill(gtx.Ops, col)
+	return layout.Dimensions{Size: image.Point{X: s, Y: s}}
+}
+
 // ─── Activity panel ─────────────────────────────────────────────────────────
 
 // activityEntry is one row in the activity feed. Backend wiring is deferred:

@@ -3,6 +3,9 @@ package sites
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/types"
 )
@@ -44,6 +50,28 @@ var (
 // characters that need shell-escaping.
 const snapshotTSFormat = "20060102T150405Z"
 
+// snapshotSep is the segment separator used between {slug, label, ts,
+// engineVersion}. Double-dash is unambiguous because:
+//   - Slugs (from gosimple/slug) only ever contain single hyphens.
+//   - Labels are validated against snapshotLabelPat which forbids `-`.
+//   - The timestamp uses [0-9TZ] only.
+//   - Engine+version are joined with a single `-`.
+const snapshotSep = "--"
+
+// Compression codec markers used in filenames.
+const (
+	codecGzip = "gzip"
+	codecZstd = "zstd"
+
+	extGzip = ".sql.gz"
+	extZstd = ".sql.zst"
+)
+
+// DefaultSnapshotCodec is the compression codec used for new snapshots.
+// zstd wins on speed and ratio for SQL dumps; gzip is still readable on
+// the way back so existing snapshots keep working.
+const DefaultSnapshotCodec = codecZstd
+
 // SnapshotInfo describes a stored snapshot for the GUI list view.
 type SnapshotInfo struct {
 	Filename    string    `json:"filename"`
@@ -55,6 +83,7 @@ type SnapshotInfo struct {
 	CreatedAt   time.Time `json:"createdAt"`
 	SizeBytes   int64     `json:"sizeBytes"`
 	Compression string    `json:"compression"`
+	HasChecksum bool      `json:"hasChecksum"`
 }
 
 // snapshotsDir returns the on-disk root for snapshots. ~/.locorum/snapshots/.
@@ -69,21 +98,22 @@ func (sm *SiteManager) snapshotsDir() (string, error) {
 }
 
 // Snapshot exports the site's database to ~/.locorum/snapshots/ as a
-// gzipped SQL file. Returns the absolute host path of the snapshot.
+// compressed SQL dump with a SHA-256 sidecar for integrity verification.
+// Returns the absolute host path of the snapshot.
 //
 // Design choices:
-//   - mysqldump runs via `wp db export` inside the PHP container — wp-cli
-//     handles the credential discovery and is already a hard dependency
-//     so we don't widen the attack surface.
-//   - The dump lands first inside the bind-mounted FilesDir (so the
-//     container has a valid write path), then is gzipped onto the host
-//     and the plaintext copy is removed. This avoids a long-lived
-//     plaintext SQL file readable by anyone with FilesDir access.
-//   - Gzip (not zstd) keeps the dependency surface stdlib-only. Snapshot
-//     speed for multi-GB DBs is the place to revisit later — see
-//     LEARNINGS.md §4.1.
-//   - Engine + version are encoded in the filename so RestoreSnapshot
-//     can reject mismatched restores (LEARNINGS.md F18, §4.6).
+//   - The dump streams direct from the database container's mysqldump
+//     stdout into the compressor on the host. No plaintext SQL ever
+//     touches FilesDir or any other disk location — closing a small but
+//     real exposure window where the dump was readable to anyone with
+//     site-files access.
+//   - Compression defaults to zstd; gzipped snapshots remain readable on
+//     restore so older snapshots survive the transition.
+//   - SHA-256 is computed in the same single-pass stream and persisted as
+//     `<file>.sha256`. Restore verifies before importing.
+//   - Engine + version are encoded in the filename so RestoreSnapshot can
+//     reject mismatched restores unless explicitly overridden
+//     (LEARNINGS.md F18, §4.6).
 //   - Pre/post-snapshot hooks fire so users can wire in their own
 //     pre-flight checks (e.g. flush caches) without modifying Locorum.
 func (sm *SiteManager) Snapshot(ctx context.Context, siteID, label string) (string, error) {
@@ -121,36 +151,74 @@ func (sm *SiteManager) snapshotLocked(ctx context.Context, site *types.Site, lab
 		return "", err
 	}
 
-	token, err := importToken()
-	if err != nil {
-		return "", err
-	}
-	stagingFilename := ".locorum-snapshot-" + token + ".sql"
-	hostStagingPath := filepath.Join(site.FilesDir, stagingFilename)
-	containerStagingPath := "/var/www/html/" + stagingFilename
-	cleanupStaging := func() {
-		if err := os.Remove(hostStagingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("snapshot: staging cleanup failed", "path", hostStagingPath, "err", err.Error())
-		}
-	}
-	defer cleanupStaging()
-
-	if _, err := sm.wpcli(ctx, site,
-		"db", "export", containerStagingPath,
-		"--add-drop-table",
-		"--default-character-set=utf8mb4",
-	); err != nil {
-		return "", fmt.Errorf("wp db export: %w", err)
-	}
-
-	finalName := buildSnapshotName(site.Slug, label, "mysql", site.MySQLVersion, time.Now().UTC())
+	eng := dbengine.Resolve(site)
+	finalName := buildSnapshotName(site.Slug, label, string(eng.Kind()), site.DBVersion, time.Now().UTC(), DefaultSnapshotCodec)
 	finalPath := filepath.Join(dir, finalName)
 
-	if err := gzipMoveAtomic(hostStagingPath, finalPath); err != nil {
-		return "", fmt.Errorf("compress snapshot: %w", err)
+	// Stream-and-hash: tee the engine's stdout through SHA-256 into the
+	// compressor into a tmpfile beside the destination. Atomic rename on
+	// success; partial files never appear in ListSnapshots.
+	tmp, err := os.CreateTemp(dir, ".locorum-snap-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanupTmp := func() { _ = os.Remove(tmpName) }
+
+	hasher := sha256.New()
+	cw, err := newCompressWriter(DefaultSnapshotCodec, tmp)
+	if err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
+		return "", fmt.Errorf("compressor: %w", err)
+	}
+	hashedW := io.MultiWriter(cw, hasher)
+
+	bytesWritten, snapErr := eng.Snapshot(ctx, sm.d, site, hashedW)
+	if snapErr != nil {
+		_ = cw.Close()
+		_ = tmp.Close()
+		cleanupTmp()
+		return "", fmt.Errorf("engine snapshot: %w", snapErr)
+	}
+	if err := cw.Close(); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
+		return "", fmt.Errorf("flush compressor: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
+		return "", fmt.Errorf("sync: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanupTmp()
+		return "", fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o640); err != nil {
+		cleanupTmp()
+		return "", fmt.Errorf("chmod: %w", err)
+	}
+	if err := os.Rename(tmpName, finalPath); err != nil {
+		cleanupTmp()
+		return "", fmt.Errorf("rename: %w", err)
 	}
 
-	slog.Info("snapshot: created", "site", site.Slug, "path", finalPath)
+	// Write the SHA-256 sidecar. Failure to write the sidecar is
+	// non-fatal — the snapshot itself is good; restore will warn that
+	// integrity verification was skipped.
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+	if err := writeChecksum(finalPath, checksum); err != nil {
+		slog.Warn("snapshot: failed to write checksum sidecar", "path", finalPath, "err", err.Error())
+	}
+
+	slog.Info("snapshot: created",
+		"site", site.Slug,
+		"db_engine", eng.Kind(),
+		"db_version", site.DBVersion,
+		"path", finalPath,
+		"plaintext_bytes", bytesWritten,
+	)
 
 	if err := sm.runHooks(ctx, hooks.PostSnapshot, site); err != nil {
 		// Snapshot is already on disk — log the post-hook failure and
@@ -161,21 +229,13 @@ func (sm *SiteManager) snapshotLocked(ctx context.Context, site *types.Site, lab
 	return finalPath, nil
 }
 
-// snapshotSep is the segment separator used between {slug, label, ts,
-// engineVersion}. Double-dash is unambiguous because:
-//   - Slugs (from gosimple/slug) only ever contain single hyphens.
-//   - Labels are validated against snapshotLabelPat which forbids `-`.
-//   - The timestamp uses [0-9TZ] only.
-//   - Engine+version are joined with a single `-`.
-const snapshotSep = "--"
-
 // buildSnapshotName assembles a deterministic filename. Format:
 //
-//	{slug}--{label}--{tsUTC}--{engine}-{version}.sql.gz
+//	{slug}--{label}--{tsUTC}--{engine}-{version}.sql.{gz|zst}
 //
 // All fields are sanitised so a hostile / unusual value can't escape the
 // filename via path separators or shell metacharacters.
-func buildSnapshotName(slug, label, engine, version string, ts time.Time) string {
+func buildSnapshotName(slug, label, engine, version string, ts time.Time, codec string) string {
 	engine = strings.ToLower(snapshotEnginePat.ReplaceAllString(strings.ToLower(engine), ""))
 	if engine == "" {
 		engine = "mysql"
@@ -184,12 +244,20 @@ func buildSnapshotName(slug, label, engine, version string, ts time.Time) string
 	if version == "" {
 		version = "unknown"
 	}
-	return strings.Join([]string{
+	stem := strings.Join([]string{
 		slug,
 		label,
 		ts.Format(snapshotTSFormat),
 		engine + "-" + version,
-	}, snapshotSep) + ".sql.gz"
+	}, snapshotSep)
+	switch codec {
+	case codecZstd:
+		return stem + extZstd
+	case codecGzip:
+		return stem + extGzip
+	default:
+		return stem + extZstd
+	}
 }
 
 // parseSnapshotName turns a filename back into a SnapshotInfo (without
@@ -197,10 +265,17 @@ func buildSnapshotName(slug, label, engine, version string, ts time.Time) string
 // unrecognised filenames; the caller silently ignores them so a stray
 // file in the snapshots dir doesn't break listings.
 func parseSnapshotName(name string) *SnapshotInfo {
-	if !strings.HasSuffix(name, ".sql.gz") {
+	var codec, stem string
+	switch {
+	case strings.HasSuffix(name, extZstd):
+		codec = codecZstd
+		stem = strings.TrimSuffix(name, extZstd)
+	case strings.HasSuffix(name, extGzip):
+		codec = codecGzip
+		stem = strings.TrimSuffix(name, extGzip)
+	default:
 		return nil
 	}
-	stem := strings.TrimSuffix(name, ".sql.gz")
 	parts := strings.Split(stem, snapshotSep)
 	if len(parts) != 4 {
 		return nil
@@ -213,9 +288,6 @@ func parseSnapshotName(name string) *SnapshotInfo {
 	if err != nil {
 		return nil
 	}
-	// Engine-version split on the LAST dash before any digit, matching
-	// the build-side format `{engine}-{version}` where engine is
-	// alphabetic and version starts with a digit.
 	engine, version := splitEngineVersion(ev)
 	if engine == "" {
 		return nil
@@ -227,7 +299,7 @@ func parseSnapshotName(name string) *SnapshotInfo {
 		CreatedAt:   ts,
 		Engine:      engine,
 		Version:     version,
-		Compression: "gzip",
+		Compression: codec,
 	}
 }
 
@@ -290,21 +362,57 @@ func (sm *SiteManager) ListSnapshots(slug string) ([]SnapshotInfo, error) {
 			info.SizeBytes = fi.Size()
 		}
 		info.HostPath = filepath.Join(dir, e.Name())
+		if _, err := os.Stat(info.HostPath + ".sha256"); err == nil {
+			info.HasChecksum = true
+		}
 		out = append(out, *info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
+// DeleteSnapshot removes a snapshot file (and its sidecar) by path. The
+// path is validated to live inside the snapshots dir so a hostile caller
+// cannot point us at /etc/passwd.
+func (sm *SiteManager) DeleteSnapshot(snapshotPath string) error {
+	dir, err := sm.snapshotsDir()
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("abs path: %w", err)
+	}
+	if !strings.HasPrefix(abs, dir+string(os.PathSeparator)) {
+		return fmt.Errorf("snapshot path %q is outside the snapshots dir", abs)
+	}
+	if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove snapshot: %w", err)
+	}
+	if err := os.Remove(abs + ".sha256"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("snapshot: remove sidecar", "path", abs+".sha256", "err", err.Error())
+	}
+	slog.Info("snapshot: deleted", "path", abs)
+	return nil
+}
+
+// RestoreSnapshotOptions controls the restore flow.
+type RestoreSnapshotOptions struct {
+	// AllowEngineMismatch lets a snapshot taken on a different engine /
+	// version restore into the current site. Used by the engine-migrate
+	// flow which deliberately swaps engines.
+	AllowEngineMismatch bool
+
+	// SkipChecksum disables SHA-256 verification before restore. Default
+	// false. Skip if the user is restoring a snapshot they trust without
+	// a sidecar.
+	SkipChecksum bool
+}
+
 // RestoreSnapshot reconstructs the database from a snapshot. The site
 // must be running. Engine compatibility is checked against the filename
 // metadata: a snapshot tagged `mysql8.0` will refuse to restore into a
-// `mysql5.7` site (LEARNINGS.md F18). The user can opt out with
-// AllowEngineMismatch=true if they know what they're doing.
-type RestoreSnapshotOptions struct {
-	AllowEngineMismatch bool
-}
-
+// `mysql5.7` site (LEARNINGS.md F18). Override with AllowEngineMismatch.
 func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath string, opts RestoreSnapshotOptions) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
@@ -318,8 +426,11 @@ func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath
 	}
 	info := parseSnapshotName(filepath.Base(snapshotPath))
 	if info != nil && !opts.AllowEngineMismatch {
-		if info.Version != "" && site.MySQLVersion != "" && info.Version != site.MySQLVersion {
-			return fmt.Errorf("snapshot engine %s%s does not match site engine mysql%s — pass AllowEngineMismatch to override", info.Engine, info.Version, site.MySQLVersion)
+		if info.Engine != "" && info.Engine != site.DBEngine {
+			return fmt.Errorf("snapshot engine %s does not match site engine %s — pass AllowEngineMismatch to override", info.Engine, site.DBEngine)
+		}
+		if info.Version != "" && site.DBVersion != "" && info.Version != site.DBVersion {
+			return fmt.Errorf("snapshot version %s does not match site version %s — pass AllowEngineMismatch to override", info.Version, site.DBVersion)
 		}
 	}
 
@@ -327,130 +438,303 @@ func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath
 	mu.Lock()
 	defer mu.Unlock()
 
-	token, err := importToken()
+	// Verify checksum first if a sidecar exists. We do this before
+	// touching the live database so a corrupt snapshot is rejected
+	// without leaving the DB in a half-restored state.
+	if !opts.SkipChecksum {
+		if err := verifyChecksum(snapshotPath); err != nil {
+			if !errors.Is(err, errNoChecksumSidecar) {
+				return fmt.Errorf("checksum verify: %w", err)
+			}
+			slog.Warn("snapshot: no checksum sidecar — restoring without verification",
+				"path", snapshotPath)
+		}
+	}
+
+	f, err := os.Open(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("open snapshot: %w", err)
+	}
+	defer f.Close()
+
+	dec, err := newDecompressReader(snapshotPath, f)
+	if err != nil {
+		return fmt.Errorf("decompress: %w", err)
+	}
+	if c, ok := dec.(io.Closer); ok && c != f {
+		defer c.Close()
+	}
+
+	eng := dbengine.Resolve(site)
+	if err := eng.Restore(ctx, sm.d, site, dec); err != nil {
+		return fmt.Errorf("engine restore: %w", err)
+	}
+	slog.Info("restore: complete",
+		"site", site.Slug,
+		"db_engine", eng.Kind(),
+		"from", snapshotPath,
+	)
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Codec helpers
+// ──────────────────────────────────────────────────────────────────────
+
+// compressWriter is an io.WriteCloser that finalises the codec footer on
+// Close. zstd's encoder needs explicit Close to flush; gzip the same.
+type compressWriter struct {
+	gz    *gzip.Writer
+	zw    *zstd.Encoder
+	codec string
+}
+
+func (c *compressWriter) Write(p []byte) (int, error) {
+	if c.gz != nil {
+		return c.gz.Write(p)
+	}
+	return c.zw.Write(p)
+}
+
+func (c *compressWriter) Close() error {
+	if c.gz != nil {
+		return c.gz.Close()
+	}
+	return c.zw.Close()
+}
+
+func newCompressWriter(codec string, w io.Writer) (*compressWriter, error) {
+	switch codec {
+	case codecGzip:
+		gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		if err != nil {
+			return nil, err
+		}
+		return &compressWriter{gz: gz, codec: codec}, nil
+	case codecZstd:
+		// SpeedDefault tracks "level 3" — best speed/ratio tradeoff for
+		// SQL dumps where we expect aggressive textual redundancy.
+		zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		if err != nil {
+			return nil, err
+		}
+		return &compressWriter{zw: zw, codec: codec}, nil
+	}
+	return nil, fmt.Errorf("unknown codec %q", codec)
+}
+
+// newDecompressReader returns an io.Reader over the snapshot file based on
+// its extension. The caller is responsible for closing the returned
+// reader if it implements io.Closer.
+func newDecompressReader(path string, src io.Reader) (io.Reader, error) {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, extZstd):
+		dec, err := zstd.NewReader(src)
+		if err != nil {
+			return nil, fmt.Errorf("zstd: %w", err)
+		}
+		// zstd.Decoder is io.ReadCloser; expose as such so the caller
+		// can close it via type assertion.
+		return decoderCloser{Decoder: dec}, nil
+	case strings.HasSuffix(lower, extGzip):
+		gr, err := gzip.NewReader(src)
+		if err != nil {
+			return nil, fmt.Errorf("gzip: %w", err)
+		}
+		return gr, nil
+	}
+	return nil, fmt.Errorf("unrecognised snapshot extension: %s", filepath.Ext(path))
+}
+
+// decoderCloser wraps zstd.Decoder so it satisfies io.Closer (Decoder.Close
+// returns nothing, but io.Closer wants `error`).
+type decoderCloser struct{ *zstd.Decoder }
+
+func (d decoderCloser) Close() error {
+	d.Decoder.Close()
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Checksum sidecar
+// ──────────────────────────────────────────────────────────────────────
+
+// errNoChecksumSidecar is returned when the .sha256 sidecar is absent.
+// Callers treat this as a soft warning (older snapshots predate the
+// sidecar feature).
+var errNoChecksumSidecar = errors.New("no checksum sidecar")
+
+func writeChecksum(snapshotPath, hexDigest string) error {
+	body := hexDigest + "  " + filepath.Base(snapshotPath) + "\n"
+	tmp, err := os.CreateTemp(filepath.Dir(snapshotPath), ".locorum-cs-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o640); err != nil {
+		cleanup()
+		return err
+	}
+	return os.Rename(tmpName, snapshotPath+".sha256")
+}
+
+func verifyChecksum(snapshotPath string) error {
+	expected, err := os.ReadFile(snapshotPath + ".sha256")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errNoChecksumSidecar
+		}
+		return fmt.Errorf("read sidecar: %w", err)
+	}
+	expectedHex := strings.TrimSpace(strings.SplitN(string(expected), " ", 2)[0])
+	if len(expectedHex) != 64 {
+		return fmt.Errorf("malformed checksum sidecar")
+	}
+	f, err := os.Open(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("open snapshot: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("read snapshot: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+	if actual != expectedHex {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHex, actual)
+	}
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Retention sweep
+// ──────────────────────────────────────────────────────────────────────
+
+// SnapshotRetentionPolicy bounds the on-disk snapshot count + age. Sweep
+// removes anything that exceeds either limit.
+type SnapshotRetentionPolicy struct {
+	// MaxPerSite caps the number of snapshots kept per site. The
+	// newest-N are kept; the older ones drop. 0 → unlimited.
+	MaxPerSite int `json:"maxPerSite"`
+
+	// MaxAge is the TTL after which a snapshot is removed regardless of
+	// the per-site count. 0 → no age limit.
+	MaxAge time.Duration `json:"maxAge"`
+}
+
+// DefaultRetentionPolicy is the in-tree fallback. ~/.locorum/snapshots/
+// can override via .policy.json.
+var DefaultRetentionPolicy = SnapshotRetentionPolicy{
+	MaxPerSite: 20,
+	MaxAge:     365 * 24 * time.Hour,
+}
+
+// LoadRetentionPolicy reads the on-disk policy, falling back to defaults
+// for missing or malformed files. Soft failure mode: a bad JSON file
+// should not stop Locorum from starting.
+func (sm *SiteManager) LoadRetentionPolicy() SnapshotRetentionPolicy {
+	dir, err := sm.snapshotsDir()
+	if err != nil {
+		return DefaultRetentionPolicy
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".policy.json"))
+	if err != nil {
+		return DefaultRetentionPolicy
+	}
+	var p SnapshotRetentionPolicy
+	if err := json.Unmarshal(body, &p); err != nil {
+		slog.Warn("snapshot: bad retention policy JSON, using defaults", "err", err.Error())
+		return DefaultRetentionPolicy
+	}
+	if p.MaxPerSite < 0 || p.MaxAge < 0 {
+		return DefaultRetentionPolicy
+	}
+	return p
+}
+
+// SaveRetentionPolicy persists the policy. Used by the settings UI.
+func (sm *SiteManager) SaveRetentionPolicy(p SnapshotRetentionPolicy) error {
+	dir, err := sm.snapshotsDir()
 	if err != nil {
 		return err
 	}
-	stagingFilename := ".locorum-restore-" + token + ".sql"
-	hostStagingPath := filepath.Join(site.FilesDir, stagingFilename)
-	containerStagingPath := "/var/www/html/" + stagingFilename
-	defer func() {
-		if err := os.Remove(hostStagingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("restore: staging cleanup failed", "err", err.Error())
+	body, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".policy-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, filepath.Join(dir, ".policy.json"))
+}
+
+// SweepSnapshots applies the retention policy. Called at startup and
+// after every successful snapshot. Logs each removal so a confused user
+// can audit. Returns the count removed.
+func (sm *SiteManager) SweepSnapshots(p SnapshotRetentionPolicy) (int, error) {
+	if p.MaxPerSite == 0 && p.MaxAge == 0 {
+		return 0, nil
+	}
+	all, err := sm.ListSnapshots("")
+	if err != nil {
+		return 0, err
+	}
+	bySite := map[string][]SnapshotInfo{}
+	for _, s := range all {
+		bySite[s.Slug] = append(bySite[s.Slug], s)
+	}
+	removed := 0
+	now := time.Now()
+	for _, group := range bySite {
+		// ListSnapshots returns newest first; index >= MaxPerSite is the
+		// "too many" tail.
+		for i, snap := range group {
+			drop := false
+			if p.MaxPerSite > 0 && i >= p.MaxPerSite {
+				drop = true
+			}
+			if !drop && p.MaxAge > 0 && now.Sub(snap.CreatedAt) > p.MaxAge {
+				drop = true
+			}
+			if !drop {
+				continue
+			}
+			if err := sm.DeleteSnapshot(snap.HostPath); err != nil {
+				slog.Warn("snapshot: sweep delete failed", "path", snap.HostPath, "err", err.Error())
+				continue
+			}
+			removed++
 		}
-	}()
-
-	if err := gunzipTo(snapshotPath, hostStagingPath); err != nil {
-		return fmt.Errorf("decompress: %w", err)
 	}
-
-	if _, err := sm.wpDBImport(ctx, site, containerStagingPath); err != nil {
-		return fmt.Errorf("wp db import: %w", err)
+	if removed > 0 {
+		slog.Info("snapshot: retention sweep complete", "removed", removed)
 	}
-	slog.Info("restore: complete", "site", site.Slug, "from", snapshotPath)
-	return nil
-}
-
-// gzipMoveAtomic compresses src to dst+".tmp.gz" and renames into place
-// after fsync. Removes src on success. Atomic: a partial dst is never
-// visible to ListSnapshots.
-func gzipMoveAtomic(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open src: %w", err)
-	}
-	defer in.Close()
-
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".locorum-snap-*.gz")
-	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanupTmp := func() { _ = os.Remove(tmpName) }
-
-	gw, err := gzip.NewWriterLevel(tmp, gzip.BestSpeed)
-	if err != nil {
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("gzip writer: %w", err)
-	}
-	if _, err := io.Copy(gw, in); err != nil {
-		_ = gw.Close()
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("compress: %w", err)
-	}
-	if err := gw.Close(); err != nil {
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("close gzip: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("close tmp: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o640); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("chmod tmp: %w", err)
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("rename: %w", err)
-	}
-	if err := os.Remove(src); err != nil {
-		// Failure to remove src is non-fatal — the snapshot is on disk;
-		// the staging file just lingers until the next snapshot or a
-		// manual cleanup. Log and continue.
-		slog.Warn("snapshot: failed to remove staging file", "path", src, "err", err.Error())
-	}
-	return nil
-}
-
-// gunzipTo decompresses src.gz to dst atomically.
-func gunzipTo(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open src: %w", err)
-	}
-	defer in.Close()
-	gr, err := gzip.NewReader(in)
-	if err != nil {
-		return fmt.Errorf("gzip reader: %w", err)
-	}
-	defer gr.Close()
-
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".locorum-restore-*.sql")
-	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanupTmp := func() { _ = os.Remove(tmpName) }
-	if _, err := io.Copy(tmp, gr); err != nil {
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("decompress: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanupTmp()
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("close tmp: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o640); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("chmod: %w", err)
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		cleanupTmp()
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	return removed, nil
 }

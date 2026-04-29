@@ -14,7 +14,9 @@ func builderTestSite() *types.Site {
 		Domain:       "demo.localhost",
 		FilesDir:     "/tmp/demo",
 		PHPVersion:   "8.2",
-		MySQLVersion: "8.0",
+		DBEngine:     "mysql",
+		DBVersion:    "8.0",
+		MySQLVersion: "8.0", // legacy mirror retained for one minor
 		RedisVersion: "7",
 		WebServer:    "nginx",
 		DBPassword:   "supersecret",
@@ -33,7 +35,8 @@ func TestBuilders_AllProduceHardenedDefaults(t *testing.T) {
 	specs := []ContainerSpec{
 		NginxWebSpec(site, "/home/x"),
 		ApacheWebSpec(site, "/home/x"),
-		DatabaseSpec(site, "/home/x"),
+		// DatabaseSpec moved to internal/dbengine/{mysql,mariadb}.go;
+		// hardened-defaults coverage there.
 		RedisSpec(site),
 		MailSpec(),
 		AdminerSpec(),
@@ -100,32 +103,14 @@ func TestPHPSpec_PasswordOnlyInEnvSecrets(t *testing.T) {
 	}
 }
 
-func TestDatabaseSpec_AllPasswordsInEnvSecrets(t *testing.T) {
-	site := builderTestSite()
-	spec := DatabaseSpec(site, "/home/x")
-
-	for _, e := range spec.Env {
-		if strings.Contains(e, site.DBPassword) {
-			t.Errorf("plaintext password in Env entry: %q", e)
-		}
-	}
-	keys := map[string]bool{}
-	for _, sec := range spec.EnvSecrets {
-		keys[sec.Key] = sec.Value == site.DBPassword
-	}
-	for _, want := range []string{"MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD"} {
-		if !keys[want] {
-			t.Errorf("%s missing from EnvSecrets", want)
-		}
-	}
-}
+// DatabaseSpec password / healthcheck coverage now lives in
+// internal/dbengine/mysql_test.go and mariadb_test.go.
 
 func TestSpec_HealthcheckRequired(t *testing.T) {
 	site := builderTestSite()
 	for _, spec := range []ContainerSpec{
 		NginxWebSpec(site, "/home/x"),
 		PHPSpec(site, "/home/x"),
-		DatabaseSpec(site, "/home/x"),
 		RedisSpec(site),
 		MailSpec(),
 		AdminerSpec(),

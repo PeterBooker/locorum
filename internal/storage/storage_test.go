@@ -71,6 +71,41 @@ func TestAddAndGetSite(t *testing.T) {
 	if got.DBPassword != "secret123" {
 		t.Errorf("DBPassword = %q, want %q", got.DBPassword, "secret123")
 	}
+	// hydrateLegacyDBFields fills DBEngine/DBVersion from MySQLVersion
+	// for rows that pre-date the multi-engine schema.
+	if got.DBEngine != "mysql" {
+		t.Errorf("DBEngine = %q, want %q", got.DBEngine, "mysql")
+	}
+	if got.DBVersion != "8.0" {
+		t.Errorf("DBVersion = %q, want %q", got.DBVersion, "8.0")
+	}
+}
+
+func TestAddSite_NewMultiEngineFields(t *testing.T) {
+	st := newStorage(t)
+	site := &types.Site{
+		ID: "id-mariadb", Name: "MariaSite", Slug: "mariasite",
+		Domain: "mariasite.localhost", FilesDir: "/tmp/mariasite", PublicDir: "/",
+		DBEngine: "mariadb", DBVersion: "11.4",
+		PublishDBPort: true, DBPassword: "pw",
+	}
+	if err := st.AddSite(site); err != nil {
+		t.Fatalf("AddSite() = %v", err)
+	}
+	got, err := st.GetSite("id-mariadb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DBEngine != "mariadb" || got.DBVersion != "11.4" {
+		t.Errorf("got %+v", got)
+	}
+	if !got.PublishDBPort {
+		t.Error("PublishDBPort lost on round-trip")
+	}
+	// Legacy mirror remains empty for mariadb sites.
+	if got.MySQLVersion != "" {
+		t.Errorf("MySQLVersion mirror should stay empty for mariadb, got %q", got.MySQLVersion)
+	}
 }
 
 func TestGetSites(t *testing.T) {

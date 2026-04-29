@@ -12,6 +12,30 @@ import (
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
+func TestComputeWPURLs(t *testing.T) {
+	cases := []struct {
+		domain, publicDir string
+		wantHome          string
+		wantSiteURL       string
+	}{
+		{"peter.localhost", "/", "https://peter.localhost", "https://peter.localhost"},
+		{"peter.localhost", "", "https://peter.localhost", "https://peter.localhost"},
+		{"peter.localhost", ".", "https://peter.localhost", "https://peter.localhost"},
+		{"site.localhost", "/web", "https://site.localhost", "https://site.localhost/web"},
+		{"site.localhost", "web", "https://site.localhost", "https://site.localhost/web"},
+	}
+	for _, c := range cases {
+		s := &types.Site{Domain: c.domain, PublicDir: c.publicDir}
+		gotHome, gotSiteURL := computeWPURLs(s)
+		if gotHome != c.wantHome {
+			t.Errorf("computeWPURLs(%q,%q) home = %q, want %q", c.domain, c.publicDir, gotHome, c.wantHome)
+		}
+		if gotSiteURL != c.wantSiteURL {
+			t.Errorf("computeWPURLs(%q,%q) siteurl = %q, want %q", c.domain, c.publicDir, gotSiteURL, c.wantSiteURL)
+		}
+	}
+}
+
 func TestPhpSingleQuoteEscape(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{``, ``},
@@ -218,6 +242,8 @@ func TestEmbeddedWPConfigTemplatesParseAndRender(t *testing.T) {
 		DBPassword: "p4ss'wd\\test",
 		Domain:     "example.localhost",
 		Multisite:  "subdomain",
+		WPHome:     "https://example.localhost",
+		WPSiteURL:  "https://example.localhost",
 	}
 
 	mainOut, err := renderTemplate(efs, "config/wordpress/wp-config.tmpl.php", data)
@@ -251,7 +277,8 @@ func TestEmbeddedWPConfigTemplatesParseAndRender(t *testing.T) {
 			need: []string{
 				"#locorum-generated",
 				"HTTP_X_FORWARDED_PROTO",
-				"LOCORUM_PRIMARY_URL",
+				"WP_HOME',    'https://example.localhost'",
+				"WP_SITEURL', 'https://example.localhost'",
 				"WP_DEBUG",
 				"WP_ALLOW_MULTISITE",
 				"SUBDOMAIN_INSTALL',     true",

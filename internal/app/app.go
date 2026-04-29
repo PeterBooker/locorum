@@ -161,11 +161,16 @@ func (a *App) SetupFilesystem() error {
 		path.Join(a.homeDir, ".locorum", "config", "nginx", "global.conf"),
 		path.Join(a.homeDir, ".locorum", "config", "nginx", "map.tmpl"),
 		path.Join(a.homeDir, ".locorum", "config", "nginx", "map.conf"),
+		// pre-multi-engine MySQL config; superseded by
+		// config/dbengine/{mysql,mariadb}/locorum.cnf.
+		path.Join(a.homeDir, ".locorum", "config", "db", "db.cnf"),
 	} {
 		_ = os.Remove(p)
 	}
 	for _, d := range []string{
 		path.Join(a.homeDir, ".locorum", "config", "certs"),
+		// Empty out the legacy config/db dir on first run with the new layout.
+		path.Join(a.homeDir, ".locorum", "config", "db"),
 	} {
 		_ = os.RemoveAll(d)
 	}

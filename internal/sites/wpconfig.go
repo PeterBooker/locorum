@@ -58,11 +58,38 @@ func phpSingleQuoteEscape(s string) string {
 
 // wpConfigData is the template input shared by both files. Multisite is
 // the canonical "" / "subdirectory" / "subdomain" string from types.Site.
+//
+// WPHome and WPSiteURL are precomputed in Go and baked directly into the
+// rendered template. Earlier versions read the URL from a LOCORUM_PRIMARY_URL
+// env var via getenv() at PHP request time; PHP-FPM's default `clear_env=yes`
+// strips that env var before scripts run, so the fallback ("http://localhost")
+// silently won and every site landed at https://localhost/wp-admin/ once
+// is_ssl() flipped the scheme. The file is regenerated on every site start
+// anyway, so baking the URL in costs nothing.
 type wpConfigData struct {
 	Salts      map[string]string
 	DBPassword string
 	Domain     string
 	Multisite  string
+	WPHome     string
+	WPSiteURL  string
+}
+
+// computeWPURLs derives WP_HOME and WP_SITEURL from the site's domain and
+// PublicDir. Mirrors the historical env-var logic so existing sites see no
+// behavioural change beyond "URLs are now correct under PHP-FPM".
+//
+// WP_SITEURL = WP_HOME + "/" + docroot, where docroot is the PublicDir
+// stripped of leading slashes. For typical sites (PublicDir="/") docroot is
+// empty and WP_SITEURL == WP_HOME.
+func computeWPURLs(site *types.Site) (home, siteurl string) {
+	home = "https://" + site.Domain
+	siteurl = home
+	doc := strings.TrimLeft(site.PublicDir, "/")
+	if doc != "" && doc != "." {
+		siteurl = home + "/" + doc
+	}
+	return home, siteurl
 }
 
 // wpDocrootDir resolves the on-disk directory that should contain
@@ -101,11 +128,14 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 		return fmt.Errorf("decode salts: %w", err)
 	}
 
+	wpHome, wpSiteURL := computeWPURLs(site)
 	data := wpConfigData{
 		Salts:      salts,
 		DBPassword: site.DBPassword,
 		Domain:     site.Domain,
 		Multisite:  site.Multisite,
+		WPHome:     wpHome,
+		WPSiteURL:  wpSiteURL,
 	}
 
 	dir := wpDocrootDir(site)

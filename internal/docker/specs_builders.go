@@ -231,49 +231,9 @@ func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 	}
 }
 
-// DatabaseSpec builds the per-site MySQL container spec. Both passwords use
-// EnvSecret so plaintext stays out of Locorum-emitted error strings.
-func DatabaseSpec(site *types.Site, homeDir string) ContainerSpec {
-	name := SiteContainerName(site.Slug, "database")
-	netName := SiteNetworkName(site.Slug)
-	dbConfPath := filepath.Join(homeDir, ".locorum", "config", "db", "db.cnf")
-	return ContainerSpec{
-		Name:   name,
-		Image:  version.MySQLImagePrefix + site.MySQLVersion,
-		Tty:    true,
-		Cmd:    []string{"mysqld", "--innodb-flush-method=fsync"},
-		Labels: PlatformLabels(RoleDatabase, site.Slug, version.Version),
-		Env: []string{
-			"MYSQL_DATABASE=wordpress",
-			"MYSQL_USER=wordpress",
-		},
-		EnvSecrets: []EnvSecret{
-			{Key: "MYSQL_ROOT_PASSWORD", Value: site.DBPassword},
-			{Key: "MYSQL_PASSWORD", Value: site.DBPassword},
-		},
-		Mounts: []Mount{
-			{Volume: &VolumeMount{Name: SiteVolumeName(site.Slug), Target: "/var/lib/mysql"}},
-			{Bind: &BindMount{Source: dbConfPath, Target: "/etc/mysql/conf.d/locorum.cnf", ReadOnly: true}},
-		},
-		Networks: []NetworkAttachment{
-			{Network: netName, Aliases: []string{"database"}},
-			{Network: GlobalNetwork},
-		},
-		Healthcheck: &Healthcheck{
-			// mysqladmin ping respects MYSQL_PWD so we don't need the password
-			// on the command line. The image always ships mysqladmin.
-			Test:        []string{"CMD-SHELL", "MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"},
-			Interval:    2 * time.Second,
-			Timeout:     5 * time.Second,
-			Retries:     60,
-			StartPeriod: 5 * time.Second,
-		},
-		Security:  hardenedSecurity("CHOWN", "SETGID", "SETUID", "DAC_OVERRIDE", "FOWNER", "FSETID"),
-		Resources: resourceDefaults(),
-		Init:      true,
-		Restart:   RestartNo,
-	}
-}
+// Database container specs live in the dbengine package — see
+// internal/dbengine/{mysql,mariadb}.go. The site-spec assembler in
+// internal/sites/sites.go:serviceSpecs routes through dbengine.Resolve(site).
 
 // RedisSpec builds the per-site Redis container spec.
 func RedisSpec(site *types.Site) ContainerSpec {

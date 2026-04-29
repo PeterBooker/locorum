@@ -39,6 +39,10 @@ type Engine struct {
 	WaitedFor    []string
 	ChownVolumes []ChownEvent
 	ChownPaths   []ChownEvent
+
+	// One-shot helpers for §7 of DATABASE.md (volume marker).
+	OneShotCalls  []OneShotCall
+	OneShotScript []OneShotScripted
 }
 
 // Container is the fake's record of a created container.
@@ -303,6 +307,40 @@ func (e *Engine) ProviderInfo(_ context.Context) (docker.ProviderInfo, error) {
 }
 
 func (e *Engine) Ping(_ context.Context) error { return e.PingErr }
+
+// RunOneShotCapture is a recorded one-shot run. Tests pre-load
+// OneShotScript with the responses to return for each call in order.
+func (e *Engine) RunOneShotCapture(_ context.Context, name, image string, cmd []string, mounts []docker.OneShotMount) (docker.OneShotResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.OneShotCalls = append(e.OneShotCalls, OneShotCall{Name: name, Image: image, Cmd: copyStrings(cmd), Mounts: mounts})
+	if len(e.OneShotScript) == 0 {
+		return docker.OneShotResult{}, nil
+	}
+	r := e.OneShotScript[0]
+	e.OneShotScript = e.OneShotScript[1:]
+	return r.Result, r.Err
+}
+
+// OneShotCall records one RunOneShotCapture invocation.
+type OneShotCall struct {
+	Name   string
+	Image  string
+	Cmd    []string
+	Mounts []docker.OneShotMount
+}
+
+// OneShotScripted is one queued response.
+type OneShotScripted struct {
+	Result docker.OneShotResult
+	Err    error
+}
+
+func copyStrings(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
 
 func labelsMatch(have, want map[string]string) bool {
 	for k, v := range want {

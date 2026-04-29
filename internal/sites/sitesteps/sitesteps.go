@@ -378,6 +378,8 @@ func (s *FuncStep) Rollback(ctx context.Context) error {
 var (
 	_ orch.Step = (*EnsureNetworkStep)(nil)
 	_ orch.Step = (*EnsureVolumeStep)(nil)
+	_ orch.Step = (*EnsureMarkerStep)(nil)
+	_ orch.Step = (*WriteMarkerStep)(nil)
 	_ orch.Step = (*PullImagesStep)(nil)
 	_ orch.Step = (*ChownStep)(nil)
 	_ orch.Step = (*CreateContainersStep)(nil)
