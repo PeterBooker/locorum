@@ -49,7 +49,10 @@ func main() {
 
 	d := docker.New()
 
-	mkcert := tlspkg.NewMkcert(filepath.Join(homeDir, ".locorum", "certs"))
+	mkcert := tlspkg.NewMkcert(
+		filepath.Join(homeDir, ".locorum", "certs"),
+		filepath.Join(homeDir, ".locorum", "bin"),
+	)
 
 	rtr, err := traefik.New(traefik.Config{
 		HomeDir:    homeDir,
@@ -113,11 +116,15 @@ func main() {
 			slog.Warn("snapshot: retention sweep failed", "err", err.Error())
 		}
 
-		if status, err := mkcert.Available(context.Background()); err == nil && !status.CATrusted {
-			userInterface.State.SetNotice(status.Message)
-		} else {
-			userInterface.State.SetNotice("")
+		// Defensive activity-feed sweep. AppendActivity already enforces
+		// retention on every insert; this guards against drift if the cap
+		// is reduced or rows arrived from a process running an older
+		// schema.
+		if err := sm.SweepActivity(); err != nil {
+			slog.Warn("activity: retention sweep failed", "err", err.Error())
 		}
+
+		refreshTLSNotice(mkcert, userInterface.State)
 
 		userInterface.State.SetInitDone()
 	}
@@ -159,6 +166,29 @@ func main() {
 	}()
 
 	app.Main()
+}
+
+// refreshTLSNotice reads the current mkcert status and updates the banner.
+// When the local CA isn't trusted, the banner gets an action button that
+// downloads mkcert (if needed) and runs `mkcert -install` in a goroutine,
+// then re-reads the status. Re-entrant: callers may invoke after every
+// successful or failed install attempt.
+func refreshTLSNotice(mkcert *tlspkg.Mkcert, state *ui.UIState) {
+	status, err := mkcert.Available(context.Background())
+	if err != nil || status.CATrusted {
+		state.SetNotice("")
+		return
+	}
+	state.SetNoticeWithAction(status.Message, "Set up trusted HTTPS", func() {
+		go func() {
+			defer state.SetNoticeBusy(false)
+			if err := mkcert.InstallCA(context.Background()); err != nil {
+				slog.Warn("mkcert install failed", "err", err.Error())
+				state.ShowError("Could not set up trusted HTTPS: " + err.Error())
+			}
+			refreshTLSNotice(mkcert, state)
+		}()
+	})
 }
 
 // pollServicesHealth refreshes the rolled-up health of Locorum's global

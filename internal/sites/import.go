@@ -169,7 +169,7 @@ func (sm *SiteManager) ImportDB(ctx context.Context, siteID, hostPath string, op
 		},
 	}
 
-	res := sm.runPlan(ctx, site.ID, plan)
+	res := sm.runPlan(ctx, site, plan)
 	if res.FinalError != nil {
 		return res.FinalError
 	}

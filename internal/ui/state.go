@@ -9,8 +9,20 @@ import (
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// ActivityRecentMax caps the per-site row count cached for the overview
+// panel. Mirrors sites.activityRecentLimit; declared here so the UI layer
+// is self-contained.
+const ActivityRecentMax = 5
+
+// ActivityFullMax caps the per-site row count cached for the Activity tab.
+// The DB enforces the same retention via storage.ActivityRetentionDefault;
+// duplicating the constant here means the UI never holds more than the
+// designed maximum even if a future schema change widens retention.
+const ActivityFullMax = 200
 
 // MaxHookOutputLinesPerSite caps how many output lines we keep in memory
 // for a site's live-output panel. Older lines are dropped (the on-disk run
@@ -84,8 +96,13 @@ type UIState struct {
 	linkCheckLoading bool
 
 	// Persistent informational notice (e.g. "install mkcert"). Distinct
-	// from errorMessage, which is transient and red.
-	notice string
+	// from errorMessage, which is transient and red. When noticeAction is
+	// non-nil, the banner renders an action button; noticeBusy mutes that
+	// button while the action is in flight.
+	notice            string
+	noticeAction      func()
+	noticeActionLabel string
+	noticeBusy        bool
 
 	// Window reference for triggering invalidation from background goroutines.
 	window *app.Window
@@ -100,9 +117,25 @@ type UIState struct {
 	// start of a new lifecycle method (StartSite, StopSite, etc).
 	lifecycleState map[string]*lifecycleSiteState
 
+	// Activity feed cache — keyed by siteID. Populated by background
+	// loaders and OnActivityAppended; the UI reads via the snapshot
+	// helpers below so Layout() never holds the mutex while iterating.
+	activityState map[string]*activitySiteCache
+
 	// Aggregate health of the global services (router, mail, adminer).
 	// Polled from the main goroutine; written via SetServicesHealth.
 	servicesHealth ServicesHealth
+}
+
+// activitySiteCache mirrors a slice of recent activity rows for one site.
+// The recent slice is bounded to ActivityRecentMax for the overview panel;
+// the full slice is bounded to ActivityFullMax for the Activity tab and is
+// only populated when the user opens that tab — fullLoaded distinguishes
+// "loaded, empty" from "not yet loaded".
+type activitySiteCache struct {
+	recent     []storage.ActivityEvent
+	full       []storage.ActivityEvent
+	fullLoaded bool
 }
 
 // ServicesHealth captures the rolled-up health of Locorum's global
@@ -160,6 +193,7 @@ func NewUIState() *UIState {
 		siteToggling:   make(map[string]bool),
 		hookState:      make(map[string]*hookSiteState),
 		lifecycleState: make(map[string]*lifecycleSiteState),
+		activityState:  make(map[string]*activitySiteCache),
 	}
 }
 
@@ -615,20 +649,77 @@ func (s *UIState) GetLinkCheckState() (output string, loading bool) {
 
 // ─── Notice ─────────────────────────────────────────────────────────────────
 
-// SetNotice sets a persistent informational banner (or clears it with "").
-// Used for non-fatal status like "mkcert not installed — HTTPS will be
-// untrusted".
+// NoticeSnapshot is a frame-stable copy of the notice banner state. The
+// Layout pass reads this once per frame so it can render the message and
+// (optionally) an action button without holding the state mutex.
+type NoticeSnapshot struct {
+	Message     string
+	ActionLabel string
+	HasAction   bool
+	Busy        bool
+}
+
+// SetNotice sets a persistent informational banner with no action button
+// (or clears it with ""). Used for non-fatal status like "HTTPS will be
+// untrusted". Always clears any prior action callback.
 func (s *UIState) SetNotice(msg string) {
 	s.mu.Lock()
 	s.notice = msg
+	s.noticeAction = nil
+	s.noticeActionLabel = ""
+	s.noticeBusy = false
 	s.mu.Unlock()
 	s.Invalidate()
 }
 
-func (s *UIState) GetNotice() string {
+// SetNoticeWithAction sets a persistent banner with an action button. The
+// callback fires when the user clicks the button; it should kick off any
+// long-running work in its own goroutine and call SetNoticeBusy to gate
+// double-clicks.
+func (s *UIState) SetNoticeWithAction(msg, label string, action func()) {
+	s.mu.Lock()
+	s.notice = msg
+	s.noticeActionLabel = label
+	s.noticeAction = action
+	s.noticeBusy = false
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// SetNoticeBusy gates the banner action button while a triggered task is
+// in flight, swapping the label for an in-progress hint.
+func (s *UIState) SetNoticeBusy(busy bool) {
+	s.mu.Lock()
+	s.noticeBusy = busy
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// NoticeSnapshot returns the current banner state as a frame-stable copy.
+func (s *UIState) NoticeSnapshot() NoticeSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.notice
+	return NoticeSnapshot{
+		Message:     s.notice,
+		ActionLabel: s.noticeActionLabel,
+		HasAction:   s.noticeAction != nil,
+		Busy:        s.noticeBusy,
+	}
+}
+
+// TriggerNoticeAction invokes the banner's action callback (if any). Returns
+// true if a callback was registered. Read under the mutex so a concurrent
+// SetNotice can't race the read against execution.
+func (s *UIState) TriggerNoticeAction() bool {
+	s.mu.Lock()
+	action := s.noticeAction
+	busy := s.noticeBusy
+	s.mu.Unlock()
+	if action == nil || busy {
+		return false
+	}
+	action()
+	return true
 }
 
 // ─── Hook live state ───────────────────────────────────────────────────────
@@ -859,5 +950,140 @@ func (s *UIState) HookSnapshot(siteID string) HookSnapshot {
 	}
 	out.Lines = make([]hookLine, len(st.lines))
 	copy(out.Lines, st.lines)
+	return out
+}
+
+// ─── Activity feed cache ───────────────────────────────────────────────────
+
+// activityCacheFor returns the per-site cache, creating it on first
+// access. Caller must hold s.mu.
+func (s *UIState) activityCacheFor(siteID string) *activitySiteCache {
+	c, ok := s.activityState[siteID]
+	if !ok {
+		c = &activitySiteCache{}
+		s.activityState[siteID] = c
+	}
+	return c
+}
+
+// SetActivityRecent replaces the recent-rows cache for siteID. Caller is
+// responsible for fetching newest-first; this method does not re-sort.
+//
+// The slice is copied (not retained) so the caller can recycle the input.
+// If evs is longer than ActivityRecentMax, only the first N entries are
+// kept — the recent panel never renders more than that.
+func (s *UIState) SetActivityRecent(siteID string, evs []storage.ActivityEvent) {
+	if siteID == "" {
+		return
+	}
+	n := len(evs)
+	if n > ActivityRecentMax {
+		n = ActivityRecentMax
+	}
+	cp := make([]storage.ActivityEvent, n)
+	copy(cp, evs[:n])
+
+	s.mu.Lock()
+	c := s.activityCacheFor(siteID)
+	c.recent = cp
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// SetActivityFull replaces the full-rows cache for siteID and marks the
+// full cache as loaded. Mirrors SetActivityRecent's copy semantics.
+//
+// If evs is longer than ActivityFullMax, only the newest N are kept.
+func (s *UIState) SetActivityFull(siteID string, evs []storage.ActivityEvent) {
+	if siteID == "" {
+		return
+	}
+	n := len(evs)
+	if n > ActivityFullMax {
+		n = ActivityFullMax
+	}
+	cp := make([]storage.ActivityEvent, n)
+	copy(cp, evs[:n])
+
+	s.mu.Lock()
+	c := s.activityCacheFor(siteID)
+	c.full = cp
+	c.fullLoaded = true
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// AppendActivity prepends ev to both the recent and (if loaded) full cache
+// for siteID, trimming each to its respective cap. Used from the
+// OnActivityAppended callback.
+//
+// The full cache is only mutated if it was previously loaded — otherwise
+// the row is on disk and will appear next time the Activity tab is opened.
+// This avoids growing an unbounded cache for sites the user never visits.
+func (s *UIState) AppendActivity(siteID string, ev storage.ActivityEvent) {
+	if siteID == "" {
+		return
+	}
+	s.mu.Lock()
+	c := s.activityCacheFor(siteID)
+	c.recent = prependCap(c.recent, ev, ActivityRecentMax)
+	if c.fullLoaded {
+		c.full = prependCap(c.full, ev, ActivityFullMax)
+	}
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// ActivityRecent returns a snapshot copy of the cached recent rows for
+// siteID. Returns an empty slice (not nil) if no cache entry exists.
+func (s *UIState) ActivityRecent(siteID string) []storage.ActivityEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.activityState[siteID]
+	if !ok {
+		return nil
+	}
+	out := make([]storage.ActivityEvent, len(c.recent))
+	copy(out, c.recent)
+	return out
+}
+
+// ActivityFull returns a snapshot copy of the cached full rows for siteID
+// and a flag indicating whether the full cache has been populated. The
+// caller uses the flag to decide whether to kick off a load.
+func (s *UIState) ActivityFull(siteID string) ([]storage.ActivityEvent, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.activityState[siteID]
+	if !ok || !c.fullLoaded {
+		return nil, false
+	}
+	out := make([]storage.ActivityEvent, len(c.full))
+	copy(out, c.full)
+	return out, true
+}
+
+// ClearActivity drops the cache entry for siteID. Called when a site is
+// removed so we don't leak per-site state for the lifetime of the process.
+func (s *UIState) ClearActivity(siteID string) {
+	s.mu.Lock()
+	delete(s.activityState, siteID)
+	s.mu.Unlock()
+}
+
+// prependCap returns a new slice with v at the head, dst tail-truncated
+// to keep len <= max. dst is not retained; the result is a fresh backing
+// array, so callers may safely write to either.
+func prependCap(dst []storage.ActivityEvent, v storage.ActivityEvent, max int) []storage.ActivityEvent {
+	if max <= 0 {
+		return dst[:0]
+	}
+	keep := len(dst)
+	if keep >= max {
+		keep = max - 1
+	}
+	out := make([]storage.ActivityEvent, 0, keep+1)
+	out = append(out, v)
+	out = append(out, dst[:keep]...)
 	return out
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -15,6 +16,7 @@ import (
 	"github.com/sqweek/dialog"
 
 	"github.com/PeterBooker/locorum/internal/sites"
+	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -23,11 +25,12 @@ const (
 	tabDatabase  = 1
 	tabUtilities = 2
 	tabHooks     = 3
-	tabMail      = 4
-	tabLogs      = 5
+	tabActivity  = 4
+	tabMail      = 5
+	tabLogs      = 6
 )
 
-var tabLabels = []string{"Overview", "Database", "Utilities", "Hooks", "Mail", "Logs"}
+var tabLabels = []string{"Overview", "Database", "Utilities", "Hooks", "Activity", "Mail", "Logs"}
 
 // SiteDetail is column 3: a header bar (avatar/name/domain/status pill +
 // action buttons), a tab strip, and the active tab's body content. Hosts
@@ -41,7 +44,7 @@ type SiteDetail struct {
 
 	// Tabs
 	activeTab int
-	tabClicks [6]widget.Clickable
+	tabClicks [7]widget.Clickable
 
 	// Header-bar actions (running-only unless noted)
 	startBtn     widget.Clickable
@@ -81,6 +84,12 @@ type SiteDetail struct {
 	versionEditor  *VersionEditor
 	linkChecker    *LinkChecker
 	hooksPanel     *HooksPanel
+	activityTab    *ActivityTab
+
+	// recentActivityLoadedFor records the last site for which we kicked
+	// off a recent-activity load. Stops Layout() from spawning a fresh
+	// goroutine on every frame for the same site.
+	recentActivityLoadedFor string
 
 	// Docker init error
 	retryInitBtn widget.Clickable
@@ -102,6 +111,7 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications)
 		versionEditor:  NewVersionEditor(state, sm, toasts),
 		linkChecker:    NewLinkChecker(state, sm),
 		hooksPanel:     NewHooksPanel(state, sm, sm, toasts),
+		activityTab:    NewActivityTab(state, sm),
 	}
 	sd.list.List.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
@@ -150,6 +160,8 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 		}
 	case tabHooks:
 		sd.hooksPanel.HandleUserInteractions(gtx, site.ID)
+	case tabActivity:
+		sd.activityTab.HandleUserInteractions(gtx)
 	case tabLogs:
 		if site.Started {
 			sd.logViewer.HandleUserInteractions(gtx, site.ID)
@@ -157,6 +169,9 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 	default: // tabOverview
 		sd.handleOverviewClicks(gtx, site)
 		sd.versionEditor.HandleUserInteractions(gtx, site)
+		if sd.activityViewAllBtn.Clicked(gtx) {
+			sd.activeTab = tabActivity
+		}
 	}
 }
 
@@ -479,6 +494,8 @@ func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *Theme, site *type
 		return sd.layoutUtilitiesTab(gtx, th, site)
 	case tabHooks:
 		return sd.hooksPanel.Layout(gtx, th, site.ID)
+	case tabActivity:
+		return sd.activityTab.Layout(gtx, th, site.ID)
 	case tabMail:
 		return sd.layoutMailTab(gtx, th)
 	case tabLogs:
@@ -488,20 +505,24 @@ func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *Theme, site *type
 	}
 }
 
-// layoutOverviewTab renders the environment grid + secondary actions row +
-// version editor. Snapshots/Activity panels are intentionally omitted.
+// layoutOverviewTab renders the environment grid + activity feed + secondary
+// actions row + version editor.
 func (sd *SiteDetail) layoutOverviewTab(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	if sd.lastSiteID != site.ID {
 		sd.lastSiteID = site.ID
 		sd.publicDirEditor.SetText(site.PublicDir)
 	}
+	sd.ensureRecentActivityLoaded(site.ID)
+
+	rows := sd.state.ActivityRecent(site.ID)
+	entries := overviewActivityEntries(rows, time.Now())
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return sd.layoutEnvPanel(gtx, th, site)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return activityPanel(gtx, th, stubActivityEntries(site), &sd.activityViewAllBtn)
+			return activityPanel(gtx, th, entries, &sd.activityViewAllBtn)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return sd.layoutSecondaryActions(gtx, th, site)
@@ -517,19 +538,40 @@ func (sd *SiteDetail) layoutOverviewTab(gtx layout.Context, th *Theme, site *typ
 	)
 }
 
-// stubActivityEntries returns a hardcoded activity feed for the overview
-// tab. Replace with a real activity log once the backend tracks site events.
-func stubActivityEntries(site *types.Site) []activityEntry {
-	if site == nil {
+// ensureRecentActivityLoaded kicks off a background load of the recent
+// activity rows the first time a given site becomes the overview target.
+// The load is single-shot per site-switch — the OnActivityAppended
+// callback keeps the cache fresh after that.
+func (sd *SiteDetail) ensureRecentActivityLoaded(siteID string) {
+	if siteID == "" || sd.recentActivityLoadedFor == siteID {
+		return
+	}
+	sd.recentActivityLoadedFor = siteID
+	go func() {
+		evs, err := sd.sm.RecentActivity(siteID)
+		if err != nil {
+			return
+		}
+		sd.state.SetActivityRecent(siteID, evs)
+	}()
+}
+
+// overviewActivityEntries converts cached events into the row primitives
+// the activityPanel renders. Empty input → empty output (the panel shows
+// its own "No recent activity." copy).
+func overviewActivityEntries(rows []storage.ActivityEvent, now time.Time) []activityEntry {
+	if len(rows) == 0 {
 		return nil
 	}
-	return []activityEntry{
-		{Time: "10:42:11", Message: "MariaDB started · pid 7421"},
-		{Time: "10:39:02", Message: "Created snapshot 'pre-checkout-v3'"},
-		{Time: "10:31:55", Message: "WooCommerce updated 8.6.1 → 8.6.2"},
-		{Time: "10:28:14", Message: "Switched to feature/checkout-v3"},
-		{Time: "10:14:00", Message: "Started · php " + site.PHPVersion},
+	out := make([]activityEntry, len(rows))
+	for i, ev := range rows {
+		out[i] = activityEntry{
+			Time:    FormatActivityTime(ev.Time, now),
+			Message: ev.Message,
+			Kind:    rowKindForStatus(ev.Status),
+		}
 	}
+	return out
 }
 
 // layoutEnvPanel renders the 4-column environment grid inside a panel card.

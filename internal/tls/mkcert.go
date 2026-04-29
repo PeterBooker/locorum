@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +20,15 @@ import (
 // Mkcert issues per-site and per-service certs by shelling out to the mkcert
 // CLI (https://github.com/FiloSottile/mkcert). Detection is cached; the UI
 // can poll Available() every frame without performance concerns.
+//
+// Binary resolution order (first hit wins): bundled next to the Locorum
+// executable (`<exeDir>/mkcert[.exe]` or `<exeDir>/bin/mkcert[.exe]`),
+// downloaded into binDir (typically `~/.locorum/bin`), then $PATH. This lets
+// release builds ship mkcert alongside the app and dev runs fall back to a
+// system install or an on-demand download via EnsureBinary.
 type Mkcert struct {
 	certDir string
+	binDir  string
 
 	mu           sync.Mutex
 	binary       string
@@ -31,9 +39,12 @@ type Mkcert struct {
 const mkcertCacheTTL = 30 * time.Second
 
 // NewMkcert constructs a provider that stores certs under certDir
-// (typically ~/.locorum/certs).
-func NewMkcert(certDir string) *Mkcert {
-	return &Mkcert{certDir: certDir}
+// (typically ~/.locorum/certs) and downloads/looks for the mkcert binary
+// under binDir (typically ~/.locorum/bin). Pass an empty binDir to disable
+// auto-download; resolution then falls back to bundled-next-to-executable
+// or $PATH.
+func NewMkcert(certDir, binDir string) *Mkcert {
+	return &Mkcert{certDir: certDir, binDir: binDir}
 }
 
 func (m *Mkcert) Available(ctx context.Context) (Status, error) {
@@ -45,35 +56,39 @@ func (m *Mkcert) Available(ctx context.Context) (Status, error) {
 	}
 	m.mu.Unlock()
 
-	s := m.detect(ctx)
+	bin, s := m.detect(ctx)
 
 	m.mu.Lock()
 	m.cachedStatus = s
 	m.cachedAt = time.Now()
-	if s.Installed {
-		if bin, err := exec.LookPath("mkcert"); err == nil {
-			m.binary = bin
-		}
-	} else {
-		m.binary = ""
-	}
+	m.binary = bin
 	m.mu.Unlock()
 
 	return s, nil
 }
 
-func (m *Mkcert) detect(ctx context.Context) Status {
-	if _, err := exec.LookPath("mkcert"); err != nil {
-		return Status{
-			Message: "mkcert not found on PATH. Install: https://github.com/FiloSottile/mkcert",
+// invalidate drops the cached Available() status so the next call re-detects.
+// Called after EnsureBinary or InstallCA so the UI sees the new state
+// immediately instead of waiting on the 30-second TTL.
+func (m *Mkcert) invalidate() {
+	m.mu.Lock()
+	m.cachedAt = time.Time{}
+	m.mu.Unlock()
+}
+
+func (m *Mkcert) detect(ctx context.Context) (string, Status) {
+	bin := m.resolveBinary()
+	if bin == "" {
+		return "", Status{
+			Message: "mkcert not found. Click ‘Set up trusted HTTPS’ to download and install it.",
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "mkcert", "-CAROOT")
+	cmd := exec.CommandContext(ctx, bin, "-CAROOT")
 	utils.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return Status{
+		return bin, Status{
 			Installed: true,
 			Message:   "mkcert -CAROOT failed: " + err.Error(),
 		}
@@ -82,14 +97,14 @@ func (m *Mkcert) detect(ctx context.Context) Status {
 
 	rootCA := filepath.Join(caRoot, "rootCA.pem")
 	if _, err := os.Stat(rootCA); err != nil {
-		return Status{
+		return bin, Status{
 			Installed: true,
 			CARoot:    caRoot,
-			Message:   "Run `mkcert -install` to enable trusted HTTPS for your sites.",
+			Message:   "Click ‘Set up trusted HTTPS’ to install Locorum's local certificate authority.",
 		}
 	}
 
-	return Status{
+	return bin, Status{
 		Installed: true,
 		CARoot:    caRoot,
 		CATrusted: true,
@@ -172,6 +187,49 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 
 	slog.Info("issued cert", "name", spec.Name, "hosts", spec.Hostnames)
 	return CertPath{CertFile: certFile, KeyFile: keyFile}, nil
+}
+
+// resolveBinary returns the path to a usable mkcert binary, or "" if none is
+// found. Order: bundled (next to locorum executable, both `<exeDir>/mkcert`
+// and `<exeDir>/bin/mkcert`), downloaded (binDir), $PATH. The first path
+// whose target is a regular executable file is returned.
+func (m *Mkcert) resolveBinary() string {
+	name := "mkcert"
+	if runtime.GOOS == "windows" {
+		name = "mkcert.exe"
+	}
+
+	candidates := make([]string, 0, 4)
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, name),
+			filepath.Join(exeDir, "bin", name),
+		)
+	}
+	if m.binDir != "" {
+		candidates = append(candidates, filepath.Join(m.binDir, name))
+	}
+	for _, p := range candidates {
+		if isExecutableFile(p) {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("mkcert"); err == nil {
+		return p
+	}
+	return ""
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func (m *Mkcert) Remove(_ context.Context, name string) error {
