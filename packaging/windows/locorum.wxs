@@ -38,12 +38,12 @@
     <!-- Add/Remove Programs cosmetics. ARPPRODUCTICON pulls the icon from
          the installed exe (gogio embedded it). The URL fields are picked
          up by Windows Settings > Apps so the user has a way back to the
-         project page for support / uninstall help. -->
+         project page for support / uninstall help.
+         ARPNOMODIFY is set by WixUI_Minimal — don't redeclare it here. -->
     <Icon Id="LocorumIcon.exe" SourceFile="$(SourceExe)" />
     <Property Id="ARPPRODUCTICON" Value="LocorumIcon.exe" />
     <Property Id="ARPHELPLINK" Value="https://github.com/PeterBooker/locorum" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/PeterBooker/locorum" />
-    <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
