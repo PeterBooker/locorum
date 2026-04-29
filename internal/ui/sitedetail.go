@@ -50,6 +50,7 @@ type SiteDetail struct {
 	filesBtn     widget.Clickable
 	databaseBtn  widget.Clickable
 	openAdminBtn widget.Clickable
+	openSiteBtn  widget.Clickable
 
 	// Secondary actions row
 	cloneBtn  widget.Clickable
@@ -73,12 +74,13 @@ type SiteDetail struct {
 	envSettingsBtn widget.Clickable
 
 	// Sub-components
-	dbCreds       *DBCredentials
-	logViewer     *LogViewer
-	wpcliPanel    *WPCLIPanel
-	versionEditor *VersionEditor
-	linkChecker   *LinkChecker
-	hooksPanel    *HooksPanel
+	dbCreds        *DBCredentials
+	snapshotsPanel *SnapshotsPanel
+	logViewer      *LogViewer
+	wpcliPanel     *WPCLIPanel
+	versionEditor  *VersionEditor
+	linkChecker    *LinkChecker
+	hooksPanel     *HooksPanel
 
 	// Docker init error
 	retryInitBtn widget.Clickable
@@ -86,15 +88,20 @@ type SiteDetail struct {
 
 func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications) *SiteDetail {
 	sd := &SiteDetail{
-		state:         state,
-		sm:            sm,
-		toasts:        toasts,
-		dbCreds:       NewDBCredentials(),
-		logViewer:     NewLogViewer(state, sm),
-		wpcliPanel:    NewWPCLIPanel(state, sm),
-		versionEditor: NewVersionEditor(state, sm, toasts),
-		linkChecker:   NewLinkChecker(state, sm),
-		hooksPanel:    NewHooksPanel(state, sm, sm, toasts),
+		state:  state,
+		sm:     sm,
+		toasts: toasts,
+		dbCreds: func() *DBCredentials {
+			c := NewDBCredentials()
+			c.Bind(sm, state, toasts)
+			return c
+		}(),
+		snapshotsPanel: NewSnapshotsPanel(state, sm, toasts),
+		logViewer:      NewLogViewer(state, sm),
+		wpcliPanel:     NewWPCLIPanel(state, sm),
+		versionEditor:  NewVersionEditor(state, sm, toasts),
+		linkChecker:    NewLinkChecker(state, sm),
+		hooksPanel:     NewHooksPanel(state, sm, sm, toasts),
 	}
 	sd.list.List.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
@@ -135,6 +142,7 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 	switch sd.activeTab {
 	case tabDatabase:
 		sd.dbCreds.HandleUserInteractions(gtx, site)
+		sd.snapshotsPanel.HandleUserInteractions(gtx, site)
 	case tabUtilities:
 		if site.Started {
 			sd.wpcliPanel.HandleUserInteractions(gtx, site.ID)
@@ -266,6 +274,11 @@ func (sd *SiteDetail) layoutHeaderActions(gtx layout.Context, th *Theme, site *t
 		)
 	}
 
+	// Started layout: utility buttons followed by a primary toggle (Stop)
+	// at the rightmost slot — same position Start occupies when stopped, so
+	// clicking Start does NOT shift the toggle to a different part of the
+	// chrome. Stop replaces Start in place; everything else flows to its
+	// left.
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return iconLabelButton(gtx, th, &sd.shellBtn, IconTerminal, "Shell", btnSecondary)
@@ -286,10 +299,22 @@ func (sd *SiteDetail) layoutHeaderActions(gtx layout.Context, th *Theme, site *t
 			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return iconLabelButton(gtx, th, &sd.openAdminBtn, IconEye, "Open admin", btnSecondary)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return iconLabelButton(gtx, th, &sd.openSiteBtn, IconEye, "Open site", btnSecondary)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if toggling {
 				return Loader(gtx, th, th.Dims.LoaderSizeSM)
 			}
-			return iconLabelButton(gtx, th, &sd.openAdminBtn, IconEye, "Open site", btnPrimary)
+			return stopButton(gtx, th, &sd.stopBtn)
 		}),
 	)
 }
@@ -344,6 +369,14 @@ func (sd *SiteDetail) handleHeaderActions(gtx layout.Context, site *types.Site) 
 		id := site.ID
 		go func() {
 			if err := sd.sm.OpenAdminLogin(id); err != nil {
+				sd.state.ShowError("Failed to open admin: " + err.Error())
+			}
+		}()
+	}
+	if sd.openSiteBtn.Clicked(gtx) && site.Started {
+		id := site.ID
+		go func() {
+			if err := sd.sm.OpenSiteURL(id); err != nil {
 				sd.state.ShowError("Failed to open site: " + err.Error())
 			}
 		}()
@@ -507,9 +540,13 @@ func (sd *SiteDetail) layoutEnvPanel(gtx layout.Context, th *Theme, site *types.
 	if multisite == "" {
 		multisite = "single"
 	}
+	dbLabel := strings.ToTitle(site.DBEngine[:1]) + site.DBEngine[1:]
+	if dbLabel == "" {
+		dbLabel = "Database"
+	}
 	pairs := []envCell{
 		{"PHP", site.PHPVersion},
-		{"MySQL", site.MySQLVersion},
+		{dbLabel, site.DBVersion},
 		{"Redis", site.RedisVersion},
 		{"Web server", site.WebServer},
 		{"URL", url},
@@ -533,15 +570,11 @@ func (sd *SiteDetail) layoutEnvPanel(gtx layout.Context, th *Theme, site *types.
 
 func (sd *SiteDetail) layoutSecondaryActions(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
 	exporting := sd.state.IsExportLoading()
+	// Stop lives in the header bar at the same slot Start occupies, so the
+	// primary toggle does not visually relocate when the user clicks Start.
+	// Secondary actions here are file-level workflows (clone, export,
+	// delete) and never include the lifecycle toggle.
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !site.Started {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return iconLabelButton(gtx, th, &sd.stopBtn, nil, "Stop", btnDanger)
-			})
-		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return iconLabelButton(gtx, th, &sd.cloneBtn, nil, "Clone", btnSecondary)
 		}),
@@ -585,9 +618,21 @@ func (sd *SiteDetail) handleOverviewClicks(gtx layout.Context, site *types.Site)
 // ─── Other tabs ─────────────────────────────────────────────────────────────
 
 func (sd *SiteDetail) layoutDatabaseTab(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {
-	return panel(gtx, th, "Credentials", func(gtx layout.Context) layout.Dimensions {
-		return sd.dbCreds.Layout(gtx, th, site)
-	})
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return panel(gtx, th, "Credentials", func(gtx layout.Context) layout.Dimensions {
+				return sd.dbCreds.Layout(gtx, th, site)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Height: th.Spacing.MD}.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return panel(gtx, th, "Snapshots", func(gtx layout.Context) layout.Dimensions {
+				return sd.snapshotsPanel.Layout(gtx, th, site)
+			})
+		}),
+	)
 }
 
 func (sd *SiteDetail) layoutUtilitiesTab(gtx layout.Context, th *Theme, site *types.Site) layout.Dimensions {

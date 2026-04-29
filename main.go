@@ -107,6 +107,12 @@ func main() {
 			slog.Error("Error reconciling site state: " + err.Error())
 		}
 
+		// Best-effort snapshot retention sweep. Logs counts; failures
+		// don't block startup.
+		if _, err := sm.SweepSnapshots(sm.LoadRetentionPolicy()); err != nil {
+			slog.Warn("snapshot: retention sweep failed", "err", err.Error())
+		}
+
 		if status, err := mkcert.Available(context.Background()); err == nil && !status.CATrusted {
 			userInterface.State.SetNotice(status.Message)
 		} else {

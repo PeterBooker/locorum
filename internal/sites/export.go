@@ -2,6 +2,7 @@ package sites
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/hooks"
 )
 
@@ -21,7 +23,9 @@ type exportMeta struct {
 	Slug         string `json:"slug"`
 	Domain       string `json:"domain"`
 	PHPVersion   string `json:"phpVersion"`
-	MySQLVersion string `json:"mysqlVersion"`
+	DBEngine     string `json:"dbEngine"`
+	DBVersion    string `json:"dbVersion"`
+	MySQLVersion string `json:"mysqlVersion,omitempty"` // legacy mirror
 	RedisVersion string `json:"redisVersion"`
 	PublicDir    string `json:"publicDir"`
 	ExportedAt   string `json:"exportedAt"`
@@ -46,14 +50,16 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 		return err
 	}
 
-	// Dump the database via mysqldump in the database container.
-	containerName := "locorum-" + site.Slug + "-database"
-	sqlDump, err := sm.d.ExecInContainer(ctx, containerName, []string{
-		"mysqldump", "-u", "wordpress", "-p" + site.DBPassword, "wordpress",
-	})
-	if err != nil {
+	// Dump the database via the engine's Snapshot method. Streams direct
+	// from the container into an in-memory buffer; the export tar stays
+	// the final destination so the bytes never touch a plaintext SQL
+	// file on disk.
+	eng := dbengine.Resolve(site)
+	var dumpBuf bytes.Buffer
+	if _, err := eng.Snapshot(ctx, sm.d, site, &dumpBuf); err != nil {
 		return fmt.Errorf("database dump: %w", err)
 	}
+	sqlDump := dumpBuf.String()
 
 	// Create the tar.gz file.
 	outFile, err := os.Create(destPath)
@@ -74,6 +80,8 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 		Slug:         site.Slug,
 		Domain:       site.Domain,
 		PHPVersion:   site.PHPVersion,
+		DBEngine:     site.DBEngine,
+		DBVersion:    site.DBVersion,
 		MySQLVersion: site.MySQLVersion,
 		RedisVersion: site.RedisVersion,
 		PublicDir:    site.PublicDir,

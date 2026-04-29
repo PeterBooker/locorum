@@ -13,6 +13,7 @@ const (
 	// Per-site backend images get the user-configurable version suffix appended.
 	WodbyPHPImagePrefix = "wodby/php:"
 	MySQLImagePrefix    = "mysql:"
+	MariaDBImagePrefix  = "mariadb:"
 	RedisImagePrefix    = "redis:"
 	RedisImageSuffix    = "-alpine"
 )

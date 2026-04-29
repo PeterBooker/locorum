@@ -37,6 +37,109 @@ type ExecOptions struct {
 // goroutine via a buffered channel.
 type ExecLineHandler func(line string, stderr bool)
 
+// ExecInContainerWriter runs cmd inside containerName and pipes the
+// container's stdout into stdoutW and stderr into stderrW byte-for-byte.
+// It is the streaming counterpart of ExecInContainerStream for callers that
+// need raw bytes (database dumps, file extracts) rather than line-oriented
+// output.
+//
+// Returns the command's exit code. Plumbing failures (failed to create exec,
+// attach, write) are returned as err. A non-zero exit code is NOT reported
+// as an error — the caller decides how to interpret it.
+//
+// Either writer may be nil; nil means "discard". stdin is not attached;
+// callers needing to feed input use ExecInContainerWriterStdin below.
+func (d *Docker) ExecInContainerWriter(ctx context.Context, containerName string, opts ExecOptions, stdoutW, stderrW io.Writer) (int, error) {
+	return d.execWriter(ctx, containerName, opts, nil, stdoutW, stderrW)
+}
+
+// ExecInContainerWriterStdin is ExecInContainerWriter plus a stdin source
+// piped into the container. Used by Restore implementations that pipe a
+// dump file into `mysql` / `psql`.
+func (d *Docker) ExecInContainerWriterStdin(ctx context.Context, containerName string, opts ExecOptions, stdin io.Reader, stdoutW, stderrW io.Writer) (int, error) {
+	return d.execWriter(ctx, containerName, opts, stdin, stdoutW, stderrW)
+}
+
+func (d *Docker) execWriter(ctx context.Context, containerName string, opts ExecOptions, stdin io.Reader, stdoutW, stderrW io.Writer) (int, error) {
+	if len(opts.Cmd) == 0 {
+		return -1, errors.New("exec: empty command")
+	}
+	if stdoutW == nil {
+		stdoutW = io.Discard
+	}
+	if stderrW == nil {
+		stderrW = io.Discard
+	}
+
+	execCfg := container.ExecOptions{
+		Cmd:          opts.Cmd,
+		Env:          opts.Env,
+		User:         opts.User,
+		WorkingDir:   opts.WorkingDir,
+		AttachStdin:  stdin != nil,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          false,
+	}
+	created, err := d.cli.ContainerExecCreate(ctx, containerName, execCfg)
+	if err != nil {
+		return -1, fmt.Errorf("creating exec in %q: %w", containerName, err)
+	}
+
+	attach, err := d.cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{Tty: false})
+	if err != nil {
+		return -1, fmt.Errorf("attaching to exec in %q: %w", containerName, err)
+	}
+	defer attach.Close()
+
+	// Pump stdin first, in a goroutine so it interleaves with stdout demux.
+	stdinDone := make(chan error, 1)
+	if stdin != nil {
+		go func() {
+			_, copyErr := io.Copy(attach.Conn, stdin)
+			// CloseWrite signals EOF on stdin to the remote command — without
+			// it `mysql` or `psql` reading stdin will hang forever.
+			if cw, ok := attach.Conn.(closeWriter); ok {
+				_ = cw.CloseWrite()
+			}
+			stdinDone <- copyErr
+		}()
+	} else {
+		close(stdinDone)
+	}
+
+	demuxDone := make(chan error, 1)
+	go func() {
+		_, copyErr := stdcopy.StdCopy(stdoutW, stderrW, attach.Reader)
+		demuxDone <- copyErr
+	}()
+
+	select {
+	case <-demuxDone:
+	case <-ctx.Done():
+		attach.Close()
+		<-demuxDone
+	}
+	// Drain stdin pump regardless — even if demux finished first.
+	<-stdinDone
+
+	if ctx.Err() != nil {
+		return -1, ctx.Err()
+	}
+
+	inspect, err := d.cli.ContainerExecInspect(context.Background(), created.ID)
+	if err != nil {
+		return -1, fmt.Errorf("inspecting exec in %q: %w", containerName, err)
+	}
+	return inspect.ExitCode, nil
+}
+
+// closeWriter mirrors net.TCPConn.CloseWrite — Docker's hijacked connection
+// implements it, but the interface is not exported on attach.Conn directly.
+type closeWriter interface {
+	CloseWrite() error
+}
+
 // ExecInContainerStream runs cmd inside containerName with separated stdout
 // and stderr streams, invoking onLine for each captured line. It blocks until
 // the command completes or ctx is cancelled.

@@ -10,6 +10,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/uuid v1.6.0
 	github.com/gosimple/slug v1.15.0
+	github.com/klauspost/compress v1.18.5
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/sqweek/dialog v0.0.0-20260123140253-64c163d53aac
 	golang.org/x/crypto v0.50.0

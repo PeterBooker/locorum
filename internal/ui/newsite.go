@@ -6,15 +6,29 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
 var (
 	phpVersions   = []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4"}
-	mysqlVersions = []string{"8.4", "8.0"}
 	redisVersions = []string{"8.0", "7.4", "7.2"}
 )
+
+// dbEngineOptions / dbEngineKinds are the parallel slices the engine
+// dropdown reads. Display names are user-facing; kinds are persisted.
+var (
+	dbEngineOptions = []string{"MySQL", "MariaDB"}
+	dbEngineKinds   = []dbengine.Kind{dbengine.MySQL, dbengine.MariaDB}
+)
+
+// dbVersionsFor returns the version dropdown options for an engine kind.
+// New engines drop in by extending dbEngineOptions / dbEngineKinds — the
+// version list comes straight from the engine.
+func dbVersionsFor(k dbengine.Kind) []string {
+	return dbengine.MustFor(k).KnownVersions()
+}
 
 type NewSiteModal struct {
 	state  *UIState
@@ -28,10 +42,16 @@ type NewSiteModal struct {
 
 	// Dropdowns
 	phpDropdown       *Dropdown
-	mysqlDropdown     *Dropdown
+	dbEngineDropdown  *Dropdown
+	dbVersionDropdown *Dropdown
 	redisDropdown     *Dropdown
 	webServerDropdown *Dropdown
 	multisiteDropdown *Dropdown
+
+	// dbVersions tracks the version list currently shown in the
+	// dbVersionDropdown — it changes when the user picks a different
+	// engine, so we cache the visible slice for the click handler.
+	dbVersions []string
 
 	// Buttons
 	browseDirBtn widget.Clickable
@@ -47,12 +67,15 @@ func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *Notification
 	webServerOptions := []string{"nginx", "apache"}
 	multisiteOptions := []string{"Single Site", "Multisite (Subdirectory)", "Multisite (Subdomain)"}
 
+	defaultVersions := dbVersionsFor(dbEngineKinds[0])
 	m := &NewSiteModal{
 		state:             state,
 		sm:                sm,
 		toasts:            toasts,
 		phpDropdown:       NewDropdown(phpVersions),
-		mysqlDropdown:     NewDropdown(mysqlVersions),
+		dbEngineDropdown:  NewDropdown(dbEngineOptions),
+		dbVersionDropdown: NewDropdown(defaultVersions),
+		dbVersions:        defaultVersions,
 		redisDropdown:     NewDropdown(redisVersions),
 		webServerDropdown: NewDropdown(webServerOptions),
 		multisiteDropdown: NewDropdown(multisiteOptions),
@@ -89,12 +112,22 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 		}()
 	}
 
+	// Sync the version dropdown to the selected engine. Re-running this
+	// each frame is cheap and means the user sees the right options
+	// without an explicit "engine changed" event.
+	wantVersions := dbVersionsFor(dbEngineKinds[m.dbEngineDropdown.Selected])
+	if !slicesEqual(wantVersions, m.dbVersions) {
+		m.dbVersions = wantVersions
+		m.dbVersionDropdown = NewDropdown(wantVersions)
+	}
+
 	if m.createBtn.Clicked(gtx) || keys.Enter {
 		name := m.nameEditor.Text()
 		filesDir := m.filesDirVal
 		publicDir := m.publicEditor.Text()
 		phpVer := phpVersions[m.phpDropdown.Selected]
-		mysqlVer := mysqlVersions[m.mysqlDropdown.Selected]
+		dbEngine := dbEngineKinds[m.dbEngineDropdown.Selected]
+		dbVer := m.dbVersions[m.dbVersionDropdown.Selected]
 		redisVer := redisVersions[m.redisDropdown.Selected]
 		webServer := []string{"nginx", "apache"}[m.webServerDropdown.Selected]
 		multisiteMap := []string{"", "subdirectory", "subdomain"}
@@ -111,7 +144,8 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 					FilesDir:     filesDir,
 					PublicDir:    publicDir,
 					PHPVersion:   phpVer,
-					MySQLVersion: mysqlVer,
+					DBEngine:     string(dbEngine),
+					DBVersion:    dbVer,
 					RedisVersion: redisVer,
 					WebServer:    webServer,
 					Multisite:    multisite,
@@ -130,7 +164,9 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 				m.filesDirVal = ""
 				m.publicEditor.SetText("/")
 				m.phpDropdown.Selected = 0
-				m.mysqlDropdown.Selected = 0
+				m.dbEngineDropdown.Selected = 0
+				m.dbVersions = dbVersionsFor(dbEngineKinds[0])
+				m.dbVersionDropdown = NewDropdown(m.dbVersions)
 				m.redisDropdown.Selected = 0
 				m.webServerDropdown.Selected = 0
 				m.multisiteDropdown.Selected = 0
@@ -139,6 +175,18 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 			}()
 		}
 	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *NewSiteModal) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
@@ -201,10 +249,16 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensio
 				return m.phpDropdown.Layout(gtx, th, "PHP Version")
 			})
 		}),
+		// Database Engine
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return m.dbEngineDropdown.Layout(gtx, th, "Database Engine")
+			})
+		}),
 		// Database Version
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return m.mysqlDropdown.Layout(gtx, th, "Database Version")
+				return m.dbVersionDropdown.Layout(gtx, th, "Database Version")
 			})
 		}),
 		// Redis Version

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/gosimple/slug"
 	"github.com/sqweek/dialog"
 
+	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
@@ -247,6 +249,24 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	if site.WebServer == "" {
 		site.WebServer = "nginx"
 	}
+	// Resolve engine + version with sensible defaults so callers (UI,
+	// scripts) can leave DBEngine/DBVersion empty and still get a valid
+	// site row.
+	if site.DBEngine == "" {
+		site.DBEngine = string(dbengine.Default)
+	}
+	if !dbengine.IsValid(dbengine.Kind(site.DBEngine)) {
+		return fmt.Errorf("unknown database engine %q", site.DBEngine)
+	}
+	if site.DBVersion == "" {
+		// Legacy callers still set MySQLVersion; honour it before
+		// falling back to the engine's default.
+		if site.MySQLVersion != "" && site.DBEngine == string(dbengine.MySQL) {
+			site.DBVersion = site.MySQLVersion
+		} else {
+			site.DBVersion = dbengine.MustFor(dbengine.Kind(site.DBEngine)).DefaultVersion()
+		}
+	}
 
 	if err := utils.EnsureDir(site.FilesDir); err != nil {
 		slog.Error("Failed to create site directory: " + err.Error())
@@ -316,6 +336,7 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 			},
 			&sitesteps.EnsureNetworkStep{Engine: sm.d, Site: site},
 			&sitesteps.EnsureVolumeStep{Engine: sm.d, Site: site},
+			&sitesteps.EnsureMarkerStep{Engine: sm.d, Site: site},
 			&sitesteps.PullImagesStep{
 				Engine:     sm.d,
 				Site:       site,
@@ -331,6 +352,7 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 					docker.SiteContainerName(site.Slug, "database"): 120 * time.Second,
 				},
 			},
+			&sitesteps.WriteMarkerStep{Execer: sm.d, Site: site},
 			&sitesteps.RegisterRoutesStep{
 				Router: sm.rtr,
 				Route:  sm.routeFor(site),
@@ -382,12 +404,14 @@ func (sm *SiteManager) generateWebServerConfig(site *types.Site) error {
 }
 
 // serviceSpecs returns the four per-site container specs in the order:
-// web, php, database, redis.
+// web, php, database, redis. Database routing happens through dbengine
+// so MySQL and MariaDB sites resolve to engine-specific specs without
+// branching here.
 func (sm *SiteManager) serviceSpecs(site *types.Site) []docker.ContainerSpec {
 	return []docker.ContainerSpec{
 		docker.WebSpec(site, sm.homeDir),
 		docker.PHPSpec(site, sm.homeDir),
-		docker.DatabaseSpec(site, sm.homeDir),
+		dbengine.Resolve(site).ContainerSpec(site, sm.homeDir),
 		docker.RedisSpec(site),
 	}
 }
@@ -767,10 +791,39 @@ func (sm *SiteManager) OpenSiteShell(siteID string) error {
 	return utils.OpenTerminalWithCommand("docker", "exec", "-it", containerName, "/bin/bash")
 }
 
-// UpdateSiteVersions changes PHP/MySQL/Redis versions for a stopped site
-// and removes old containers so they are recreated on next start with the
-// new images.
-func (sm *SiteManager) UpdateSiteVersions(ctx context.Context, siteID, phpVer, mysqlVer, redisVer string) error {
+// VersionsChange describes a desired change to a stopped site's runtime
+// versions. The fields are tri-state: empty string = no change, a
+// concrete value = set to that. ChangeEngine flips the engine kind
+// itself, which always requires the migrate flow.
+type VersionsChange struct {
+	PHPVersion   string
+	DBEngine     string
+	DBVersion    string
+	RedisVersion string
+}
+
+// ErrUnsafeVersionTransition is returned when a requested version change
+// can't be applied in-place because the engine reports it as unsafe (e.g.
+// MySQL 8 → 5.7) — the caller should route through MigrateEngine instead.
+var ErrUnsafeVersionTransition = errors.New("unsafe version transition; use MigrateEngine")
+
+// UpdateSiteVersions changes PHP/DB/Redis versions for a stopped site and
+// removes old containers so they are recreated on next start with the
+// new images. Same engine, same major version transitions only — engine
+// swaps must go through MigrateEngine which preserves data via
+// snapshot+restore.
+func (sm *SiteManager) UpdateSiteVersions(ctx context.Context, siteID, phpVer, dbVer, redisVer string) error {
+	return sm.UpdateSiteVersionsWithEngine(ctx, siteID, VersionsChange{
+		PHPVersion:   phpVer,
+		DBVersion:    dbVer,
+		RedisVersion: redisVer,
+	})
+}
+
+// UpdateSiteVersionsWithEngine is the engine-aware form. The caller may
+// also pass DBEngine — but only the same engine is accepted here; engine
+// swaps return ErrUnsafeVersionTransition pointing at MigrateEngine.
+func (sm *SiteManager) UpdateSiteVersionsWithEngine(ctx context.Context, siteID string, change VersionsChange) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
@@ -787,16 +840,28 @@ func (sm *SiteManager) UpdateSiteVersions(ctx context.Context, siteID, phpVer, m
 	defer mu.Unlock()
 
 	changed := false
-	if phpVer != "" && phpVer != site.PHPVersion {
-		site.PHPVersion = phpVer
+	if change.PHPVersion != "" && change.PHPVersion != site.PHPVersion {
+		site.PHPVersion = change.PHPVersion
 		changed = true
 	}
-	if mysqlVer != "" && mysqlVer != site.MySQLVersion {
-		site.MySQLVersion = mysqlVer
+	if change.RedisVersion != "" && change.RedisVersion != site.RedisVersion {
+		site.RedisVersion = change.RedisVersion
 		changed = true
 	}
-	if redisVer != "" && redisVer != site.RedisVersion {
-		site.RedisVersion = redisVer
+	if change.DBEngine != "" && change.DBEngine != site.DBEngine {
+		// Engine swap is not in-place — always migrate via snapshot.
+		return ErrUnsafeVersionTransition
+	}
+	if change.DBVersion != "" && change.DBVersion != site.DBVersion {
+		eng := dbengine.Resolve(site)
+		if !eng.UpgradeAllowed(site.DBVersion, change.DBVersion) {
+			return ErrUnsafeVersionTransition
+		}
+		site.DBVersion = change.DBVersion
+		// Keep the legacy mirror in sync for one minor release.
+		if site.DBEngine == string(dbengine.MySQL) {
+			site.MySQLVersion = change.DBVersion
+		}
 		changed = true
 	}
 
@@ -878,6 +943,19 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		return err
 	}
 
+	// Best-effort pre-clone snapshot of the source. Provides a recovery
+	// point if the clone process touches the source DB unexpectedly. Not
+	// fatal: clone is non-destructive of the source, so a snapshot
+	// failure (e.g. DB unreachable on a flaky daemon) shouldn't block the
+	// clone itself.
+	if site.Started {
+		if path, err := sm.snapshotLocked(ctx, site, "pre_clone"); err != nil {
+			slog.Warn("clone: pre-clone snapshot failed", "site", site.Slug, "err", err.Error())
+		} else {
+			slog.Info("clone: pre-clone snapshot saved", "path", path)
+		}
+	}
+
 	newSlug := slug.Make(newName)
 	newDomain := newSlug + ".localhost"
 	newFilesDir := filepath.Join(filepath.Dir(site.FilesDir), newSlug)
@@ -903,19 +981,22 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 	}
 
 	newSite := types.Site{
-		ID:           uuid.NewString(),
-		Name:         newName,
-		Slug:         newSlug,
-		Domain:       newDomain,
-		FilesDir:     newFilesDir,
-		PublicDir:    site.PublicDir,
-		Started:      false,
-		PHPVersion:   site.PHPVersion,
-		MySQLVersion: site.MySQLVersion,
-		RedisVersion: site.RedisVersion,
-		WebServer:    site.WebServer,
-		Multisite:    site.Multisite,
-		DBPassword:   generatePassword(16),
+		ID:            uuid.NewString(),
+		Name:          newName,
+		Slug:          newSlug,
+		Domain:        newDomain,
+		FilesDir:      newFilesDir,
+		PublicDir:     site.PublicDir,
+		Started:       false,
+		PHPVersion:    site.PHPVersion,
+		DBEngine:      site.DBEngine,
+		DBVersion:     site.DBVersion,
+		MySQLVersion:  site.MySQLVersion,
+		RedisVersion:  site.RedisVersion,
+		WebServer:     site.WebServer,
+		Multisite:     site.Multisite,
+		PublishDBPort: site.PublishDBPort,
+		DBPassword:    generatePassword(16),
 	}
 
 	if err := sm.st.AddSite(&newSite); err != nil {
@@ -967,6 +1048,61 @@ func (sm *SiteManager) CheckLinks(siteID string, onProgress func(string), onDone
 		sm.runLinkCheck(site, onProgress)
 	}()
 	return nil
+}
+
+// PublishedDBHostPort returns the ephemeral TCP port the database
+// container is published on, or 0 if PublishDBPort is off / the site is
+// not running. Used by the DB Credentials panel to render a copyable
+// connection URL.
+func (sm *SiteManager) PublishedDBHostPort(ctx context.Context, siteID string) (int, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return 0, fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil || !site.PublishDBPort || !site.Started {
+		return 0, nil
+	}
+	eng := dbengine.Resolve(site)
+	return sm.d.PublishedHostPort(ctx, docker.SiteContainerName(site.Slug, "database"), eng.DefaultPort())
+}
+
+// ConnectionURL returns the engine-formatted connection URL for the
+// site's DB container at the given host port. Empty port returns a URL
+// with a placeholder so the GUI can show a "click Publish to enable"
+// state.
+func (sm *SiteManager) ConnectionURL(siteID string, hostPort int) (string, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return "", fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return "", fmt.Errorf("site %q not found", siteID)
+	}
+	eng := dbengine.Resolve(site)
+	port := ""
+	if hostPort > 0 {
+		port = fmt.Sprintf("%d", hostPort)
+	}
+	return eng.ConnectionURL("127.0.0.1", port, site), nil
+}
+
+// SetPublishDBPort flips the per-site publish flag. Site must be
+// stopped — toggling while running would change the container's spec
+// hash and force an unrequested recreate.
+func (sm *SiteManager) SetPublishDBPort(siteID string, on bool) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+	if site.Started {
+		return fmt.Errorf("site must be stopped to change DB host-port publish")
+	}
+	site.PublishDBPort = on
+	_, err = sm.st.UpdateSite(site)
+	return err
 }
 
 // ExecWPCLI runs a WP-CLI command inside the site's PHP container.

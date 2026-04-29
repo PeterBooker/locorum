@@ -61,7 +61,40 @@ func now() string {
 // Keep ordering aligned with the Scan / Exec arg order below — adding a
 // column means editing four call sites; the constant centralises the
 // SELECT/INSERT lists so two of those four stay in lockstep.
-const siteColumns = "id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, salts, createdAt, updatedAt"
+const siteColumns = "id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, salts, dbEngine, dbVersion, publishDBPort, createdAt, updatedAt"
+
+// scanSite hydrates a Site from a row scanner. Centralised so GetSite and
+// GetSites stay in lockstep with siteColumns; a missed field here means
+// every caller is half-broken.
+func scanSite(scan func(...any) error) (*types.Site, error) {
+	var site types.Site
+	if err := scan(
+		&site.ID, &site.Name, &site.Slug, &site.Domain,
+		&site.FilesDir, &site.PublicDir, &site.Started,
+		&site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword,
+		&site.WebServer, &site.Multisite, &site.Salts,
+		&site.DBEngine, &site.DBVersion, &site.PublishDBPort,
+		&site.CreatedAt, &site.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	hydrateLegacyDBFields(&site)
+	return &site, nil
+}
+
+// hydrateLegacyDBFields fills DBEngine / DBVersion for rows written
+// before the multi-engine migration. The migration's UPDATE handles
+// existing rows on first apply; this helper covers the corner case where
+// a manual SQL edit zeroed dbEngine, or a future migration runs while
+// some rows still carry only mysqlVersion.
+func hydrateLegacyDBFields(site *types.Site) {
+	if site.DBEngine == "" {
+		site.DBEngine = "mysql"
+	}
+	if site.DBVersion == "" {
+		site.DBVersion = site.MySQLVersion
+	}
+}
 
 // GetSites returns all sites stored in SQLite.
 func (s *Storage) GetSites() ([]types.Site, error) {
@@ -73,11 +106,11 @@ func (s *Storage) GetSites() ([]types.Site, error) {
 
 	var result []types.Site
 	for rows.Next() {
-		var site types.Site
-		if err := rows.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.Salts, &site.CreatedAt, &site.UpdatedAt); err != nil {
+		site, err := scanSite(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		result = append(result, site)
+		result = append(result, *site)
 	}
 
 	return result, rows.Err()
@@ -86,17 +119,14 @@ func (s *Storage) GetSites() ([]types.Site, error) {
 // GetSite returns a single Site by ID.
 func (s *Storage) GetSite(id string) (*types.Site, error) {
 	row := s.db.QueryRow("SELECT "+siteColumns+" FROM sites WHERE id = ?", id)
-	var site types.Site
-
-	if err := row.Scan(&site.ID, &site.Name, &site.Slug, &site.Domain, &site.FilesDir, &site.PublicDir, &site.Started, &site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword, &site.WebServer, &site.Multisite, &site.Salts, &site.CreatedAt, &site.UpdatedAt); err != nil {
+	site, err := scanSite(row.Scan)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-
 		return nil, err
 	}
-
-	return &site, nil
+	return site, nil
 }
 
 // AddSite inserts a new Site into the database, generating an ID if none is set.
@@ -105,9 +135,19 @@ func (s *Storage) AddSite(site *types.Site) error {
 	site.CreatedAt = ts
 	site.UpdatedAt = ts
 
+	// Mirror the legacy column for one minor release so external
+	// tooling that reads mysqlVersion directly keeps working.
+	if site.MySQLVersion == "" && site.DBEngine == "mysql" {
+		site.MySQLVersion = site.DBVersion
+	}
+
 	_, err := s.db.Exec(
-		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.Salts, site.CreatedAt, site.UpdatedAt,
+		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
+		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
+		site.WebServer, site.Multisite, site.Salts,
+		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),
+		site.CreatedAt, site.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -120,9 +160,17 @@ func (s *Storage) AddSite(site *types.Site) error {
 func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	site.UpdatedAt = now()
 
+	if site.MySQLVersion == "" && site.DBEngine == "mysql" {
+		site.MySQLVersion = site.DBVersion
+	}
+
 	_, err := s.db.Exec(
-		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, updatedAt = ? WHERE id = ?",
-		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started, site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword, site.WebServer, site.Multisite, site.Salts, site.UpdatedAt, site.ID,
+		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, dbEngine = ?, dbVersion = ?, publishDBPort = ?, updatedAt = ? WHERE id = ?",
+		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
+		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
+		site.WebServer, site.Multisite, site.Salts,
+		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),
+		site.UpdatedAt, site.ID,
 	)
 	if err != nil {
 		return nil, err
