@@ -15,6 +15,7 @@ import (
 	"gioui.org/unit"
 
 	application "github.com/PeterBooker/locorum/internal/app"
+	settings "github.com/PeterBooker/locorum/internal/config"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/router/traefik"
@@ -49,6 +50,17 @@ func main() {
 
 	d := docker.New()
 
+	st, err := storage.NewSQLiteStorage(context.Background())
+	if err != nil {
+		log.Fatalln("Error:", err)
+	}
+	defer st.Close()
+
+	cfg, err := settings.New(st)
+	if err != nil {
+		log.Fatalln("Error loading settings:", err)
+	}
+
 	mkcert := tlspkg.NewMkcert(
 		filepath.Join(homeDir, ".locorum", "certs"),
 		filepath.Join(homeDir, ".locorum", "bin"),
@@ -58,18 +70,14 @@ func main() {
 		HomeDir:    homeDir,
 		AppVersion: version.Version,
 		LogLevel:   os.Getenv("LOCORUM_LOG_LEVEL"),
+		HTTPPort:   cfg.RouterHTTPPort(),
+		HTTPSPort:  cfg.RouterHTTPSPort(),
 	}, d, mkcert, config)
 	if err != nil {
 		log.Fatalln("Error initializing router:", err)
 	}
 
 	a := application.New(config, d, homeDir, rtr)
-
-	st, err := storage.NewSQLiteStorage(context.Background())
-	if err != nil {
-		log.Fatalln("Error:", err)
-	}
-	defer st.Close()
 
 	hookLogsDir := filepath.Join(homeDir, ".locorum", "hooks", "runs")
 	if err := utils.EnsureDir(hookLogsDir); err != nil {
@@ -92,7 +100,7 @@ func main() {
 		log.Fatalln("Error initializing hooks runner:", err)
 	}
 
-	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir)
+	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir, cfg)
 
 	userInterface := ui.New(sm)
 

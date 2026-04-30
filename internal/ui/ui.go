@@ -39,16 +39,13 @@ type UI struct {
 	noticeBtn widget.Clickable
 }
 
-// SettingKeyThemeMode persists the user's theme preference ("dark", "light",
-// or "system"). Read/written via SiteManager.GetSetting / SetSetting.
-const SettingKeyThemeMode = "theme_mode"
-
 func New(sm *sites.SiteManager) *UI {
 	state := NewUIState()
 	th := NewTheme()
 
-	if stored, err := sm.GetSetting(SettingKeyThemeMode); err == nil && stored != "" {
-		th.SetMode(ParseThemeMode(stored))
+	cfg := sm.Config()
+	if cfg != nil {
+		th.SetMode(ParseThemeMode(cfg.ThemeMode()))
 	}
 
 	ui := &UI{
@@ -62,7 +59,9 @@ func New(sm *sites.SiteManager) *UI {
 	ui.SitesPanel = NewSitesPanel(state, sm, ui.Toasts)
 	ui.Settings = NewSettingsPanel(state, sm, func(mode ThemeMode) {
 		th.SetMode(mode)
-		_ = sm.SetSetting(SettingKeyThemeMode, mode.String())
+		if cfg != nil {
+			_ = cfg.SetThemeMode(mode.String())
+		}
 		state.Invalidate()
 	})
 	ui.SiteDetail = NewSiteDetail(state, sm, ui.Toasts)

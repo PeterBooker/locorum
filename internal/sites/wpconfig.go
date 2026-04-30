@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"math/big"
 	"os"
@@ -14,18 +13,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/PeterBooker/locorum/internal/genmark"
 	"github.com/PeterBooker/locorum/internal/types"
 )
-
-// LocorumGeneratedSig is the marker that flags a Locorum-managed file. If
-// the user removes this string from a generated file, Locorum will refuse
-// to overwrite it on the next regenerate. See LEARNINGS.md §2.3.
-const LocorumGeneratedSig = "#locorum-generated"
-
-// signaturePeekBytes caps how far into a file we look for the signature.
-// 4 KiB is more than enough — the signature always lives in the first
-// comment block.
-const signaturePeekBytes = 4096
 
 // wpSaltKeys are the eight WordPress secret-key/salt constant names, in
 // the canonical order used in the bundled wp-config-sample.php.
@@ -149,18 +139,20 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	if err != nil {
 		return fmt.Errorf("render wp-config.php: %w", err)
 	}
-	if err := writeIfManaged(mainPath, mainBytes); err != nil {
+	if err := genmark.WriteIfManaged(mainPath, mainBytes, 0o644); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
 		return fmt.Errorf("write wp-config.php: %w", err)
 	}
 
 	// wp-config-locorum.php: always managed; the signature is in the
-	// rendered bytes so writeIfManaged still does the right thing.
+	// rendered bytes so WriteIfManaged still respects a user-stripped
+	// variant.  Preserves backward compatibility with sites whose users
+	// already opted out before this rewrite.
 	includePath := filepath.Join(dir, "wp-config-locorum.php")
 	includeBytes, err := renderTemplate(sm.config, "config/wordpress/wp-config-locorum.tmpl.php", data)
 	if err != nil {
 		return fmt.Errorf("render wp-config-locorum.php: %w", err)
 	}
-	if err := writeIfManaged(includePath, includeBytes); err != nil {
+	if err := genmark.WriteIfManaged(includePath, includeBytes, 0o644); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
 		return fmt.Errorf("write wp-config-locorum.php: %w", err)
 	}
 
@@ -185,88 +177,6 @@ func renderTemplate(efs interface {
 		return nil, fmt.Errorf("execute template: %w", err)
 	}
 	return buf.Bytes(), nil
-}
-
-// writeIfManaged writes content to path under three rules:
-//   - File missing → write it.
-//   - File exists, contents identical → skip (idempotent).
-//   - File exists, has the Locorum signature, contents differ → atomic
-//     overwrite via tmpfile+rename.
-//   - File exists, NO Locorum signature → refuse to overwrite, log warn.
-//
-// Atomic write: rename(2) on the same filesystem is atomic on POSIX and
-// (since 2016) on Windows ReFS/NTFS. The temp file is in the same
-// directory so the rename never crosses a filesystem boundary.
-func writeIfManaged(path string, content []byte) error {
-	existing, err := os.ReadFile(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return atomicWrite(path, content)
-	case err != nil:
-		return fmt.Errorf("read existing: %w", err)
-	}
-
-	if bytes.Equal(existing, content) {
-		return nil
-	}
-
-	if !hasLocorumSignature(existing) {
-		slog.Warn("refusing to overwrite user-managed file (signature missing)",
-			"path", path,
-			"hint", "remove the file or add `// "+LocorumGeneratedSig+"` to the top to opt back into management")
-		return nil
-	}
-
-	return atomicWrite(path, content)
-}
-
-// hasLocorumSignature returns true if content's first signaturePeekBytes
-// bytes contain the marker. Looking only at the prefix means a stray
-// occurrence deep inside the file (e.g. inside a docblock) doesn't
-// accidentally re-enable management.
-func hasLocorumSignature(content []byte) bool {
-	head := content
-	if len(head) > signaturePeekBytes {
-		head = head[:signaturePeekBytes]
-	}
-	return bytes.Contains(head, []byte(LocorumGeneratedSig))
-}
-
-// atomicWrite writes content to path via tmpfile+rename. Permissions match
-// the wp-content writability convention (0644 — readable by everyone, the
-// PHP container reads it as its own UID after ChownStep).
-func atomicWrite(path string, content []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".locorum-tmp-*")
-	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("sync tmp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close tmp: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		cleanup()
-		return fmt.Errorf("chmod tmp: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
 }
 
 // ensureSalts populates site.Salts (and persists the row) if it's empty.

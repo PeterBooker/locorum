@@ -67,25 +67,68 @@ func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *Notification
 	webServerOptions := []string{"nginx", "apache"}
 	multisiteOptions := []string{"Single Site", "Multisite (Subdirectory)", "Multisite (Subdomain)"}
 
-	defaultVersions := dbVersionsFor(dbEngineKinds[0])
+	// Pull global defaults so the form opens pre-filled with the
+	// user's last saved preferences. Falling back to the index 0 of
+	// each list keeps behaviour identical for first-run users.
+	cfg := sm.Config()
+	engineIdx := 0
+	if cfg != nil {
+		engineIdx = indexOfDBEngine(cfg.DBEngineDefault(), dbEngineKinds)
+	}
+	versions := dbVersionsFor(dbEngineKinds[engineIdx])
+
 	m := &NewSiteModal{
 		state:             state,
 		sm:                sm,
 		toasts:            toasts,
 		phpDropdown:       NewDropdown(phpVersions),
 		dbEngineDropdown:  NewDropdown(dbEngineOptions),
-		dbVersionDropdown: NewDropdown(defaultVersions),
-		dbVersions:        defaultVersions,
+		dbVersionDropdown: NewDropdown(versions),
+		dbVersions:        versions,
 		redisDropdown:     NewDropdown(redisVersions),
 		webServerDropdown: NewDropdown(webServerOptions),
 		multisiteDropdown: NewDropdown(multisiteOptions),
 		keys:              NewModalFocus(),
 		anim:              NewModalAnim(),
 	}
+	m.dbEngineDropdown.Selected = engineIdx
+	if cfg != nil {
+		m.phpDropdown.Selected = indexOfOr(phpVersions, cfg.PHPVersionDefault(), 0)
+		m.dbVersionDropdown.Selected = indexOfOr(versions, cfg.DBVersionDefault(), 0)
+		m.redisDropdown.Selected = indexOfOr(redisVersions, cfg.RedisVersionDefault(), 0)
+		m.webServerDropdown.Selected = indexOfOr(webServerOptions, cfg.WebServerDefault(), 0)
+	}
+
 	m.nameEditor.SingleLine = true
 	m.publicEditor.SingleLine = true
 	m.publicEditor.SetText("/")
 	return m
+}
+
+// indexOfOr returns the index of value in options, or fallback if value
+// is empty or not present.
+func indexOfOr(options []string, value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	for i, o := range options {
+		if o == value {
+			return i
+		}
+	}
+	return fallback
+}
+
+// indexOfDBEngine maps a persisted engine name onto the index in
+// kinds. Returns 0 when the name is unknown — keeps the dropdown valid
+// even after a future engine is removed.
+func indexOfDBEngine(name string, kinds []dbengine.Kind) int {
+	for i, k := range kinds {
+		if string(k) == name {
+			return i
+		}
+	}
+	return 0
 }
 
 // HandleUserInteractions processes Cancel / Browse / Create button clicks.
@@ -153,6 +196,18 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 				if err := m.sm.AddSite(site); err != nil {
 					m.state.ShowError("Failed to create site: " + err.Error())
 					return
+				}
+
+				// Remember these choices as the new defaults for
+				// next time. Errors are logged via the ShowError
+				// path elsewhere; failure here is non-fatal — the
+				// site was already created.
+				if cfg := m.sm.Config(); cfg != nil {
+					_ = cfg.SetPHPVersionDefault(phpVer)
+					_ = cfg.SetDBEngineDefault(string(dbEngine))
+					_ = cfg.SetDBVersionDefault(dbVer)
+					_ = cfg.SetRedisVersionDefault(redisVer)
+					_ = cfg.SetWebServerDefault(webServer)
 				}
 
 				m.state.SetShowNewSiteModal(false)
