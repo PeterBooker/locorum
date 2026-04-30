@@ -209,7 +209,20 @@ dist-macos: dmg-macos
 
 dist-macos-app: appicon.png $(MKCERT_DIR)/darwin-amd64/mkcert $(MKCERT_DIR)/darwin-arm64/mkcert
 	@mkdir -p $(DIST_DIR)
-	$(GOGIO) -target macos -arch amd64,arm64 -appid $(APP_ID) -version $(SEMVER) -ldflags "$(LDFLAGS_RELEASE)" -o $(DIST_DIR)/Locorum.app .
+	rm -rf $(DIST_DIR)/Locorum.app $(DIST_DIR)/macos-staging
+	mkdir -p $(DIST_DIR)/macos-staging
+	# gogio v0.9.0 with -arch amd64,arm64 nests per-arch .apps inside the
+	# output path (Locorum.app/Locorum_{arch}.app) rather than producing
+	# a single universal bundle. Build into a staging dir, take the arm64
+	# .app as the base, and lipo-merge in the amd64 binary so the final
+	# Locorum.app holds one universal binary.
+	$(GOGIO) -target macos -arch amd64,arm64 -appid $(APP_ID) -version $(SEMVER) -ldflags "$(LDFLAGS_RELEASE)" -o $(DIST_DIR)/macos-staging/Locorum.app .
+	cp -R $(DIST_DIR)/macos-staging/Locorum.app/Locorum_arm64.app $(DIST_DIR)/Locorum.app
+	lipo -create -output $(DIST_DIR)/Locorum.app/Contents/MacOS/Locorum \
+		$(DIST_DIR)/macos-staging/Locorum.app/Locorum_amd64.app/Contents/MacOS/Locorum \
+		$(DIST_DIR)/macos-staging/Locorum.app/Locorum_arm64.app/Contents/MacOS/Locorum
+	chmod +x $(DIST_DIR)/Locorum.app/Contents/MacOS/Locorum
+	rm -rf $(DIST_DIR)/macos-staging
 	# Drop a universal mkcert next to the locorum binary inside the .app
 	# bundle so resolveBinary finds it without touching $$PATH. lipo merges
 	# the two architecture-specific binaries into one fat binary; macOS
