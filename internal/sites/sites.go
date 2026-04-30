@@ -22,11 +22,14 @@ import (
 	"github.com/gosimple/slug"
 	"github.com/sqweek/dialog"
 
+	"github.com/PeterBooker/locorum/internal/config"
 	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/genmark"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/router"
+	"github.com/PeterBooker/locorum/internal/sites/configyaml"
 	"github.com/PeterBooker/locorum/internal/sites/sitesteps"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
@@ -46,6 +49,7 @@ type SiteManager struct {
 	hooks   hooks.Runner
 	homeDir string
 	config  embed.FS
+	cfg     *config.Config // typed read/write of global settings
 
 	// siteLocks serialises lifecycle calls per site. Different sites run
 	// in parallel; two lifecycle calls on the same site queue.
@@ -80,17 +84,17 @@ type SiteManager struct {
 	OnActivityAppended func(siteID string, ev storage.ActivityEvent)
 }
 
-func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, config embed.FS, homeDir string) *SiteManager {
+func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, configFS embed.FS, homeDir string, cfg *config.Config) *SiteManager {
 	siteTpl = template.Must(
 		template.New("site.tmpl").
 			Funcs(funcMap).
-			ParseFS(config, "config/nginx/site.tmpl"),
+			ParseFS(configFS, "config/nginx/site.tmpl"),
 	)
 
 	apacheSiteTpl = template.Must(
 		template.New("site.tmpl").
 			Funcs(funcMap).
-			ParseFS(config, "config/apache/site.tmpl"),
+			ParseFS(configFS, "config/apache/site.tmpl"),
 	)
 
 	return &SiteManager{
@@ -99,9 +103,46 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, r
 		d:       d,
 		rtr:     rtr,
 		hooks:   runner,
-		config:  config,
+		config:  configFS,
 		homeDir: homeDir,
+		cfg:     cfg,
 		sites:   make(map[string]types.Site),
+	}
+}
+
+// Config returns the shared global-settings facade. Nil when the
+// SiteManager was constructed without one (test-only path); production
+// always wires through main.New.
+func (sm *SiteManager) Config() *config.Config { return sm.cfg }
+
+// writeConfigYAML projects the site row + its hooks onto
+// <site.FilesDir>/.locorum/config.yaml. Errors are logged but never
+// propagated — the YAML is a portability convenience, not a load-
+// bearing artefact, and a transient write failure (e.g. user-deleted
+// site dir mid-operation) must not abort the lifecycle method.
+//
+// Idempotent: WriteIfManaged short-circuits when the rendered bytes
+// match disk, and respects a user-stripped marker so manual edits are
+// preserved.
+func (sm *SiteManager) writeConfigYAML(site *types.Site) {
+	if site == nil || site.FilesDir == "" {
+		return
+	}
+	hookList, err := sm.st.ListHooks(site.ID)
+	if err != nil {
+		slog.Warn("config.yaml: list hooks", "site", site.Slug, "err", err.Error())
+		// Continue with no hooks — better an incomplete projection
+		// than no projection at all.
+		hookList = nil
+	}
+	body, err := configyaml.Render(configyaml.FromSite(*site, hookList))
+	if err != nil {
+		slog.Warn("config.yaml: render", "site", site.Slug, "err", err.Error())
+		return
+	}
+	target := filepath.Join(site.FilesDir, configyaml.Filename)
+	if err := genmark.WriteIfManaged(target, body, 0o644); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
+		slog.Warn("config.yaml: write", "site", site.Slug, "err", err.Error())
 	}
 }
 
@@ -207,24 +248,82 @@ func (sm *SiteManager) ListSiteHooks(siteID string) ([]hooks.Hook, error) {
 	return sm.st.ListHooks(siteID)
 }
 
-// AddSiteHook validates h and persists it.
+// AddSiteHook validates h and persists it. Refreshes the projected
+// config.yaml so checked-in copies stay in sync.
 func (sm *SiteManager) AddSiteHook(h *hooks.Hook) error {
-	return sm.st.AddHook(h)
+	if err := sm.st.AddHook(h); err != nil {
+		return err
+	}
+	sm.refreshConfigYAMLFor(h.SiteID)
+	return nil
 }
 
 // UpdateSiteHook persists changes to an existing hook.
 func (sm *SiteManager) UpdateSiteHook(h *hooks.Hook) error {
-	return sm.st.UpdateHook(h)
+	if err := sm.st.UpdateHook(h); err != nil {
+		return err
+	}
+	sm.refreshConfigYAMLFor(h.SiteID)
+	return nil
 }
 
-// DeleteSiteHook removes a hook by id.
+// DeleteSiteHook removes a hook by id. Looks up the site row before
+// deletion so we still have the FilesDir to write the projection to
+// after the row vanishes.
 func (sm *SiteManager) DeleteSiteHook(id int64) error {
-	return sm.st.DeleteHook(id)
+	siteID := sm.siteIDForHook(id)
+	if err := sm.st.DeleteHook(id); err != nil {
+		return err
+	}
+	sm.refreshConfigYAMLFor(siteID)
+	return nil
 }
 
 // ReorderSiteHooks atomically rewrites positions for an event.
 func (sm *SiteManager) ReorderSiteHooks(siteID string, ev hooks.Event, ids []int64) error {
-	return sm.st.ReorderHooks(siteID, ev, ids)
+	if err := sm.st.ReorderHooks(siteID, ev, ids); err != nil {
+		return err
+	}
+	sm.refreshConfigYAMLFor(siteID)
+	return nil
+}
+
+// siteIDForHook returns the site id for a hook id by querying every
+// site's hook list. Cheap because hook tables are small (single
+// digits per site) and only called during DeleteSiteHook. Empty
+// string when the hook is unknown — DeleteSiteHook then no-ops the
+// YAML refresh.
+func (sm *SiteManager) siteIDForHook(id int64) string {
+	sites, err := sm.st.GetSites()
+	if err != nil {
+		return ""
+	}
+	for _, s := range sites {
+		hs, err := sm.st.ListHooks(s.ID)
+		if err != nil {
+			continue
+		}
+		for _, h := range hs {
+			if h.ID == id {
+				return s.ID
+			}
+		}
+	}
+	return ""
+}
+
+// refreshConfigYAMLFor re-projects a site by id. Tolerates an
+// unknown id (silent no-op) so hook CRUD on a deleted site doesn't
+// panic mid-tear-down.
+func (sm *SiteManager) refreshConfigYAMLFor(siteID string) {
+	if siteID == "" {
+		return
+	}
+	site, err := sm.st.GetSite(siteID)
+	if err != nil || site == nil {
+		return
+	}
+	sm.writeConfigYAML(site)
 }
 
 // ─── Activity feed pass-throughs ────────────────────────────────────────────
@@ -318,6 +417,7 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 		return err
 	}
 
+	sm.writeConfigYAML(&site)
 	sm.emitSitesUpdate()
 	return nil
 }
@@ -421,6 +521,11 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	if sm.OnSiteUpdated != nil {
 		sm.OnSiteUpdated(site)
 	}
+
+	// Refresh the projected config.yaml after a successful start so
+	// new sites (or sites upgraded from before this projection
+	// existed) get their portable file written exactly once.
+	sm.writeConfigYAML(site)
 
 	return sm.runHooks(ctx, hooks.PostStart, site)
 }
@@ -935,6 +1040,7 @@ func (sm *SiteManager) UpdateSiteVersionsWithEngine(ctx context.Context, siteID 
 	if sm.OnSiteUpdated != nil {
 		sm.OnSiteUpdated(site)
 	}
+	sm.writeConfigYAML(site)
 	return sm.runHooks(ctx, hooks.PostVersionsChange, site)
 }
 
@@ -972,6 +1078,7 @@ func (sm *SiteManager) UpdatePublicDir(ctx context.Context, siteID, publicDir st
 	if sm.OnSiteUpdated != nil {
 		sm.OnSiteUpdated(site)
 	}
+	sm.writeConfigYAML(site)
 	return nil
 }
 
@@ -1151,8 +1258,11 @@ func (sm *SiteManager) SetPublishDBPort(siteID string, on bool) error {
 		return fmt.Errorf("site must be stopped to change DB host-port publish")
 	}
 	site.PublishDBPort = on
-	_, err = sm.st.UpdateSite(site)
-	return err
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		return err
+	}
+	sm.writeConfigYAML(site)
+	return nil
 }
 
 // ExecWPCLI runs a WP-CLI command inside the site's PHP container.

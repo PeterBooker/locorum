@@ -33,38 +33,6 @@ func EnsureDir(path string) error {
 	return nil
 }
 
-// ExtractAssetsToDisk extracts files from the given filesystem to the specified target path.
-func ExtractAssetsToDisk(fsys fs.FS, sourcePath, targetPath string) error {
-	return fs.WalkDir(fsys, sourcePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		data, err := fs.ReadFile(fsys, path)
-		if err != nil {
-			return err
-		}
-
-		// Prepare target file path
-		relPath, err := filepath.Rel(sourcePath, path)
-		if err != nil {
-			return err
-		}
-		targetFilePath := filepath.Join(targetPath, relPath)
-
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(targetFilePath), 0755); err != nil {
-			return err
-		}
-
-		return os.WriteFile(targetFilePath, data, 0644)
-	})
-}
-
 // DeleteDirFiles deletes all files in the specified directory.
 func DeleteDirFiles(dir string) error {
 	entries, err := os.ReadDir(dir)

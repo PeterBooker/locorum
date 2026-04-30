@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/genmark"
 	"github.com/PeterBooker/locorum/internal/router"
 	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/version"
@@ -63,10 +65,16 @@ const (
 // Config controls Traefik orchestrator behavior. HomeDir is the user's home
 // (the orchestrator owns ~/.locorum/router and ~/.locorum/certs underneath
 // it). AppVersion is stamped on every container label.
+//
+// HTTPPort / HTTPSPort are the host-side bindings for plain and TLS
+// traffic. Zero falls back to the IANA defaults (80/443) so existing
+// callers that leave them unset retain the historical behaviour.
 type Config struct {
 	HomeDir    string
 	AppVersion string
 	LogLevel   string // INFO, DEBUG, WARN, ERROR; defaults to INFO
+	HTTPPort   int    // host port for entrypoint :80; 0 → 80
+	HTTPSPort  int    // host port for entrypoint :443; 0 → 443
 }
 
 // Router is the production router.Router implementation.
@@ -108,6 +116,13 @@ func New(cfg Config, d *docker.Docker, prov tlspkg.Provider, configFS fs.FS) (*R
 	password, hash, err := generateAdminCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("generate admin credentials: %w", err)
+	}
+
+	if cfg.HTTPPort == 0 {
+		cfg.HTTPPort = 80
+	}
+	if cfg.HTTPSPort == 0 {
+		cfg.HTTPSPort = 443
 	}
 
 	r := &Router{
@@ -228,7 +243,7 @@ func (r *Router) UpsertSite(ctx context.Context, route router.SiteRoute) error {
 
 	target := filepath.Join(r.hostDynamicDir, "site-"+route.Slug+".yaml")
 	wasPresent := fileExists(target)
-	if err := writeAtomic(target, payload); err != nil {
+	if err := genmark.WriteAtomic(target, payload, 0o644); err != nil {
 		return fmt.Errorf("write site config: %w", err)
 	}
 
@@ -274,7 +289,7 @@ func (r *Router) UpsertService(ctx context.Context, route router.ServiceRoute) e
 
 	target := filepath.Join(r.hostDynamicDir, "svc-"+route.Name+".yaml")
 	wasPresent := fileExists(target)
-	if err := writeAtomic(target, payload); err != nil {
+	if err := genmark.WriteAtomic(target, payload, 0o644); err != nil {
 		return fmt.Errorf("write service config: %w", err)
 	}
 
@@ -361,7 +376,7 @@ func (r *Router) writeStaticConfig() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(r.hostStaticPath, payload)
+	return genmark.WriteAtomic(r.hostStaticPath, payload, 0o644)
 }
 
 // writeAPIConfig writes the dynamic config that exposes Traefik's admin
@@ -372,7 +387,9 @@ func (r *Router) writeAPIConfig() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(r.hostAPIPath, payload)
+	// API config holds the admin password's bcrypt hash; restrict
+	// permissions so non-owner users cannot read it.
+	return genmark.WriteAtomic(r.hostAPIPath, payload, 0o600)
 }
 
 func (r *Router) createContainer(ctx context.Context) error {
@@ -394,8 +411,8 @@ func (r *Router) createContainer(ctx context.Context) error {
 			r.hostCertsDir + ":" + ContainerCertsDir + ":ro",
 		},
 		PortBindings: nat.PortMap{
-			"80/tcp":                     {{HostIP: "0.0.0.0", HostPort: "80"}},
-			"443/tcp":                    {{HostIP: "0.0.0.0", HostPort: "443"}},
+			"80/tcp":                     {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(r.cfg.HTTPPort)}},
+			"443/tcp":                    {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(r.cfg.HTTPSPort)}},
 			nat.Port(AdminPort + "/tcp"): {{HostIP: AdminBindHost, HostPort: AdminPort}},
 		},
 		NetworkMode:   dcontainer.NetworkMode(NetworkName),
@@ -472,39 +489,6 @@ func hostnamesFor(route router.SiteRoute) []string {
 		out = append(out, route.WildcardHost)
 	}
 	return out
-}
-
-// writeAtomic writes data to target via temp-file + rename. Traefik's file
-// provider watches via fsnotify; rename produces a single CREATE event so
-// the watcher never reads partially-written content.
-func writeAtomic(target string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
 }
 
 func fileExists(path string) bool {

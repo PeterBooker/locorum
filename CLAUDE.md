@@ -49,8 +49,12 @@ internal/router/traefik      Traefik v3 implementation (file provider + admin AP
 internal/router/fake         in-memory Router for tests
 internal/tls                 TLS Provider interface + mkcert implementation
 internal/storage             SQLite CRUD + embedded migrations (sites, site_hooks, settings)
+internal/config              typed read/write of global settings; pre-fills new-site defaults, router ports, mkcert path, telemetry/update-check switches
+internal/genmark             "locorum-generated" marker convention + atomic + manage-aware writes (used by every writer that emits a managed file)
+internal/assets              hash-based reconcile of bundled config files against disk (~/.locorum/state/asset_hashes.json); surfaces "merge needed" when both sides moved
 internal/sites               SiteManager — core business logic, builds Plans for lifecycle methods
 internal/sites/sitesteps     orch.Step implementations: ensure-network, pull-images, chown, create-containers, wait-ready, register-routes, …
+internal/sites/configyaml    portable YAML projection of a site row (+ hooks) at <site>/.locorum/config.yaml
 internal/hooks               Hook engine: Runner interface, env builder, exec/host adapters, fake/ for tests
 internal/ui                  Gio GUI (immediate-mode)
 internal/types               shared data model (Site struct)
@@ -65,16 +69,20 @@ config/hooks/                embedded defaults pack (hook templates surfaced in 
 
 Dependency direction (strict):
 ```
-main ─┬─ app    ─┬─ docker, utils, router (interface)
+main ─┬─ app    ─┬─ docker, utils, router (interface), assets, genmark
       │
-      ├─ router/traefik ─┬─ docker, router, tls, version
+      ├─ genmark ─── (stdlib only — leaf)
+      ├─ assets  ─── genmark
+      ├─ config  ─── (Store interface satisfied by storage; leaf otherwise)
+      ├─ router/traefik ─┬─ docker, router, tls, version, genmark
       ├─ tls
       ├─ storage ─── types, hooks (Hook + Event types only)
       ├─ hooks  ─┬─ docker, utils, types, version (adapters in adapter.go)
       ├─ orch   ── (no internal deps — engine-agnostic Step orchestrator)
       ├─ sites/sitesteps ── docker, orch, router, types
-      ├─ sites   ─┬─ docker, storage, types, utils, router, hooks, orch, sitesteps
-      └─ ui      ─┴─ sites, types, hooks, orch, docker (orch.StepResult + docker.PullProgress only)
+      ├─ sites/configyaml ── types, hooks (types only), genmark
+      ├─ sites   ─┬─ docker, storage, types, utils, router, hooks, orch, sitesteps, config, genmark, sites/configyaml
+      └─ ui      ─┴─ sites, types, hooks, orch, dbengine, docker (orch.StepResult + docker.PullProgress only)
 ```
 
 ### Load-Bearing Invariants
@@ -96,6 +104,8 @@ These are the rules that hold the app together. Don't violate them without discu
 13. **Per-site mutex serialises lifecycle calls.** `SiteManager.siteMutex(siteID)` returns a per-site `*sync.Mutex` from a `sync.Map`. Every lifecycle method locks it for the duration. Different sites still run in parallel.
 14. **Spec builders bake in security defaults.** `WebSpec`, `PHPSpec`, `DatabaseSpec`, `RedisSpec`, `MailSpec`, `AdminerSpec` produce containers with `CapDrop=ALL`, `NoNewPrivileges=true`, `Init=true`, log size capped at `10m × 3`, and per-role `CapAdd`. Don't hand-roll a `ContainerSpec` for a role that already has a builder.
 15. **DB passwords flow through `EnvSecret`.** Engine never logs the value; error strings are scrubbed via `redactErrSpec` before propagating. `docker inspect` still shows the value (a documented limit).
+16. **Every generated file under `~/.locorum/` or `~/locorum/sites/<slug>/` carries the `locorum-generated` marker** in its leading comment block. Writers go through `genmark.WriteIfManaged` (respects user opt-out) or `genmark.WriteAtomic` (always overwrites — used for files Locorum exclusively owns like router dynamic configs). Removing the marker is the user opt-out: Locorum then leaves the file alone forever. See `internal/genmark/`.
+17. **Global settings live in the `settings` KV table behind `internal/config`.** Typed accessors return documented defaults for unset rows; setters validate enums + ports up front. Adding a new setting = one Key constant + one accessor + one setter; never write `storage.GetSetting("…")` outside the hooks subsystem.
 
 ### Background Ops Pattern
 

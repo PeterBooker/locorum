@@ -1,7 +1,6 @@
 package sites
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -120,22 +119,6 @@ func TestDecodeSalts(t *testing.T) {
 	}
 }
 
-func TestHasLocorumSignature(t *testing.T) {
-	if !hasLocorumSignature([]byte("// #locorum-generated\n<?php …")) {
-		t.Error("signature on first line should match")
-	}
-	if hasLocorumSignature([]byte("<?php /* hand-written */")) {
-		t.Error("plain file should not match")
-	}
-	// Signature buried far past peek window must not match — that's a
-	// random comment, not an opt-in.
-	deep := bytes.Repeat([]byte("// padding\n"), 600)
-	deep = append(deep, []byte("// #locorum-generated trailing\n")...)
-	if hasLocorumSignature(deep) {
-		t.Error("signature beyond peek window should not match")
-	}
-}
-
 func TestRenderTemplateUsesPhpEscape(t *testing.T) {
 	efs := fstest.MapFS{
 		"t.tmpl": &fstest.MapFile{
@@ -149,66 +132,6 @@ func TestRenderTemplateUsesPhpEscape(t *testing.T) {
 	want := `<?php define('X', 'it\'s \\weird\\');`
 	if string(out) != want {
 		t.Errorf("got %q, want %q", string(out), want)
-	}
-}
-
-func TestWriteIfManagedAtomicAndIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "wp-config.php")
-	body := []byte("<?php // #locorum-generated\n$x = 1;\n")
-
-	// 1st write: creates file.
-	if err := writeIfManaged(p, body); err != nil {
-		t.Fatalf("first write: %v", err)
-	}
-	got, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, body) {
-		t.Fatalf("first write content mismatch")
-	}
-
-	// 2nd write of identical content: should be a no-op (no rename).
-	st1, _ := os.Stat(p)
-	if err := writeIfManaged(p, body); err != nil {
-		t.Fatalf("second write: %v", err)
-	}
-	st2, _ := os.Stat(p)
-	if st2.ModTime() != st1.ModTime() {
-		t.Errorf("identical content triggered a write (mtime changed)")
-	}
-
-	// Different content, signature still present: should overwrite.
-	body2 := []byte("<?php // #locorum-generated\n$x = 2;\n")
-	if err := writeIfManaged(p, body2); err != nil {
-		t.Fatalf("third write: %v", err)
-	}
-	got, _ = os.ReadFile(p)
-	if !bytes.Equal(got, body2) {
-		t.Errorf("update did not apply")
-	}
-}
-
-func TestWriteIfManagedRefusesUnmanagedFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "wp-config.php")
-	hand := []byte("<?php // user-written\n$x = 99;\n")
-	if err := os.WriteFile(p, hand, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	managed := []byte("<?php // #locorum-generated\n$x = 1;\n")
-	if err := writeIfManaged(p, managed); err != nil {
-		t.Fatalf("writeIfManaged returned error: %v", err)
-	}
-
-	got, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, hand) {
-		t.Errorf("user-managed file was overwritten — invariant violated")
 	}
 }
 

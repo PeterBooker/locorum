@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"os"
 	"path"
 	"path/filepath"
 
+	"github.com/PeterBooker/locorum/internal/genmark"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -34,43 +34,45 @@ var (
 	apacheSiteTpl *template.Template
 )
 
-// writeInPlace writes data to filename, truncating the file first.
-func (sm *SiteManager) writeInPlace(filename string, data []byte) error {
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
+// renderSiteConfig executes tpl against site and prepends the canonical
+// genmark header. Returns rendered bytes; caller writes them.
+//
+// The header uses StyleHash because both nginx and Apache treat `#`
+// lines as comments.  Centralised so both web-server paths share one
+// "generated header + body" assembly and so the prepend stays in one
+// place if the marker format ever changes.
+func renderSiteConfig(tpl *template.Template, site *types.Site) ([]byte, error) {
+	var body bytes.Buffer
+	if err := tpl.Execute(&body, site); err != nil {
+		return nil, err
 	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return f.Sync()
+	out := make([]byte, 0, len(genmark.Header(genmark.StyleHash))+body.Len())
+	out = append(out, genmark.Header(genmark.StyleHash)...)
+	out = append(out, body.Bytes()...)
+	return out, nil
 }
 
+// generateSiteConfig renders the per-site nginx config and writes it
+// via WriteAtomic — the file is bind-mounted into the global router and
+// has no documented user-edit surface, so we always own it.
 func (sm *SiteManager) generateSiteConfig(site *types.Site, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), err)
-	}
-	var mbuf bytes.Buffer
-	if err := siteTpl.Execute(&mbuf, site); err != nil {
+	payload, err := renderSiteConfig(siteTpl, site)
+	if err != nil {
 		return fmt.Errorf("render site config: %w", err)
 	}
-	if err := sm.writeInPlace(dest, mbuf.Bytes()); err != nil {
+	if err := genmark.WriteAtomic(dest, payload, 0o644); err != nil {
 		return fmt.Errorf("write site config: %w", err)
 	}
 	return nil
 }
 
+// generateApacheSiteConfig is the Apache twin of generateSiteConfig.
 func (sm *SiteManager) generateApacheSiteConfig(site *types.Site, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), err)
-	}
-	var mbuf bytes.Buffer
-	if err := apacheSiteTpl.Execute(&mbuf, site); err != nil {
+	payload, err := renderSiteConfig(apacheSiteTpl, site)
+	if err != nil {
 		return fmt.Errorf("render apache site config: %w", err)
 	}
-	if err := sm.writeInPlace(dest, mbuf.Bytes()); err != nil {
+	if err := genmark.WriteAtomic(dest, payload, 0o644); err != nil {
 		return fmt.Errorf("write apache site config: %w", err)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/PeterBooker/locorum/internal/assets"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/router"
 	"github.com/PeterBooker/locorum/internal/utils"
@@ -175,9 +176,34 @@ func (a *App) SetupFilesystem() error {
 		_ = os.RemoveAll(d)
 	}
 
-	if err := utils.ExtractAssetsToDisk(a.configFiles, ".", path.Join(a.homeDir, ".locorum")); err != nil {
-		slog.Error("Failed to extract assets: " + err.Error())
+	// Reconcile bundled config assets against disk. The Reconcile
+	// pass walks the embedded FS, hashes each file, and uses the
+	// previous-run hash table to distinguish "bundled default
+	// changed" from "user edited" so we never silently overwrite a
+	// hand-edited file. Files needing manual merge are logged at
+	// warn level; the GUI's System Health panel will surface them
+	// once that lands (LEARNINGS §6.5).
+	statePath := assets.DefaultStatePath(a.homeDir)
+	prevState, err := assets.LoadState(statePath)
+	if err != nil {
+		slog.Warn("assets: load state: " + err.Error())
+	}
+	report, nextState, err := assets.Reconcile(a.configFiles, "config", path.Join(a.homeDir, ".locorum", "config"), prevState, nil)
+	if err != nil {
+		// Walk-level error means the embed itself is unreadable
+		// — fatal, refuse to start with half-extracted config.
+		slog.Error("Failed to reconcile assets: " + err.Error())
 		return err
+	}
+	for _, fr := range report.MergeNeeded() {
+		slog.Warn("config: bundled default changed; user edit preserved",
+			"path", fr.Path,
+			"hint", "compare your file against the bundled default and merge by hand")
+	}
+	if err := assets.SaveState(statePath, nextState); err != nil {
+		// Non-fatal: missing state just means next run sees
+		// every file as "matches prev".
+		slog.Warn("assets: save state: " + err.Error())
 	}
 
 	for _, p := range []string{
