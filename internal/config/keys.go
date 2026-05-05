@@ -57,6 +57,15 @@ const (
 	// Update check. Reserved for LEARNINGS §7.4.
 	KeyUpdateCheckEnabled = "update_check.enabled"
 	KeyUpdateCheckChannel = "update_check.channel"
+
+	// System Health (CROSS-PLATFORM.md). All optional — sensible
+	// defaults apply when unset.
+	KeyHealthEnabled            = "health.enabled"         // bool, default true
+	KeyHealthCadenceMinutes     = "health.cadence_minutes" // int, default 5
+	KeyHealthDiskCadenceMinutes = "health.disk_check_cadence_minutes"
+	KeyHealthDiskWarnGB         = "health.disk_warn_gb"    // int, default 5
+	KeyHealthDiskBlockerGB      = "health.disk_blocker_gb" // int, default 1
+	KeyHealthLastSeen           = "health.last_seen"       // json, internal
 )
 
 // Documented default values for every accessor. Centralising these
@@ -71,6 +80,12 @@ const (
 	DefaultRouterHTTPS   = 443
 	DefaultPerformance   = "auto"
 	DefaultUpdateChannel = "stable"
+
+	DefaultHealthEnabled            = true
+	DefaultHealthCadenceMinutes     = 5
+	DefaultHealthDiskCadenceMinutes = 15
+	DefaultHealthDiskWarnGB         = 5
+	DefaultHealthDiskBlockerGB      = 1
 )
 
 // Allowed enum values. Used by Set* validation.

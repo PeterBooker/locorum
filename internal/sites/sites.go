@@ -115,6 +115,38 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, r
 // always wires through main.New.
 func (sm *SiteManager) Config() *config.Config { return sm.cfg }
 
+// Roots returns the FilesDir of every registered site, deduped and
+// sorted. Implements health.SiteRootLister so the path-shape checks
+// (wsl-mnt-c, windows-longpath) can iterate over real site locations
+// without depending on *sites.SiteManager directly.
+//
+// Errors from the underlying GetSites are swallowed (logged at debug
+// only) — the health check is informational and a transient SQLite
+// hiccup shouldn't trip a "we can't read your sites" finding.
+func (sm *SiteManager) Roots(_ context.Context) []string {
+	if sm == nil || sm.st == nil {
+		return nil
+	}
+	rows, err := sm.st.GetSites()
+	if err != nil {
+		slog.Debug("sites: roots: GetSites failed", "err", err.Error())
+		return nil
+	}
+	seen := make(map[string]struct{}, len(rows))
+	out := make([]string, 0, len(rows))
+	for _, s := range rows {
+		if s.FilesDir == "" {
+			continue
+		}
+		if _, ok := seen[s.FilesDir]; ok {
+			continue
+		}
+		seen[s.FilesDir] = struct{}{}
+		out = append(out, s.FilesDir)
+	}
+	return out
+}
+
 // writeConfigYAML projects the site row + its hooks onto
 // <site.FilesDir>/.locorum/config.yaml. Errors are logged but never
 // propagated — the YAML is a portability convenience, not a load-

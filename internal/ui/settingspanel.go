@@ -16,7 +16,8 @@ import (
 // SettingsPanel takes over columns 2+3 when the nav rail's Settings item
 // is active. Sections (top to bottom):
 //
-//   - Appearance:   theme picker (System / Light / Dark).
+//   - System Health:    runner findings + re-check.
+//   - Appearance:       theme picker (System / Light / Dark).
 //   - New site defaults: pre-fill values for the new-site modal.
 //   - Network & TLS:    router HTTP/HTTPS host ports + mkcert path.
 //
@@ -27,6 +28,7 @@ type SettingsPanel struct {
 	state         *UIState
 	sm            *sites.SiteManager
 	onThemeChange func(ThemeMode)
+	healthPanel   *HealthPanel
 
 	themeEnum widget.Enum
 	syncedTo  string // remembers which value we last seeded from settings
@@ -114,6 +116,11 @@ func NewSettingsPanel(state *UIState, sm *sites.SiteManager, onThemeChange func(
 	return s
 }
 
+// SetHealthPanel attaches the system-health panel renderer. Optional —
+// callers that don't wire a runner (early startup, tests) can leave it
+// nil and the section is omitted from the layout.
+func (s *SettingsPanel) SetHealthPanel(hp *HealthPanel) { s.healthPanel = hp }
+
 // HandleUserInteractions watches the theme picker for selection
 // changes, syncs the engine→version dropdown, and persists any changed
 // defaults.
@@ -128,6 +135,9 @@ func (s *SettingsPanel) HandleUserInteractions(gtx layout.Context) {
 	}
 	s.syncEngineVersionList()
 	s.persistDefaults(gtx)
+	if s.healthPanel != nil {
+		s.healthPanel.HandleUserInteractions(gtx)
+	}
 }
 
 // syncEngineVersionList updates the DB-version dropdown options when
@@ -266,6 +276,12 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *Theme) layout.Dimensions 
 						lbl.Font.Weight = font.SemiBold
 						return lbl.Layout(gtx)
 					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if s.healthPanel == nil {
+						return layout.Dimensions{}
+					}
+					return s.healthPanel.Layout(gtx, th)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return s.layoutAppearance(gtx, th)

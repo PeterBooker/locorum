@@ -9,6 +9,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/pkg/stdcopy"
+
+	"github.com/PeterBooker/locorum/internal/platform"
 )
 
 // OneShotMount describes one mount attached to a transient run-and-remove
@@ -52,9 +54,15 @@ func (d *Docker) RunOneShotCapture(ctx context.Context, name, image string, cmd 
 
 	binds := make([]string, 0, len(mounts))
 	for _, m := range mounts {
-		src := m.Volume
-		if src == "" {
-			src = m.Bind
+		// Volume mounts pass the name through unchanged; bind mounts go
+		// via platform.DockerPath so a Windows path doesn't reach Docker
+		// with backslashes the bind syntax can't tolerate.
+		var src string
+		switch {
+		case m.Volume != "":
+			src = m.Volume
+		case m.Bind != "":
+			src = platform.DockerPath(m.Bind)
 		}
 		if src == "" || m.Target == "" {
 			return res, fmt.Errorf("oneshot: mount missing source or target: %+v", m)

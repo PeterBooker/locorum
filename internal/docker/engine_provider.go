@@ -3,8 +3,17 @@ package docker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
+
+	"github.com/PeterBooker/locorum/internal/version"
 )
+
+// providerLogOnce ensures the "could not parse Docker server version" warning
+// fires at most once per process. The pure-text path is fine to ignore on
+// the second-and-later calls; we already logged it.
+var providerLogOnce sync.Once
 
 // ProviderInfo returns Docker daemon identification, cached after first
 // successful call. Concurrent callers share the same lookup; cache misses
@@ -22,12 +31,20 @@ func (d *Docker) ProviderInfo(ctx context.Context) (ProviderInfo, error) {
 		return ProviderInfo{}, fmt.Errorf("docker info: %w", err)
 	}
 
+	parsed := version.ParseDockerServer(info.ServerVersion)
+	if parsed.IsZero() && info.ServerVersion != "" {
+		providerLogOnce.Do(func() {
+			slog.Warn("docker: could not parse server version", "raw", info.ServerVersion)
+		})
+	}
+
 	pi := ProviderInfo{
 		Name:            classifyProviderName(info.Name, info.OperatingSystem),
 		OperatingSystem: info.OperatingSystem,
 		OSType:          info.OSType,
 		Architecture:    info.Architecture,
 		ServerVersion:   info.ServerVersion,
+		ServerVersionP:  parsed,
 		Rootless:        isRootless(info.SecurityOptions),
 		IsDockerDesktop: isDockerDesktop(info.OperatingSystem, info.Name),
 		NCPU:            info.NCPU,

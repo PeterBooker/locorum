@@ -3,6 +3,8 @@ package docker
 import (
 	"context"
 	"time"
+
+	"github.com/PeterBooker/locorum/internal/version"
 )
 
 // Engine is the surface every consumer above internal/docker uses. *Docker
@@ -103,6 +105,12 @@ type Engine interface {
 	// EnsureMarkerStep to inspect a volume before the service container
 	// owning it has booted.
 	RunOneShotCapture(ctx context.Context, name, image string, cmd []string, mounts []OneShotMount) (OneShotResult, error)
+
+	// DiskUsage returns a high-level summary of `docker system df`. Slow
+	// (multi-second on busy hosts); callers should pass a context with
+	// a deadline (~30s) and gate via a circuit breaker if they call it
+	// repeatedly. Concurrent callers are coalesced via singleflight.
+	DiskUsage(ctx context.Context) (DiskReport, error)
 }
 
 // PullProgress is one tick of image-pull progress. Aggregated across layers
@@ -144,7 +152,8 @@ type ProviderInfo struct {
 	OperatingSystem string
 	OSType          string // "linux", "windows"
 	Architecture    string
-	ServerVersion   string
+	ServerVersion   string                      // raw, as the daemon reports it
+	ServerVersionP  version.DockerServerVersion // parsed view; .IsZero() if unparseable
 	Rootless        bool
 	IsDockerDesktop bool
 	NCPU            int

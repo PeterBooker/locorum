@@ -2,11 +2,13 @@ package ui
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/app"
 
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/health"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -125,6 +127,27 @@ type UIState struct {
 	// Aggregate health of the global services (router, mail, adminer).
 	// Polled from the main goroutine; written via SetServicesHealth.
 	servicesHealth ServicesHealth
+
+	// healthSnapshot is the latest snapshot from the health.Runner.
+	// Stored via atomic.Pointer so reads are lock-free; the UI Layout
+	// pass reads on every frame without contending with the runner.
+	healthSnapshot atomic.Pointer[health.Snapshot]
+
+	// healthSeen tracks the (per-finding-key) last-seen generation so
+	// we can decide whether to toast a freshly-published finding. Two
+	// concerns: cross-restart persistence (delegated to the config
+	// store via the syncHealthSeen method) and per-frame toast
+	// throttling. Guarded by healthSeenMu.
+	healthSeen      map[string]bool
+	healthSeenMu    sync.Mutex
+	healthFirstFire bool // true until the first snapshot publishes; suppresses
+	// the initial flood of toasts on app start so an upgrade doesn't bury
+	// the user in pre-existing-but-newly-detected findings.
+
+	// diskFreeBytes is the most recent host-filesystem free-byte reading
+	// surfaced by the disk-low check. Zero before the first reading.
+	// Guarded by mu (top-level UIState mutex) — same as servicesHealth.
+	diskFreeBytes int64
 }
 
 // activitySiteCache mirrors a slice of recent activity rows for one site.
@@ -188,13 +211,19 @@ type hookLine struct {
 }
 
 func NewUIState() *UIState {
-	return &UIState{
-		navView:        NavViewSites,
-		siteToggling:   make(map[string]bool),
-		hookState:      make(map[string]*hookSiteState),
-		lifecycleState: make(map[string]*lifecycleSiteState),
-		activityState:  make(map[string]*activitySiteCache),
+	s := &UIState{
+		navView:         NavViewSites,
+		siteToggling:    make(map[string]bool),
+		hookState:       make(map[string]*hookSiteState),
+		lifecycleState:  make(map[string]*lifecycleSiteState),
+		activityState:   make(map[string]*activitySiteCache),
+		healthSeen:      make(map[string]bool),
+		healthFirstFire: true,
 	}
+	// Publish an empty snapshot so the Layout pass never reads nil.
+	empty := health.Snapshot{}
+	s.healthSnapshot.Store(&empty)
+	return s
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
@@ -247,6 +276,102 @@ func (s *UIState) Invalidate() {
 	if w != nil {
 		w.Invalidate()
 	}
+}
+
+// ─── System health ──────────────────────────────────────────────────────────
+
+// SetHealthSnapshot publishes a new snapshot from the runner. Lock-free
+// (atomic.Pointer). Triggers a window invalidation so the Layout pass
+// picks up the new content on the next frame.
+//
+// Toast bookkeeping is delegated to the caller, which knows when first-fire
+// suppression should apply (see UIState.HealthShouldToast).
+func (s *UIState) SetHealthSnapshot(snap health.Snapshot) {
+	cp := snap
+	s.healthSnapshot.Store(&cp)
+	s.Invalidate()
+}
+
+// HealthSnapshot returns the most recently stored snapshot. Never nil
+// because NewUIState publishes an empty snapshot at construction time.
+func (s *UIState) HealthSnapshot() health.Snapshot {
+	v := s.healthSnapshot.Load()
+	if v == nil {
+		return health.Snapshot{}
+	}
+	return *v
+}
+
+// HealthShouldToast reports whether the given finding key has been seen
+// before in this process. The first call for any key returns true (the
+// caller should fire a toast); subsequent calls return false.
+//
+// Returns false during the first-fire window — the runner publishes the
+// initial snapshot but the UI suppresses toasts so a fresh install isn't
+// flooded.
+func (s *UIState) HealthShouldToast(key string) bool {
+	s.healthSeenMu.Lock()
+	defer s.healthSeenMu.Unlock()
+	if s.healthFirstFire {
+		s.healthSeen[key] = true
+		return false
+	}
+	if s.healthSeen[key] {
+		return false
+	}
+	s.healthSeen[key] = true
+	return true
+}
+
+// HealthClearFirstFire ends the first-fire suppression window. Called
+// once after the first snapshot finishes. Subsequent toasts behave normally.
+func (s *UIState) HealthClearFirstFire() {
+	s.healthSeenMu.Lock()
+	s.healthFirstFire = false
+	s.healthSeenMu.Unlock()
+}
+
+// HealthSeenKeys returns a snapshot of the seen-keys set, suitable for
+// JSON serialisation into the persistent settings table.
+func (s *UIState) HealthSeenKeys() []string {
+	s.healthSeenMu.Lock()
+	defer s.healthSeenMu.Unlock()
+	out := make([]string, 0, len(s.healthSeen))
+	for k := range s.healthSeen {
+		out = append(out, k)
+	}
+	return out
+}
+
+// HealthHydrateSeen seeds the seen-keys set from the persisted JSON. Idempotent.
+func (s *UIState) HealthHydrateSeen(keys []string) {
+	s.healthSeenMu.Lock()
+	for _, k := range keys {
+		s.healthSeen[k] = true
+	}
+	s.healthSeenMu.Unlock()
+}
+
+// SetDiskFreeBytes stores the most recent host-filesystem free-byte reading
+// for the top status bar. The runner publishes this via the disk-low check;
+// main.go pulls it out and pushes here on the same cadence the services-
+// health bar polls so the UI updates feel synchronous to the user.
+func (s *UIState) SetDiskFreeBytes(n int64) {
+	s.mu.Lock()
+	changed := s.diskFreeBytes != n
+	s.diskFreeBytes = n
+	s.mu.Unlock()
+	if changed {
+		s.Invalidate()
+	}
+}
+
+// DiskFreeBytes returns the cached host-filesystem free-byte reading.
+// Zero means "unknown" (typical until the first health cycle completes).
+func (s *UIState) DiskFreeBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.diskFreeBytes
 }
 
 // ─── Services health ────────────────────────────────────────────────────────
