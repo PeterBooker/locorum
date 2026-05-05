@@ -80,6 +80,12 @@ func allKeys() []string {
 		KeyTelemetryClient,
 		KeyUpdateCheckEnabled,
 		KeyUpdateCheckChannel,
+		KeyHealthEnabled,
+		KeyHealthCadenceMinutes,
+		KeyHealthDiskCadenceMinutes,
+		KeyHealthDiskWarnGB,
+		KeyHealthDiskBlockerGB,
+		KeyHealthLastSeen,
 	}
 }
 
@@ -335,6 +341,93 @@ func (c *Config) SetPerformanceMode(v string) error {
 		return fmt.Errorf("config: invalid performance mode %q (allowed: %s)", v, strings.Join(allowedPerformance, ", "))
 	}
 	return c.Set(KeyPerformanceMode, v)
+}
+
+// ── System Health ───────────────────────────────────────────────────
+
+// HealthEnabled reports whether the System Health runner should publish
+// snapshots. Default true. When false, the UI hides the badge, modal,
+// toasts, and panel findings.
+func (c *Config) HealthEnabled() bool {
+	return parseBool(c.raw(KeyHealthEnabled), DefaultHealthEnabled)
+}
+
+// SetHealthEnabled persists the on/off switch.
+func (c *Config) SetHealthEnabled(v bool) error {
+	return c.Set(KeyHealthEnabled, formatBool(v))
+}
+
+// HealthCadenceMinutes is the global health-check cadence in minutes.
+// Default 5. Returns the default for invalid stored values.
+func (c *Config) HealthCadenceMinutes() int {
+	return parseInt(c.raw(KeyHealthCadenceMinutes), DefaultHealthCadenceMinutes)
+}
+
+// SetHealthCadenceMinutes persists the cadence; rejects ≤0.
+func (c *Config) SetHealthCadenceMinutes(v int) error {
+	if v <= 0 {
+		return fmt.Errorf("config: cadence must be positive (got %d)", v)
+	}
+	return c.Set(KeyHealthCadenceMinutes, strconv.Itoa(v))
+}
+
+// HealthDiskCadenceMinutes is the cadence for the expensive disk-usage
+// check. Default 15.
+func (c *Config) HealthDiskCadenceMinutes() int {
+	return parseInt(c.raw(KeyHealthDiskCadenceMinutes), DefaultHealthDiskCadenceMinutes)
+}
+
+// SetHealthDiskCadenceMinutes persists the disk-check cadence; rejects ≤0.
+func (c *Config) SetHealthDiskCadenceMinutes(v int) error {
+	if v <= 0 {
+		return fmt.Errorf("config: disk cadence must be positive (got %d)", v)
+	}
+	return c.Set(KeyHealthDiskCadenceMinutes, strconv.Itoa(v))
+}
+
+// HealthDiskWarnGB is the threshold below which we surface a warning
+// finding. Default 5.
+func (c *Config) HealthDiskWarnGB() int {
+	return parseInt(c.raw(KeyHealthDiskWarnGB), DefaultHealthDiskWarnGB)
+}
+
+// SetHealthDiskWarnGB persists the warn threshold; rejects ≤0.
+func (c *Config) SetHealthDiskWarnGB(v int) error {
+	if v <= 0 {
+		return fmt.Errorf("config: warn threshold must be positive (got %d)", v)
+	}
+	return c.Set(KeyHealthDiskWarnGB, strconv.Itoa(v))
+}
+
+// HealthDiskBlockerGB is the threshold below which we escalate to a
+// blocker. Default 1.
+func (c *Config) HealthDiskBlockerGB() int {
+	return parseInt(c.raw(KeyHealthDiskBlockerGB), DefaultHealthDiskBlockerGB)
+}
+
+// SetHealthDiskBlockerGB persists the blocker threshold; rejects ≤0 and
+// any value ≥ the warn threshold (since blocker must be tighter).
+func (c *Config) SetHealthDiskBlockerGB(v int) error {
+	if v <= 0 {
+		return fmt.Errorf("config: blocker threshold must be positive (got %d)", v)
+	}
+	warn := c.HealthDiskWarnGB()
+	if v >= warn {
+		return fmt.Errorf("config: blocker threshold (%d GB) must be smaller than warn threshold (%d GB)", v, warn)
+	}
+	return c.Set(KeyHealthDiskBlockerGB, strconv.Itoa(v))
+}
+
+// HealthLastSeen returns the persisted last-seen-finding-keys JSON blob.
+// Empty string on first run. The value is opaque to the config package;
+// the UI's toast handler parses it.
+func (c *Config) HealthLastSeen() string {
+	return c.raw(KeyHealthLastSeen)
+}
+
+// SetHealthLastSeen persists the JSON blob.
+func (c *Config) SetHealthLastSeen(v string) error {
+	return c.Set(KeyHealthLastSeen, v)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

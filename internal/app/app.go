@@ -24,6 +24,10 @@ type App struct {
 	rtr         router.Router
 	homeDir     string
 	configFiles embed.FS
+
+	// provider is the cached Docker daemon identification, populated by
+	// Initialize once Ping has succeeded. Reads via Provider() are
+	// concurrency-safe — pmu in *Docker guards the underlying cache.
 }
 
 func New(configFiles embed.FS, d *docker.Docker, homeDir string, rtr router.Router) *App {
@@ -46,6 +50,22 @@ func (a *App) Initialize(ctx context.Context) error {
 	}
 	if err := a.d.CheckDockerAvailable(ctx); err != nil {
 		return err
+	}
+
+	// Identify the daemon up front so health checks can read a cached
+	// answer without each one re-issuing `docker info`. Failure to
+	// identify is non-fatal — we'll fall back to a "name unknown"
+	// finding rather than block startup.
+	if pi, err := a.d.ProviderInfo(ctx); err == nil {
+		slog.Info("docker daemon identified",
+			"provider", pi.Name,
+			"server_version", pi.ServerVersion,
+			"os_type", pi.OSType,
+			"arch", pi.Architecture,
+			"rootless", pi.Rootless,
+		)
+	} else {
+		slog.Warn("docker: ProviderInfo failed; health checks may be degraded", "err", err.Error())
 	}
 
 	// Wipe leftover Locorum-owned resources from prior sessions before
@@ -144,6 +164,21 @@ func (a *App) IsDockerAvailable(ctx context.Context) error {
 
 func (a *App) GetClient() *client.Client { return a.cli }
 func (a *App) GetHomeDir() string        { return a.homeDir }
+
+// Provider returns the cached Docker daemon identification. If Initialize
+// has not yet run (or the ProviderInfo call failed), the returned
+// ProviderInfo carries the engine-side default values plus an empty Name
+// — callers should treat that as "unknown" and not branch on specifics.
+func (a *App) Provider(ctx context.Context) docker.ProviderInfo {
+	pi, err := a.d.ProviderInfo(ctx)
+	if err != nil {
+		// The cache is set in Initialize; an error here means
+		// Initialize hasn't run successfully yet. Return zero so
+		// callers don't need to check.
+		return docker.ProviderInfo{}
+	}
+	return pi
+}
 
 func (a *App) SetupFilesystem() error {
 	for _, p := range []string{

@@ -1,12 +1,17 @@
 package ui
 
 import (
+	"sync"
+	"time"
+
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/PeterBooker/locorum/internal/dbengine"
+	"github.com/PeterBooker/locorum/internal/platform"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
@@ -61,6 +66,15 @@ type NewSiteModal struct {
 
 	keys *ModalFocus
 	anim *modalShowState
+
+	// Path-validation cache. The Layout pass reads notes; HandleUserInteractions
+	// debounces on the FilesDir value and re-runs ValidateSitePath off
+	// the goroutine started by the debounce timer. The mutex covers both.
+	pathMu      sync.Mutex
+	pathNotes   []sites.PathNote
+	pathTarget  string      // last value we ran validation against
+	pathTimer   *time.Timer // active debounce timer; nil between runs
+	pathPending string      // value to validate when the timer fires
 }
 
 func NewNewSiteModal(state *UIState, sm *sites.SiteManager, toasts *Notifications) *NewSiteModal {
@@ -135,6 +149,11 @@ func indexOfDBEngine(name string, kinds []dbengine.Kind) int {
 // Called by the root UI before Layout when the modal is visible.
 func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 	keys := ProcessModalKeys(gtx, m.keys.Tag)
+
+	// Debounced path validation. Re-arm the timer whenever the field
+	// value moves; the validator runs at most once per 250 ms regardless
+	// of typing speed.
+	m.scheduleValidation(m.filesDirVal)
 
 	if m.cancelBtn.Clicked(gtx) || m.closeBtn.Clicked(gtx) || keys.Escape {
 		m.state.SetShowNewSiteModal(false)
@@ -232,6 +251,53 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 	}
 }
 
+// scheduleValidation arms (or re-arms) the path-debounce timer. Pure-Go
+// validation runs in microseconds, but we still debounce so the UI doesn't
+// feel chatty during a paste. After 250 ms of quiescence the timer fires;
+// the goroutine recomputes notes off the UI loop and stores them, then
+// invalidates so Layout picks up the new content.
+func (m *NewSiteModal) scheduleValidation(target string) {
+	m.pathMu.Lock()
+	defer m.pathMu.Unlock()
+
+	if target == m.pathTarget {
+		return
+	}
+	m.pathPending = target
+	if m.pathTimer != nil {
+		m.pathTimer.Reset(250 * time.Millisecond)
+		return
+	}
+	m.pathTimer = time.AfterFunc(250*time.Millisecond, func() {
+		m.pathMu.Lock()
+		val := m.pathPending
+		m.pathTimer = nil
+		m.pathMu.Unlock()
+
+		var info *platform.Info
+		if platform.IsInitialized() {
+			info = platform.Get()
+		}
+		notes := sites.ValidateSitePath(val, info)
+
+		m.pathMu.Lock()
+		m.pathNotes = notes
+		m.pathTarget = val
+		m.pathMu.Unlock()
+
+		m.state.Invalidate()
+	})
+}
+
+// pathNotesSnapshot returns the current notes for the layout pass.
+func (m *NewSiteModal) pathNotesSnapshot() []sites.PathNote {
+	m.pathMu.Lock()
+	defer m.pathMu.Unlock()
+	out := make([]sites.PathNote, len(m.pathNotes))
+	copy(out, m.pathNotes)
+	return out
+}
+
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -283,7 +349,14 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensio
 		// Files Dir
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return m.layoutDirPicker(gtx, th)
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return m.layoutDirPicker(gtx, th)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return m.layoutPathNotes(gtx, th)
+					}),
+				)
 			})
 		}),
 		// Public Dir
@@ -342,6 +415,46 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensio
 			)
 		}),
 	)
+}
+
+// layoutPathNotes renders the inline yellow validation notes beneath the
+// directory picker. Empty when there's nothing to warn about.
+func (m *NewSiteModal) layoutPathNotes(gtx layout.Context, th *Theme) layout.Dimensions {
+	notes := m.pathNotesSnapshot()
+	if len(notes) == 0 {
+		return layout.Dimensions{}
+	}
+	children := make([]layout.FlexChild, 0, len(notes))
+	for _, n := range notes {
+		n := n
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return RoundedFill(gtx, th.Color.WarnSoft, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th.Theme, n.Title)
+								lbl.Color = th.Color.Warn
+								lbl.TextSize = th.Sizes.Body
+								lbl.Font.Weight = font.SemiBold
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if n.Detail == "" {
+									return layout.Dimensions{}
+								}
+								lbl := material.Body2(th.Theme, n.Detail)
+								lbl.Color = th.Color.Fg2
+								lbl.TextSize = th.Sizes.Body
+								return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+							}),
+						)
+					})
+				})
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
 func (m *NewSiteModal) layoutDirPicker(gtx layout.Context, th *Theme) layout.Dimensions {

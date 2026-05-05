@@ -43,6 +43,10 @@ type Engine struct {
 	// One-shot helpers for §7 of DATABASE.md (volume marker).
 	OneShotCalls  []OneShotCall
 	OneShotScript []OneShotScripted
+
+	// Disk-usage scripting for the health package's disk-low check.
+	DiskReport docker.DiskReport
+	DiskErr    error
 }
 
 // Container is the fake's record of a created container.
@@ -306,7 +310,37 @@ func (e *Engine) ProviderInfo(_ context.Context) (docker.ProviderInfo, error) {
 	return e.Provider, nil
 }
 
+// SetProvider replaces the cached provider info under lock. Health-check
+// tests use this to drive the "what daemon are we talking to" branch
+// without having to construct an engine_provider.go pipeline.
+func (e *Engine) SetProvider(p docker.ProviderInfo) {
+	e.mu.Lock()
+	e.Provider = p
+	e.mu.Unlock()
+}
+
+// SetPingErr replaces the ping error under lock. Health-check tests use
+// this to simulate "Docker is down" branches without racing with the
+// PingErr field directly.
+func (e *Engine) SetPingErr(err error) {
+	e.mu.Lock()
+	e.PingErr = err
+	e.mu.Unlock()
+}
+
 func (e *Engine) Ping(_ context.Context) error { return e.PingErr }
+
+// DiskUsage returns the scripted DiskReport. Tests can set DiskReport and
+// DiskErr to drive behaviour in the disk-low health check without a real
+// daemon.
+func (e *Engine) DiskUsage(_ context.Context) (docker.DiskReport, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.DiskErr != nil {
+		return docker.DiskReport{}, e.DiskErr
+	}
+	return e.DiskReport, nil
+}
 
 // RunOneShotCapture is a recorded one-shot run. Tests pre-load
 // OneShotScript with the responses to return for each call in order.

@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -187,6 +188,14 @@ func (n *NavRail) layoutNavItem(
 		textCol = th.Color.Fg
 		weight = font.Medium
 	}
+
+	// Settings entry shows the System Health badge — only it; other
+	// nav items don't carry health meaning.
+	badge := HealthBadgeNone
+	if key == NavViewSettings {
+		badge = HealthBadgeFor(n.state.HealthSnapshot())
+	}
+
 	if collapsed {
 		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -194,12 +203,23 @@ func (n *NavRail) layoutNavItem(
 					pillSz := gtx.Dp(unit.Dp(48))
 					gtx.Constraints.Min = image.Pt(pillSz, pillSz)
 					gtx.Constraints.Max = image.Pt(pillSz, pillSz)
-					return RoundedFill(gtx, bg, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min = image.Pt(pillSz, pillSz)
-						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return icon(gtx, th, unit.Dp(36), iconCol)
-						})
-					})
+					return layout.Stack{}.Layout(gtx,
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							return RoundedFill(gtx, bg, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+								gtx.Constraints.Min = image.Pt(pillSz, pillSz)
+								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return icon(gtx, th, unit.Dp(36), iconCol)
+								})
+							})
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							if badge == HealthBadgeNone {
+								return layout.Dimensions{Size: image.Pt(pillSz, pillSz)}
+							}
+							gtx.Constraints.Min = image.Pt(pillSz, pillSz)
+							return layoutBadgeOverlay(gtx, badge, th)
+						}),
+					)
 				})
 			})
 		})
@@ -225,11 +245,31 @@ func (n *NavRail) layoutNavItem(
 								return lbl.Layout(gtx)
 							})
 						}),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Min.X}}
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return LayoutHealthBadge(gtx, badge, th)
+						}),
 					)
 				})
 			})
 		})
 	})
+}
+
+// layoutBadgeOverlay positions a badge dot in the top-right corner of
+// the surrounding pill (used by the collapsed rail). The pillSz is the
+// outer square's side length in pixels (already passed via Constraints.Min).
+func layoutBadgeOverlay(gtx layout.Context, badge HealthBadgeKind, th *Theme) layout.Dimensions {
+	pillSz := gtx.Constraints.Min.X
+	if pillSz == 0 {
+		pillSz = gtx.Constraints.Max.X
+	}
+	margin := gtx.Dp(unit.Dp(8))
+	off := image.Pt(pillSz-margin-gtx.Dp(unit.Dp(10)), margin-gtx.Dp(unit.Dp(2)))
+	defer op.Offset(off).Push(gtx.Ops).Pop()
+	return LayoutHealthBadge(gtx, badge, th)
 }
 
 // layoutGroups renders the "GROUPS" section header plus the three hardcoded

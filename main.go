@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"log"
 	"log/slog"
 	"os"
@@ -17,7 +18,9 @@ import (
 	application "github.com/PeterBooker/locorum/internal/app"
 	settings "github.com/PeterBooker/locorum/internal/config"
 	"github.com/PeterBooker/locorum/internal/docker"
+	"github.com/PeterBooker/locorum/internal/health"
 	"github.com/PeterBooker/locorum/internal/hooks"
+	"github.com/PeterBooker/locorum/internal/platform"
 	"github.com/PeterBooker/locorum/internal/router/traefik"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -31,11 +34,21 @@ import (
 var config embed.FS
 
 func main() {
+	// Hard-fail before Gio loads if we're an amd64 binary translated by
+	// Rosetta on Apple Silicon. See preflight_darwin.go.
+	runPreflight()
+
 	slog.Info("starting Locorum", "version", version.Version, "commit", version.Commit, "date", version.Date)
 
+	// Identify the host once. platform.Get() is then safe to call from
+	// any goroutine for the rest of the process lifetime.
+	plat := platform.Init(context.Background())
+
 	// On WSL2, force the X11 backend. WSLg's Wayland compositor does not
-	// fully support window-management actions (minimize/maximize).
-	if _, ok := os.LookupEnv("WSL_DISTRO_NAME"); ok {
+	// fully support window-management actions (minimize/maximize). The
+	// canonical signal lives in platform.Get().WSL.Active — we still
+	// branch on it before Gio touches the display.
+	if plat.WSL.Active {
 		os.Unsetenv("WAYLAND_DISPLAY")
 		os.Setenv("GSETTINGS_BACKEND", "memory")
 		if _, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok {
@@ -104,6 +117,61 @@ func main() {
 
 	userInterface := ui.New(sm)
 
+	// Hydrate the toast-suppression set from the persisted JSON so we
+	// don't re-toast findings the user already saw on a previous run.
+	if raw := cfg.HealthLastSeen(); raw != "" {
+		var keys []string
+		if err := json.Unmarshal([]byte(raw), &keys); err == nil {
+			userInterface.State.HealthHydrateSeen(keys)
+		}
+	}
+
+	// System Health runner. Wire it now so the UI can subscribe — the
+	// runner's own loop won't tick until Start, which we defer until
+	// Initialize completes.
+	mkcertInstaller := func(ctx context.Context) error {
+		return mkcert.InstallCA(ctx)
+	}
+	runner := newHealthRunner(plat, d, mkcert, mkcertInstaller, sm, cfg, homeDir)
+	defer runner.Close()
+
+	if cfg.HealthEnabled() {
+		// Subscribe before Start so the very first publication propagates
+		// to the UI. The callback runs on the runner goroutine; it
+		// pushes the snapshot into UIState (atomic) and triggers an
+		// invalidate.
+		runner.Subscribe(func(snap health.Snapshot) {
+			userInterface.State.SetHealthSnapshot(snap)
+			// Toasts: fire one per never-seen-before warning or blocker.
+			// Info-level findings appear in the panel only — toast spam
+			// from the steady-state "your provider is Docker Desktop"
+			// row would burn out the user's attention.
+			for _, f := range snap.Findings {
+				if f.Severity == health.SeverityInfo {
+					continue
+				}
+				key := f.ID + "|" + f.DedupKey
+				if !userInterface.State.HealthShouldToast(key) {
+					continue
+				}
+				userInterface.Toasts.Add(f.Title, toastVariantFor(f.Severity))
+			}
+			// Push the latest disk-free reading into the top-bar
+			// segment. Cheap; runs on every publish.
+			userInterface.State.SetDiskFreeBytes(runner.DiskFreeBytes())
+		})
+		// Wire the System Health panel into Settings and the blocker
+		// modal into the root UI.
+		submit := func(id string, a health.Action) error {
+			return runner.SubmitAction(context.Background(), id, a, nil)
+		}
+		runNow := func() { runner.RunNow(context.Background()) }
+		userInterface.Settings.SetHealthPanel(ui.NewHealthPanel(userInterface.State, submit, runNow))
+		userInterface.HealthBlocker = ui.NewHealthBlockerModal(userInterface.State, runNow, func() {
+			os.Exit(0)
+		})
+	}
+
 	initFunc := func() {
 		d.SetClient(a.GetClient())
 
@@ -133,6 +201,21 @@ func main() {
 		}
 
 		refreshTLSNotice(mkcert, userInterface.State)
+
+		// Start the runner once the docker client is ready. Pre-init
+		// startup would have most checks fail loudly (Ping, ProviderInfo)
+		// and pollute the UI on first frame.
+		if cfg.HealthEnabled() {
+			runner.Start(context.Background())
+			// First-fire window: the runner's initial snapshot is
+			// suppressed for toasts. After it lands, normal toast
+			// behaviour resumes.
+			go func() {
+				time.Sleep(2 * time.Second)
+				userInterface.State.HealthClearFirstFire()
+				persistHealthSeen(cfg, userInterface.State)
+			}()
+		}
 
 		userInterface.State.SetInitDone()
 	}
@@ -169,11 +252,70 @@ func main() {
 		}
 
 		_ = a.Shutdown(context.Background())
+		// Persist the seen-keys set so the next process doesn't re-toast
+		// findings the user already dismissed. Best effort.
+		persistHealthSeen(cfg, userInterface.State)
 		st.Close()
 		os.Exit(0)
 	}()
 
 	app.Main()
+}
+
+// newHealthRunner builds the production runner with the bundled checks.
+// Cadence and thresholds come from the user's config; missing keys fall
+// back to documented defaults.
+func newHealthRunner(plat *platform.Info, d *docker.Docker, mkcert *tlspkg.Mkcert, mkInstaller func(context.Context) error, sm *sites.SiteManager, cfg *settings.Config, homeDir string) *health.Runner {
+	cadence := time.Duration(cfg.HealthCadenceMinutes()) * time.Minute
+	if cadence <= 0 {
+		cadence = 5 * time.Minute
+	}
+	const gb = int64(1024 * 1024 * 1024)
+	checks := health.Bundled(health.BundledOpts{
+		Platform:            plat,
+		Engine:              d,
+		Mkcert:              mkcert,
+		MkcertInstaller:     mkInstaller,
+		Sites:               sm,
+		HostStatfsPath:      homeDir,
+		RouterContainerName: traefik.ContainerName,
+		DiskWarnBytes:       int64(cfg.HealthDiskWarnGB()) * gb,
+		DiskBlockerBytes:    int64(cfg.HealthDiskBlockerGB()) * gb,
+	})
+	return health.NewRunner(health.Options{
+		MinCadence: cadence,
+		Logger:     slog.With("subsys", "health"),
+	}, checks...)
+}
+
+// toastVariantFor maps a finding severity onto the existing notification
+// type. The notifications system has Error / Success / Info; Warn maps to
+// Error so warnings catch the user's eye but don't stick as long as a
+// blocker (the blocker modal handles persistence). Info-level findings
+// don't toast at all (filtered above).
+func toastVariantFor(s health.Severity) ui.NotificationType {
+	switch s {
+	case health.SeverityBlocker, health.SeverityWarn:
+		return ui.NotificationError
+	}
+	return ui.NotificationInfo
+}
+
+// persistHealthSeen writes the current toast-suppression set to the
+// persistent settings table. Idempotent; failures are logged at warn.
+func persistHealthSeen(cfg *settings.Config, state *ui.UIState) {
+	if cfg == nil || state == nil {
+		return
+	}
+	keys := state.HealthSeenKeys()
+	body, err := json.Marshal(keys)
+	if err != nil {
+		slog.Warn("health: marshal last_seen", "err", err.Error())
+		return
+	}
+	if err := cfg.SetHealthLastSeen(string(body)); err != nil {
+		slog.Warn("health: persist last_seen", "err", err.Error())
+	}
 }
 
 // refreshTLSNotice reads the current mkcert status and updates the banner.

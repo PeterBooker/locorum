@@ -27,6 +27,7 @@ import (
 
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/genmark"
+	"github.com/PeterBooker/locorum/internal/platform"
 	"github.com/PeterBooker/locorum/internal/router"
 	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/version"
@@ -404,11 +405,14 @@ func (r *Router) createContainer(ctx context.Context) error {
 		},
 	}
 
+	// platform.DockerPath normalises slashes for every supported host;
+	// without it a Windows native build would hand `\` to Docker and the
+	// bind would silently fail with "no such file or directory".
 	hostCfg := &dcontainer.HostConfig{
 		Binds: []string{
-			r.hostStaticPath + ":" + ContainerStaticPath + ":ro",
-			r.hostDynamicDir + ":" + ContainerDynamicDir + ":ro",
-			r.hostCertsDir + ":" + ContainerCertsDir + ":ro",
+			platform.DockerPath(r.hostStaticPath) + ":" + ContainerStaticPath + ":ro",
+			platform.DockerPath(r.hostDynamicDir) + ":" + ContainerDynamicDir + ":ro",
+			platform.DockerPath(r.hostCertsDir) + ":" + ContainerCertsDir + ":ro",
 		},
 		PortBindings: nat.PortMap{
 			"80/tcp":                     {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(r.cfg.HTTPPort)}},

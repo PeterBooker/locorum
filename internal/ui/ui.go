@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 
 	"gioui.org/font"
@@ -31,9 +32,10 @@ type UI struct {
 	Toasts     *Notifications
 
 	// Modals
-	CloneModal   *CloneModal
-	deleteDialog ConfirmDialog
-	deletePurge  widget.Bool
+	CloneModal    *CloneModal
+	HealthBlocker *HealthBlockerModal
+	deleteDialog  ConfirmDialog
+	deletePurge   widget.Bool
 
 	// Banner action button (e.g. "Set up trusted HTTPS").
 	noticeBtn widget.Clickable
@@ -129,6 +131,9 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 	if show, _, _ := ui.State.GetCloneModalState(); show {
 		ui.CloneModal.HandleUserInteractions(gtx)
 	}
+	if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
+		ui.HealthBlocker.HandleUserInteractions(gtx)
+	}
 }
 
 func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
@@ -172,6 +177,15 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				return hp.LayoutModalLayer(gtx, ui.Theme)
 			}
 			return ui.CloneModal.Layout(gtx, ui.Theme)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Health blocker overlays everything else when active —
+			// it represents "you can't use the app right now". Render
+			// after the regular modal layer so it sits on top.
+			if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
+				return ui.HealthBlocker.Layout(gtx, ui.Theme)
+			}
+			return layout.Dimensions{}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.Toasts.Layout(gtx, ui.Theme)
@@ -263,11 +277,13 @@ func (ui *UI) layoutErrorBanner(gtx layout.Context, msg string) layout.Dimension
 }
 
 // layoutTopBar paints the small "frame" bar above the three columns: app
-// name on the left, rolled-up services-health pill on the right.
+// name on the left, optional disk-free segment in the middle, and the
+// rolled-up services-health pill on the right.
 func (ui *UI) layoutTopBar(gtx layout.Context) layout.Dimensions {
 	th := ui.Theme
 	h := ui.State.ServicesHealthSnapshot()
 	statusKey, statusLabel := topBarStatusKeyLabel(h)
+	diskFree := ui.State.DiskFreeBytes()
 
 	return FillBackground(gtx, th.Color.Bg1, func(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
@@ -289,6 +305,14 @@ func (ui *UI) layoutTopBar(gtx layout.Context) layout.Dimensions {
 							return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Min.X}}
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if diskFree <= 0 {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Right: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutTopBarDisk(gtx, th, diskFree)
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return topBarStatus(gtx, th, statusKey, statusLabel)
 						}),
 					)
@@ -299,6 +323,41 @@ func (ui *UI) layoutTopBar(gtx layout.Context) layout.Dimensions {
 			}),
 		)
 	})
+}
+
+// layoutTopBarDisk renders the cached host-filesystem free-bytes reading
+// as a "Disk: 12 GB" mono label. Hidden when no reading is available.
+func (ui *UI) layoutTopBarDisk(gtx layout.Context, th *Theme, free int64) layout.Dimensions {
+	lbl := material.Body2(th.Theme, "Disk: "+formatBytes(free))
+	lbl.Color = th.Color.Fg3
+	lbl.TextSize = th.Sizes.Micro
+	lbl.Font = MonoFont
+	lbl.Font.Weight = font.Medium
+	return lbl.Layout(gtx)
+}
+
+// formatBytes renders byte counts as a short, status-bar-friendly string.
+// Mirrors health.humanBytes. Decimal precision drops once values reach
+// triple digits so the segment width stays roughly stable as numbers grow.
+func formatBytes(n int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+	switch {
+	case n >= TB:
+		return fmt.Sprintf("%.1f TB", float64(n)/float64(TB))
+	case n >= GB:
+		return fmt.Sprintf("%.0f GB", float64(n)/float64(GB))
+	case n >= MB:
+		return fmt.Sprintf("%.0f MB", float64(n)/float64(MB))
+	case n >= KB:
+		return fmt.Sprintf("%.0f KB", float64(n)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // topBarStatusKeyLabel maps the rolled-up health snapshot onto a status

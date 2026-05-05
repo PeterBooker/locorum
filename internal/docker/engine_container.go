@@ -14,6 +14,8 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+
+	"github.com/PeterBooker/locorum/internal/platform"
 )
 
 // EnsureContainer creates the container described by spec if absent, or
@@ -337,7 +339,13 @@ func buildMounts(in []Mount) ([]string, []mount.Mount) {
 	for _, m := range in {
 		switch {
 		case m.Bind != nil:
-			s := m.Bind.Source + ":" + m.Bind.Target
+			// platform.DockerPath normalises slashes for every supported
+			// host. Centralising it here means every code path that
+			// reaches Docker via a ContainerSpec gets the same treatment
+			// — call sites can pass `filepath.Join(...)` results without
+			// worrying about Windows backslashes leaking through.
+			src := platform.DockerPath(m.Bind.Source)
+			s := src + ":" + m.Bind.Target
 			if m.Bind.ReadOnly {
 				s += ":ro"
 			}

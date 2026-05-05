@@ -7,6 +7,8 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/strslice"
+
+	"github.com/PeterBooker/locorum/internal/platform"
 )
 
 // chownImage is the small alpine image used by the one-shot chown helper.
@@ -54,14 +56,17 @@ func (d *Docker) runChown(ctx context.Context, name, source, target string, uid,
 	hostCfg := &container.HostConfig{
 		AutoRemove: true,
 	}
+	// Normalise host-path separators for Docker on every platform.
+	// platform.DockerPath is a no-op for Linux paths and named volumes —
+	// volume names are not paths and pass through unchanged.
+	src := source
 	if bindMount {
-		hostCfg.Binds = []string{source + ":" + target}
-	} else {
-		hostCfg.Binds = []string{source + ":" + target}
-		// Same syntax — Docker treats "<volume-name>:<target>" as a volume
-		// mount when the source is a known volume name. We could also use
-		// hostCfg.Mounts but the bind syntax is identical for our needs.
+		src = platform.DockerPath(source)
 	}
+	hostCfg.Binds = []string{src + ":" + target}
+	// Same syntax for both branches — Docker treats "<volume-name>:<target>"
+	// as a volume mount when the source is a known volume name. We could
+	// also use hostCfg.Mounts but the bind syntax is identical for our needs.
 
 	resp, err := d.cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 	if err != nil {
