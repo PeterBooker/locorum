@@ -108,6 +108,41 @@ func TestAddSite_NewMultiEngineFields(t *testing.T) {
 	}
 }
 
+func TestAddSite_SPXFields(t *testing.T) {
+	st := newStorage(t)
+	site := &types.Site{
+		ID: "id-spx", Name: "SPXSite", Slug: "spxsite",
+		Domain: "spxsite.localhost", FilesDir: "/tmp/spxsite", PublicDir: "/",
+		DBEngine: "mysql", DBVersion: "8.0", DBPassword: "pw",
+		SPXEnabled: true, SPXKey: "abc-123_XYZ",
+	}
+	if err := st.AddSite(site); err != nil {
+		t.Fatalf("AddSite() = %v", err)
+	}
+	got, err := st.GetSite("id-spx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SPXEnabled {
+		t.Error("SPXEnabled lost on round-trip")
+	}
+	if got.SPXKey != "abc-123_XYZ" {
+		t.Errorf("SPXKey = %q, want %q", got.SPXKey, "abc-123_XYZ")
+	}
+
+	got.SPXEnabled = false
+	if _, err := st.UpdateSite(got); err != nil {
+		t.Fatalf("UpdateSite() = %v", err)
+	}
+	got2, _ := st.GetSite("id-spx")
+	if got2.SPXEnabled {
+		t.Error("SPXEnabled persisted as true after disable")
+	}
+	if got2.SPXKey != "abc-123_XYZ" {
+		t.Errorf("SPXKey not preserved on disable: %q", got2.SPXKey)
+	}
+}
+
 func TestGetSites(t *testing.T) {
 	st := newStorage(t)
 

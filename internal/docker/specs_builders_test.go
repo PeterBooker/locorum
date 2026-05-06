@@ -106,6 +106,116 @@ func TestPHPSpec_PasswordOnlyInEnvSecrets(t *testing.T) {
 // DatabaseSpec password / healthcheck coverage now lives in
 // internal/dbengine/mysql_test.go and mariadb_test.go.
 
+// TestPHPSpec_SPXOff asserts the unconditional SPX wiring (the
+// /etc/.../zzz-spx.ini bind mount) is present even when SPX is
+// disabled, so toggling SPX on later only mutates env + the data-dir
+// bind — not the INI mount that should stay stable across toggles.
+// It also asserts none of the SPX-conditional state leaks in.
+func TestPHPSpec_SPXOff(t *testing.T) {
+	site := builderTestSite()
+	site.SPXEnabled = false
+	site.SPXKey = "should-not-leak"
+
+	spec := PHPSpec(site, "/home/x")
+
+	if !hasBindTarget(spec.Mounts, "/usr/local/etc/php/conf.d/zzz-spx.ini") {
+		t.Errorf("zzz-spx.ini bind mount missing while SPX disabled (toggle would churn the hash)")
+	}
+	if hasBindTarget(spec.Mounts, "/var/spx/data") {
+		t.Errorf("/var/spx/data should not be mounted while SPX disabled")
+	}
+	if hasBindTarget(spec.Mounts, "/usr/local/etc/php/conf.d/zzzz-spx-key.ini") {
+		t.Errorf("per-site SPX key INI mount present while SPX disabled")
+	}
+	for _, e := range spec.Env {
+		if strings.HasPrefix(e, "PHP_EXTENSIONS_ENABLE=") || strings.HasPrefix(e, "PHP_EXTENSIONS_DISABLE=") {
+			t.Errorf("PHP_EXTENSIONS_* env present while SPX disabled: %q", e)
+		}
+	}
+}
+
+// TestPHPSpec_SPXOn asserts enabling SPX adds the data-dir bind, the
+// env-driven activation knobs, and the redacted key; that the key is
+// never on the plaintext Env slice; and that toggling SPX changes the
+// config hash so EnsureContainer correctly recreates the container.
+func TestPHPSpec_SPXOn(t *testing.T) {
+	site := builderTestSite()
+	site.SPXEnabled = true
+	site.SPXKey = "secret-spx-key"
+
+	off := PHPSpec(builderTestSite(), "/home/x")
+	on := PHPSpec(site, "/home/x")
+
+	if off.ConfigHash() == on.ConfigHash() {
+		t.Errorf("toggling SPX did not change ConfigHash; container would not be recreated")
+	}
+	if !hasBindTarget(on.Mounts, "/var/spx/data") {
+		t.Errorf("/var/spx/data bind missing when SPX enabled")
+	}
+	if !hasBindTarget(on.Mounts, "/usr/local/etc/php/conf.d/zzzz-spx-key.ini") {
+		t.Errorf("per-site SPX key INI bind missing when SPX enabled")
+	}
+
+	// The key INI bind source must point at the canonical per-site
+	// path so EnsureSPXStep and PHPSpec stay in lockstep.
+	wantSrc := SPXKeyINIPath("/home/x", site.Slug)
+	foundSrc := false
+	for _, m := range on.Mounts {
+		if m.Bind != nil && m.Bind.Target == "/usr/local/etc/php/conf.d/zzzz-spx-key.ini" {
+			if m.Bind.Source != wantSrc {
+				t.Errorf("key INI bind source = %q, want %q", m.Bind.Source, wantSrc)
+			}
+			if !m.Bind.ReadOnly {
+				t.Errorf("key INI bind is not read-only — PHP-FPM should never mutate it")
+			}
+			foundSrc = true
+		}
+	}
+	if !foundSrc {
+		t.Errorf("key INI bind not found in mounts")
+	}
+
+	wantEnabled := false
+	wantDisabled := false
+	for _, e := range on.Env {
+		if e == "PHP_EXTENSIONS_ENABLE=spx" {
+			wantEnabled = true
+		}
+		if e == "PHP_EXTENSIONS_DISABLE=xdebug,xhprof" {
+			wantDisabled = true
+		}
+		if strings.Contains(e, site.SPXKey) {
+			t.Errorf("SPX key value leaked into plaintext Env entry: %q", e)
+		}
+	}
+	if !wantEnabled {
+		t.Errorf("PHP_EXTENSIONS_ENABLE=spx missing on Env: %v", on.Env)
+	}
+	if !wantDisabled {
+		t.Errorf("PHP_EXTENSIONS_DISABLE=xdebug,xhprof missing on Env: %v", on.Env)
+	}
+
+	// SPX key must NOT travel as an env var any more — the env-var
+	// pivot was unreliable through wodby/php's pool config and the
+	// per-site INI bind mount is now the source of truth.
+	for _, sec := range on.EnvSecrets {
+		if sec.Key == "SPX_KEY" {
+			t.Errorf("SPX_KEY found in EnvSecrets; key should travel via the per-site INI mount only")
+		}
+	}
+}
+
+// hasBindTarget reports whether mounts contains a BindMount targeting
+// the given container path.
+func hasBindTarget(mounts []Mount, target string) bool {
+	for _, m := range mounts {
+		if m.Bind != nil && m.Bind.Target == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSpec_HealthcheckRequired(t *testing.T) {
 	site := builderTestSite()
 	for _, spec := range []ContainerSpec{

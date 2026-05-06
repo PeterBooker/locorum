@@ -28,9 +28,10 @@ const (
 	tabActivity  = 4
 	tabMail      = 5
 	tabLogs      = 6
+	tabProfiling = 7
 )
 
-var tabLabels = []string{"Overview", "Database", "Utilities", "Hooks", "Activity", "Mail", "Logs"}
+var tabLabels = []string{"Overview", "Database", "Utilities", "Hooks", "Activity", "Mail", "Logs", "Profiling"}
 
 // SiteDetail is column 3: a header bar (avatar/name/domain/status pill +
 // action buttons), a tab strip, and the active tab's body content. Hosts
@@ -44,7 +45,7 @@ type SiteDetail struct {
 
 	// Tabs
 	activeTab int
-	tabClicks [7]widget.Clickable
+	tabClicks [8]widget.Clickable
 
 	// Header-bar actions (running-only unless noted)
 	startBtn     widget.Clickable
@@ -85,6 +86,7 @@ type SiteDetail struct {
 	linkChecker    *LinkChecker
 	hooksPanel     *HooksPanel
 	activityTab    *ActivityTab
+	profilingPanel *ProfilingPanel
 
 	// recentActivityLoadedFor records the last site for which we kicked
 	// off a recent-activity load. Stops Layout() from spawning a fresh
@@ -112,6 +114,7 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications)
 		linkChecker:    NewLinkChecker(state, sm),
 		hooksPanel:     NewHooksPanel(state, sm, sm, toasts),
 		activityTab:    NewActivityTab(state, sm),
+		profilingPanel: NewProfilingPanel(state, sm, toasts),
 	}
 	sd.list.List.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
@@ -166,6 +169,8 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 		if site.Started {
 			sd.logViewer.HandleUserInteractions(gtx, site.ID)
 		}
+	case tabProfiling:
+		sd.profilingPanel.HandleUserInteractions(gtx, site)
 	default: // tabOverview
 		sd.handleOverviewClicks(gtx, site)
 		sd.versionEditor.HandleUserInteractions(gtx, site)
@@ -500,6 +505,8 @@ func (sd *SiteDetail) layoutTabContent(gtx layout.Context, th *Theme, site *type
 		return sd.layoutMailTab(gtx, th)
 	case tabLogs:
 		return sd.layoutLogsTab(gtx, th, site)
+	case tabProfiling:
+		return sd.profilingPanel.Layout(gtx, th, site)
 	default:
 		return sd.layoutOverviewTab(gtx, th, site)
 	}

@@ -309,7 +309,9 @@ func (s *RemoveNetworkStep) Apply(ctx context.Context) error {
 }
 func (s *RemoveNetworkStep) Rollback(_ context.Context) error { return nil }
 
-// RemoveSiteConfigsStep removes the per-site nginx/apache config files.
+// RemoveSiteConfigsStep removes the per-site nginx/apache config files
+// and the per-site SPX key INI (if any). Volume-side state (DB data,
+// uploaded files) is handled separately.
 type RemoveSiteConfigsStep struct {
 	HomeDir string
 	Site    *types.Site
@@ -320,6 +322,7 @@ func (s *RemoveSiteConfigsStep) Apply(_ context.Context) error {
 	return removeIgnoringMissing(
 		filepath.Join(s.HomeDir, ".locorum", "config", "nginx", "sites", s.Site.Slug+".conf"),
 		filepath.Join(s.HomeDir, ".locorum", "config", "apache", "sites", s.Site.Slug+".conf"),
+		docker.SPXKeyINIPath(s.HomeDir, s.Site.Slug),
 	)
 }
 func (s *RemoveSiteConfigsStep) Rollback(_ context.Context) error { return nil }
@@ -391,6 +394,7 @@ var (
 	_ orch.Step = (*RemoveNetworkStep)(nil)
 	_ orch.Step = (*RemoveSiteConfigsStep)(nil)
 	_ orch.Step = (*PurgeVolumeStep)(nil)
+	_ orch.Step = (*EnsureSPXStep)(nil)
 	_ orch.Step = (*HookStep)(nil)
 	_ orch.Step = (*FuncStep)(nil)
 )
