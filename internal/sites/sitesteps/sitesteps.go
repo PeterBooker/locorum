@@ -397,4 +397,24 @@ var (
 	_ orch.Step = (*EnsureSPXStep)(nil)
 	_ orch.Step = (*HookStep)(nil)
 	_ orch.Step = (*FuncStep)(nil)
+
+	// Compile-time guard: every Describer implementation here
+	// satisfies orch.Describer. Adding a new step without a Describe
+	// is a compile error here, prompting the author to either add
+	// one or accept the (no preview) sentinel.
+	_ orch.Describer = (*EnsureNetworkStep)(nil)
+	_ orch.Describer = (*EnsureVolumeStep)(nil)
+	_ orch.Describer = (*PullImagesStep)(nil)
+	_ orch.Describer = (*ChownStep)(nil)
+	_ orch.Describer = (*CreateContainersStep)(nil)
+	_ orch.Describer = (*WaitReadyStep)(nil)
+	_ orch.Describer = (*StopContainersStep)(nil)
+	_ orch.Describer = (*RemoveContainersStep)(nil)
+	_ orch.Describer = (*RegisterRoutesStep)(nil)
+	_ orch.Describer = (*RemoveRoutesStep)(nil)
+	_ orch.Describer = (*RemoveNetworkStep)(nil)
+	_ orch.Describer = (*RemoveSiteConfigsStep)(nil)
+	_ orch.Describer = (*PurgeVolumeStep)(nil)
+	_ orch.Describer = (*HookStep)(nil)
+	_ orch.Describer = (*FuncStep)(nil)
 )

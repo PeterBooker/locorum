@@ -28,6 +28,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/genmark"
+	"github.com/PeterBooker/locorum/internal/git"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/router"
@@ -750,7 +751,25 @@ type DeleteOptions struct {
 	// ~/.locorum/snapshots/ first. Set true when the caller has already
 	// taken a snapshot or is intentionally discarding data.
 	SkipSnapshot bool
+
+	// ForceWorktree, on a worktree-bound site, passes --force to
+	// `git worktree remove` so dirty trees don't block the delete.
+	// Default is false: dirty worktrees raise a typed error so the
+	// CLI can prompt for confirmation. The GUI delete-confirm modal
+	// flips this when the user explicitly accepts data loss.
+	ForceWorktree bool
+
+	// DryRun reports the planned operations without committing them.
+	// Used by `locorum site delete --dry-run` to surface every
+	// destructive step before the user confirms.
+	DryRun bool
 }
+
+// ErrWorktreeDirty is returned by DeleteSite when the target site is
+// a worktree with uncommitted changes and ForceWorktree was not set.
+// Wraps the original error from `git status` so the CLI can show
+// what's dirty.
+var ErrWorktreeDirty = errors.New("worktree has uncommitted changes; pass --force to discard")
 
 func (sm *SiteManager) DeleteSite(ctx context.Context, id string) error {
 	return sm.DeleteSiteWithOptions(ctx, id, DeleteOptions{})
@@ -768,15 +787,35 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 		return nil
 	}
 
+	// Worktree dirtiness is checked BEFORE any destructive work.
+	// Without --force we abort early so the user doesn't lose
+	// uncommitted changes to a `delete site` flow.
+	if !opts.DryRun && site.WorktreePath != "" && !opts.ForceWorktree {
+		if dirty, _ := git.HasUncommittedChanges(ctx, site.WorktreePath, nil); dirty {
+			return fmt.Errorf("%w: %s", ErrWorktreeDirty, site.WorktreePath)
+		}
+	}
+
+	// Cascade-clean every worktree-child of a parent site. Children
+	// are stopped + removed first so their containers are gone before
+	// we tear down the parent's. Failures are logged; we proceed to
+	// the parent so a partial state doesn't strand the row.
+	if !opts.DryRun {
+		if children, err := sm.st.SitesByParent(id); err == nil {
+			for _, child := range children {
+				slog.Info("cascade-deleting worktree child", "parent", site.Slug, "child", child.Slug)
+				childOpts := opts
+				childOpts.ForceWorktree = true // children of a doomed parent come along
+				if err := sm.DeleteSiteWithOptions(ctx, child.ID, childOpts); err != nil {
+					slog.Warn("cascade child delete failed", "child", child.Slug, "err", err.Error())
+				}
+			}
+		}
+	}
+
 	mu := sm.siteMutex(id)
 	mu.Lock()
 	defer mu.Unlock()
-
-	// pre-delete fires BEFORE we touch storage, so the runner's hook list
-	// lookup still succeeds.
-	if err := sm.runHooks(ctx, hooks.PreDelete, site); err != nil {
-		return err
-	}
 
 	containers := specNames(sm.serviceSpecs(site))
 
@@ -811,11 +850,41 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 	if opts.PurgeVolume {
 		steps = append(steps, &sitesteps.PurgeVolumeStep{Engine: sm.d, Site: site})
 	}
+	// Worktree teardown comes LAST so the ordered Plan tries to leave
+	// the working tree in place if any earlier step fails (less to
+	// lose if the user retries).
+	if site.WorktreePath != "" {
+		parentDir := sm.parentRepoDir(site)
+		steps = append(steps, &sitesteps.RemoveWorktreeStep{
+			ParentDir:    parentDir,
+			WorktreePath: site.WorktreePath,
+			Force:        opts.ForceWorktree,
+		})
+	}
 
 	plan := orch.Plan{
 		Name:  "delete-site:" + site.Slug,
 		Steps: steps,
 	}
+
+	if opts.DryRun {
+		dr, derr := orch.Dry(ctx, plan)
+		if derr != nil {
+			return derr
+		}
+		// Dry-run never persists — we just emit a slog line so the
+		// daemon's caller can pick it up. Callers needing structured
+		// preview output should use PlanDryRunDescription instead.
+		slog.Info("dry-run delete plan", "preview", dr.Format())
+		return nil
+	}
+
+	// pre-delete fires BEFORE we touch storage so the runner's hook list
+	// lookup still succeeds.
+	if err := sm.runHooks(ctx, hooks.PreDelete, site); err != nil {
+		return err
+	}
+
 	res := sm.runPlan(ctx, site, plan)
 	if res.FinalError != nil {
 		// Even on error we continue to delete the SQL row so the GUI
@@ -837,6 +906,23 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 
 	sm.emitSitesUpdate()
 	return nil
+}
+
+// parentRepoDir resolves the host directory holding the upstream
+// checkout for a worktree-bound site. Looks up the parent row by
+// ParentSiteID; if the parent has been hand-deleted, falls back to
+// the worktree's own .git/commondir resolution would be ideal but
+// `git worktree remove` is happy to be invoked from the worktree
+// itself, so we just pass the worktree path as the working dir.
+func (sm *SiteManager) parentRepoDir(site *types.Site) string {
+	if site == nil || site.ParentSiteID == "" {
+		return site.WorktreePath
+	}
+	parent, err := sm.st.GetSite(site.ParentSiteID)
+	if err != nil || parent == nil || parent.FilesDir == "" {
+		return site.WorktreePath
+	}
+	return parent.FilesDir
 }
 
 func (sm *SiteManager) emitSitesUpdate() {

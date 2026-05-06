@@ -215,6 +215,23 @@ func (c *Config) UpdateCheckEnabled() bool {
 	return parseBool(c.raw(KeyUpdateCheckEnabled), true)
 }
 
+// AutoSnapshotBeforeDestructive reports whether SiteManager should
+// take a safety snapshot before each destructive op (db restore, db
+// import, search-replace, agent-driven root exec). Default true; the
+// setter accepts the explicit "false" string to disable.
+func (c *Config) AutoSnapshotBeforeDestructive() bool {
+	return parseBool(c.raw(KeyAutoSnapshotBeforeDestructive), true)
+}
+
+// SetAutoSnapshotBeforeDestructive persists the toggle.
+func (c *Config) SetAutoSnapshotBeforeDestructive(on bool) error {
+	v := "false"
+	if on {
+		v = "true"
+	}
+	return c.Set(KeyAutoSnapshotBeforeDestructive, v)
+}
+
 // ── Int accessors ───────────────────────────────────────────────────
 
 // RouterHTTPPort returns the host port the global router binds on for
