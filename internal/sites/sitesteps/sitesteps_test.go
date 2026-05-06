@@ -3,6 +3,8 @@ package sitesteps
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -145,4 +147,122 @@ func TestWaitReadyStep_PerContainerTimeouts(t *testing.T) {
 
 func TestEngineFakeImplementsInterface(t *testing.T) {
 	var _ docker.Engine = fake.New()
+}
+
+func TestEnsureSPXStep_Disabled_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	site := &types.Site{Slug: "demo", FilesDir: dir, SPXEnabled: false}
+	step := &EnsureSPXStep{Site: site, HomeDir: home}
+	if err := step.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".locorum", "spx")); !os.IsNotExist(err) {
+		t.Errorf("data dir created when SPX disabled (err=%v)", err)
+	}
+	if _, err := os.Stat(docker.SPXKeyINIPath(home, site.Slug)); !os.IsNotExist(err) {
+		t.Errorf("key INI created when SPX disabled (err=%v)", err)
+	}
+}
+
+func TestEnsureSPXStep_Disabled_RemovesStaleKey(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	site := &types.Site{Slug: "demo", FilesDir: dir, SPXEnabled: false}
+	keyPath := docker.SPXKeyINIPath(home, site.Slug)
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte("spx.http_key = stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	step := &EnsureSPXStep{Site: site, HomeDir: home}
+	if err := step.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := os.Stat(keyPath); !os.IsNotExist(err) {
+		t.Errorf("stale key INI not removed on disabled toggle (err=%v)", err)
+	}
+}
+
+func TestEnsureSPXStep_Enabled_WritesKeyAndDataDir(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	site := &types.Site{Slug: "demo", FilesDir: dir, SPXEnabled: true, SPXKey: "abcDEF-_123"}
+	step := &EnsureSPXStep{Site: site, HomeDir: home}
+
+	for i := 0; i < 2; i++ {
+		if err := step.Apply(context.Background()); err != nil {
+			t.Fatalf("Apply iter %d: %v", i, err)
+		}
+	}
+
+	dataDir := filepath.Join(dir, ".locorum", "spx")
+	if info, err := os.Stat(dataDir); err != nil || !info.IsDir() {
+		t.Errorf("data dir not created: err=%v info=%v", err, info)
+	}
+
+	keyPath := docker.SPXKeyINIPath(home, site.Slug)
+	body, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read key INI: %v", err)
+	}
+	if !contains(string(body), "spx.http_key = abcDEF-_123") {
+		t.Errorf("key INI missing spx.http_key line: %q", body)
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat key INI: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("key INI mode = %o, want 0600", mode)
+	}
+
+	// Rollback must NOT delete: data dir might hold reports.
+	if err := step.Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if _, err := os.Stat(dataDir); err != nil {
+		t.Errorf("rollback removed the SPX data dir: %v", err)
+	}
+}
+
+func TestEnsureSPXStep_KeyChangeIsPickedUp(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	site := &types.Site{Slug: "demo", FilesDir: dir, SPXEnabled: true, SPXKey: "first"}
+	step := &EnsureSPXStep{Site: site, HomeDir: home}
+	if err := step.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	site.SPXKey = "second"
+	if err := step.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(docker.SPXKeyINIPath(home, site.Slug))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(body), "spx.http_key = second") {
+		t.Errorf("rotated key not written: %q", body)
+	}
+	if contains(string(body), "spx.http_key = first") {
+		t.Errorf("old key still present: %q", body)
+	}
+}
+
+// contains is a tiny string-contains helper so tests stay free of
+// strings.Contains imports per the existing pattern in this file.
+func contains(haystack, needle string) bool {
+	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }

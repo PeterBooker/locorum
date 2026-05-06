@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -489,6 +491,7 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 					return nil
 				},
 			},
+			&sitesteps.EnsureSPXStep{Site: site, HomeDir: sm.homeDir},
 			&sitesteps.FuncStep{
 				Label: "ensure-wordpress",
 				Do: func(_ context.Context) error {
@@ -1295,6 +1298,203 @@ func (sm *SiteManager) SetPublishDBPort(siteID string, on bool) error {
 	}
 	sm.writeConfigYAML(site)
 	return nil
+}
+
+// spxKeyByteLen is the size of the random source for an SPX_KEY before
+// base64-encoding. 32 bytes → 43 chars of RawURLEncoding, well above
+// the brute-force horizon for any local-dev attacker.
+const spxKeyByteLen = 32
+
+// generateSPXKey returns a fresh base64.RawURLEncoding-encoded random
+// secret suitable for use as SPX_KEY. crypto/rand failure is treated
+// as fatal at the call site — site operations cannot proceed without
+// a usable secret, and falling back to a constant would silently
+// weaken security.
+func generateSPXKey() (string, error) {
+	b := make([]byte, spxKeyByteLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate spx key: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// SetSPXEnabled persists the SPX-profiler toggle for siteID. Site must
+// be stopped — same constraint as SetPublishDBPort, for the same
+// reason: toggling SPX changes the PHP container's spec hash and
+// would otherwise force an unrequested mid-flight recreate.
+//
+// The first time SPX is enabled for a site, a 32-byte URL-safe random
+// SPX_KEY is generated and persisted. Subsequent toggles preserve the
+// key so bookmarked profile URLs keep working across enable/disable
+// cycles. Use RotateSPXKey to deliberately invalidate it.
+//
+// Emits OnSiteUpdated on success so the GUI redraws.
+func (sm *SiteManager) SetSPXEnabled(siteID string, enabled bool) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if site.Started {
+		return fmt.Errorf("site must be stopped to change SPX profiling")
+	}
+	if site.SPXEnabled == enabled && (!enabled || site.SPXKey != "") {
+		return nil
+	}
+
+	site.SPXEnabled = enabled
+	if enabled && site.SPXKey == "" {
+		key, err := generateSPXKey()
+		if err != nil {
+			return err
+		}
+		site.SPXKey = key
+	}
+
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		return fmt.Errorf("updating site: %w", err)
+	}
+
+	sm.writeConfigYAML(site)
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+	return nil
+}
+
+// RotateSPXKey replaces the site's SPX_KEY with a fresh random value.
+// Site must be stopped (the new key only takes effect on the next
+// start). Safe to call when SPX is currently disabled — the rotated
+// key is persisted and used the next time SPX is enabled. Old
+// bookmarked URLs stop working immediately.
+func (sm *SiteManager) RotateSPXKey(siteID string) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if site.Started {
+		return fmt.Errorf("site must be stopped to rotate SPX key")
+	}
+
+	key, err := generateSPXKey()
+	if err != nil {
+		return err
+	}
+	site.SPXKey = key
+
+	if _, err := sm.st.UpdateSite(site); err != nil {
+		return fmt.Errorf("updating site: %w", err)
+	}
+
+	sm.writeConfigYAML(site)
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+	return nil
+}
+
+// SPXReport is one entry in the per-site Profiling-panel report list.
+// Path is absolute on the host so the GUI can hand it to OpenPath.
+type SPXReport struct {
+	Name string
+	Path string
+	Size int64
+	Time time.Time
+}
+
+// ListSPXReports returns the SPX profile-data files for a site,
+// newest-first. Reads the per-site bind-mount source directory
+// directly — no Docker exec — so the call works while the site is
+// stopped and is cheap enough to call from the GUI on tab activation.
+//
+// Missing directory is not an error: returns an empty slice. This is
+// the steady-state for a site that has never enabled SPX, or has
+// enabled it and not yet captured a report.
+func (sm *SiteManager) ListSPXReports(siteID string) ([]SPXReport, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return nil, fmt.Errorf("site %q not found", siteID)
+	}
+
+	dir := filepath.Join(site.FilesDir, ".locorum", "spx")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read spx dir: %w", err)
+	}
+
+	out := make([]SPXReport, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, SPXReport{
+			Name: e.Name(),
+			Path: filepath.Join(dir, e.Name()),
+			Size: info.Size(),
+			Time: info.ModTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	return out, nil
+}
+
+// ClearSPXReports removes every file in the site's SPX data directory.
+// Used by the "Clear all" button on the Profiling panel. Best-effort:
+// per-file remove failures are aggregated into the returned error so
+// the user knows something is left, but the loop keeps going.
+func (sm *SiteManager) ClearSPXReports(siteID string) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+
+	dir := filepath.Join(site.FilesDir, ".locorum", "spx")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read spx dir: %w", err)
+	}
+	var firstErr error
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if err := os.Remove(p); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	return firstErr
 }
 
 // ExecWPCLI runs a WP-CLI command inside the site's PHP container.

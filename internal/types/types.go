@@ -36,6 +36,18 @@ type Site struct {
 	// Credentials panel as a "Host port" row + connection URL.
 	PublishDBPort bool `json:"publishDBPort"`
 
+	// SPXEnabled opts the site in to the php-spx profiler. The flag is
+	// applied at next start; mid-life toggling is rejected upstream.
+	SPXEnabled bool `json:"spxEnabled"`
+
+	// SPXKey is the per-site secret SPX requires on every profile or UI
+	// request (URL query param + cookie value). Generated on first
+	// enable and persisted; toggling SPX off keeps the key so a later
+	// re-enable preserves bookmarked URLs. Treated as a credential —
+	// never serialised over JSON, never written to YAML projection,
+	// never logged.
+	SPXKey string `json:"-"`
+
 	// Salts is a JSON-encoded map[string]string of the eight WordPress
 	// secret keys (AUTH_KEY, SECURE_AUTH_KEY, …, NONCE_SALT). Generated
 	// once at site creation and persisted so wp-config.php regenerates
