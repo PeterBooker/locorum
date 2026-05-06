@@ -61,7 +61,7 @@ func now() string {
 // Keep ordering aligned with the Scan / Exec arg order below — adding a
 // column means editing four call sites; the constant centralises the
 // SELECT/INSERT lists so two of those four stay in lockstep.
-const siteColumns = "id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, salts, dbEngine, dbVersion, publishDBPort, spxEnabled, spxKey, createdAt, updatedAt"
+const siteColumns = "id, name, slug, domain, filesDir, publicDir, started, phpVersion, mysqlVersion, redisVersion, dbPassword, webServer, multisite, salts, dbEngine, dbVersion, publishDBPort, spxEnabled, spxKey, gitRemote, gitBranch, worktreePath, parentSiteID, createdAt, updatedAt"
 
 // scanSite hydrates a Site from a row scanner. Centralised so GetSite and
 // GetSites stay in lockstep with siteColumns; a missed field here means
@@ -75,6 +75,7 @@ func scanSite(scan func(...any) error) (*types.Site, error) {
 		&site.WebServer, &site.Multisite, &site.Salts,
 		&site.DBEngine, &site.DBVersion, &site.PublishDBPort,
 		&site.SPXEnabled, &site.SPXKey,
+		&site.GitRemote, &site.GitBranch, &site.WorktreePath, &site.ParentSiteID,
 		&site.CreatedAt, &site.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -143,12 +144,13 @@ func (s *Storage) AddSite(site *types.Site) error {
 	}
 
 	_, err := s.db.Exec(
-		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
 		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
 		site.WebServer, site.Multisite, site.Salts,
 		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),
 		boolToInt(site.SPXEnabled), site.SPXKey,
+		site.GitRemote, site.GitBranch, site.WorktreePath, site.ParentSiteID,
 		site.CreatedAt, site.UpdatedAt,
 	)
 	if err != nil {
@@ -167,12 +169,13 @@ func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	}
 
 	_, err := s.db.Exec(
-		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, dbEngine = ?, dbVersion = ?, publishDBPort = ?, spxEnabled = ?, spxKey = ?, updatedAt = ? WHERE id = ?",
+		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, dbEngine = ?, dbVersion = ?, publishDBPort = ?, spxEnabled = ?, spxKey = ?, gitRemote = ?, gitBranch = ?, worktreePath = ?, parentSiteID = ?, updatedAt = ? WHERE id = ?",
 		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
 		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
 		site.WebServer, site.Multisite, site.Salts,
 		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),
 		boolToInt(site.SPXEnabled), site.SPXKey,
+		site.GitRemote, site.GitBranch, site.WorktreePath, site.ParentSiteID,
 		site.UpdatedAt, site.ID,
 	)
 	if err != nil {
@@ -180,6 +183,29 @@ func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	}
 
 	return site, nil
+}
+
+// SitesByParent returns every worktree-bound site whose ParentSiteID
+// matches parentID. Used by DeleteSite to cascade-clean its workers
+// before removing the parent row.
+func (s *Storage) SitesByParent(parentID string) ([]types.Site, error) {
+	if parentID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query("SELECT "+siteColumns+" FROM sites WHERE parentSiteID = ?", parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Site
+	for rows.Next() {
+		site, err := scanSite(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *site)
+	}
+	return out, rows.Err()
 }
 
 // DeleteSite removes the Site with the given ID from the database.

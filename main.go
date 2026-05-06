@@ -17,6 +17,7 @@ import (
 
 	application "github.com/PeterBooker/locorum/internal/app"
 	settings "github.com/PeterBooker/locorum/internal/config"
+	"github.com/PeterBooker/locorum/internal/daemon"
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/health"
 	"github.com/PeterBooker/locorum/internal/hooks"
@@ -34,11 +35,25 @@ import (
 var config embed.FS
 
 func main() {
+	// CLI clients are dispatched before any Gio / Docker setup. The CLI
+	// process is a thin IPC wrapper — it must not duplicate
+	// app.Initialize, must not bring up the Gio window, and must exit
+	// quickly enough for shell scripts that loop over `locorum site
+	// list`. See internal/cli/.
+	if code, handled := dispatchCLI(); handled {
+		os.Exit(code)
+	}
+
 	// Hard-fail before Gio loads if we're an amd64 binary translated by
 	// Rosetta on Apple Silicon. See preflight_darwin.go.
 	runPreflight()
 
-	slog.Info("starting Locorum", "version", version.Version, "commit", version.Commit, "date", version.Date)
+	// daemonMode is set when the binary was started as `locorum daemon`
+	// or auto-spawned by a CLI client. The init flow is identical to
+	// GUI mode minus the window event loop.
+	daemonMode := isDaemonMode()
+
+	slog.Info("starting Locorum", "version", version.Version, "commit", version.Commit, "date", version.Date, "daemon", daemonMode)
 
 	// Identify the host once. platform.Get() is then safe to call from
 	// any goroutine for the rest of the process lifetime.
@@ -47,8 +62,9 @@ func main() {
 	// On WSL2, force the X11 backend. WSLg's Wayland compositor does not
 	// fully support window-management actions (minimize/maximize). The
 	// canonical signal lives in platform.Get().WSL.Active — we still
-	// branch on it before Gio touches the display.
-	if plat.WSL.Active {
+	// branch on it before Gio touches the display. Skip in daemon mode:
+	// no Gio, no need to disturb display env.
+	if plat.WSL.Active && !daemonMode {
 		os.Unsetenv("WAYLAND_DISPLAY")
 		os.Setenv("GSETTINGS_BACKEND", "memory")
 		if _, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok {
@@ -115,6 +131,12 @@ func main() {
 
 	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir, cfg)
 
+	if daemonMode {
+		runDaemonMode(homeDir, sm, a, d)
+		st.Close()
+		return
+	}
+
 	userInterface := ui.New(sm)
 
 	// Hydrate the toast-suppression set from the persisted JSON so we
@@ -172,6 +194,20 @@ func main() {
 		})
 	}
 
+	// daemonHandle holds the lock + IPC server we acquire after
+	// a.Initialize succeeds. They survive for the lifetime of the GUI
+	// process; the eventLoop teardown releases them.
+	var daemonLock *daemon.Lock
+	var daemonServer *daemon.Server
+	defer func() {
+		if daemonServer != nil {
+			daemonServer.Shutdown(2 * time.Second)
+		}
+		if daemonLock != nil {
+			_ = daemonLock.Release()
+		}
+	}()
+
 	initFunc := func() {
 		d.SetClient(a.GetClient())
 
@@ -180,6 +216,20 @@ func main() {
 			slog.Error("Error initializing: " + err.Error())
 			userInterface.State.SetInitError(err.Error())
 			return
+		}
+
+		// Bind the IPC server now that Docker is up. Failure here
+		// (e.g. another GUI is already running) does NOT block the
+		// rest of startup — the user still gets a usable window, just
+		// without CLI/MCP wiring. The daemon owner can be inspected
+		// via the lock-error log.
+		if daemonLock == nil {
+			lock, srv, err := startDaemonServices(context.Background(), homeDir, sm)
+			if err != nil {
+				reportLockError(err)
+			} else {
+				daemonLock, daemonServer = lock, srv
+			}
 		}
 
 		if err := sm.ReconcileState(); err != nil {
@@ -249,6 +299,18 @@ func main() {
 
 		if err := eventLoop(w, userInterface); err != nil {
 			slog.Error("Window error: " + err.Error())
+		}
+
+		// Tear down daemon services BEFORE app.Shutdown so a CLI
+		// client mid-call gets a clean "connection closed" rather
+		// than racing the Docker label-wipe.
+		if daemonServer != nil {
+			daemonServer.Shutdown(2 * time.Second)
+			daemonServer = nil
+		}
+		if daemonLock != nil {
+			_ = daemonLock.Release()
+			daemonLock = nil
 		}
 
 		_ = a.Shutdown(context.Background())

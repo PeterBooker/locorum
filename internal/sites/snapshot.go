@@ -24,6 +24,19 @@ import (
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
+// shouldAutoSnapshot reports whether the auto-snapshot wrap is on.
+// True is the safe default; users with their own backup discipline
+// flip the snapshots.auto_before_destructive setting to disable.
+//
+// SiteManagers constructed in tests without a *config.Config (cfg ==
+// nil) get the default behaviour: auto-snapshot ON.
+func (sm *SiteManager) shouldAutoSnapshot() bool {
+	if sm == nil || sm.cfg == nil {
+		return true
+	}
+	return sm.cfg.AutoSnapshotBeforeDestructive()
+}
+
 // snapshotsRoot is the per-user directory holding all sites' snapshots.
 // Lives outside the site's files tree so an accidental `rm -rf
 // ~/locorum/sites/{slug}` does NOT take the snapshots with it — that's
@@ -407,12 +420,25 @@ type RestoreSnapshotOptions struct {
 	// false. Skip if the user is restoring a snapshot they trust without
 	// a sidecar.
 	SkipChecksum bool
+
+	// SkipAutoSnapshot disables the pre-restore safety snapshot that
+	// RestoreSnapshot otherwise takes (P4 in AGENTS-SUPPORT). Set true
+	// when the caller has already established a recovery point (e.g.
+	// the worktree clone-DB flow that snapshots the parent before
+	// touching the child) or when restoring into a known-empty DB.
+	SkipAutoSnapshot bool
 }
 
 // RestoreSnapshot reconstructs the database from a snapshot. The site
 // must be running. Engine compatibility is checked against the filename
 // metadata: a snapshot tagged `mysql8.0` will refuse to restore into a
 // `mysql5.7` site (LEARNINGS.md F18). Override with AllowEngineMismatch.
+//
+// Auto-snapshot wrap (P4): unless opts.SkipAutoSnapshot is true, a
+// "pre_restore" snapshot is taken before the destructive restore, so a
+// botched restore can be rolled back with one command. The wrap is
+// gated by snapshots.auto_before_destructive (default true) so power
+// users with their own backup discipline can disable.
 func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath string, opts RestoreSnapshotOptions) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
@@ -437,6 +463,19 @@ func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath
 	mu := sm.siteMutex(siteID)
 	mu.Lock()
 	defer mu.Unlock()
+
+	// Pre-restore safety snapshot. A failure here logs and continues:
+	// refusing to restore because of a snapshot failure would strand
+	// users whose DB volume is the very thing they're trying to
+	// repair. The snapshot label `pre_restore` makes the recovery
+	// point easy to find in ListSnapshots.
+	if !opts.SkipAutoSnapshot && sm.shouldAutoSnapshot() {
+		if path, serr := sm.snapshotLocked(ctx, site, "pre_restore"); serr != nil {
+			slog.Warn("pre-restore auto-snapshot failed", "site", site.Slug, "err", serr.Error())
+		} else {
+			slog.Info("pre-restore auto-snapshot saved", "path", path)
+		}
+	}
 
 	// Verify checksum first if a sidecar exists. We do this before
 	// touching the live database so a corrupt snapshot is rejected

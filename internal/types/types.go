@@ -54,6 +54,29 @@ type Site struct {
 	// produce a byte-identical file (idempotent writes).
 	Salts string `json:"-"`
 
+	// GitRemote is the canonical remote URL of the upstream repository
+	// for worktree-bound sites (P1, AGENTS-SUPPORT.md). Empty for
+	// conventional sites; non-empty implies worktreePath / gitBranch
+	// are also set and FilesDir points at a git worktree.
+	GitRemote string `json:"gitRemote,omitempty"`
+
+	// GitBranch is the branch the worktree tracks. Same shape rules
+	// as GitRemote: empty for conventional sites, set for worktrees.
+	GitBranch string `json:"gitBranch,omitempty"`
+
+	// WorktreePath is the host path of the git worktree directory.
+	// For worktree-bound sites this is also FilesDir; we keep both so
+	// a future flavour B (plugin/theme mode) can have FilesDir point
+	// at a scratch WP install while WorktreePath identifies the
+	// underlying checkout to remove via `git worktree remove`.
+	WorktreePath string `json:"worktreePath,omitempty"`
+
+	// ParentSiteID identifies the parent (conventional) site that
+	// owns the upstream checkout. Worktree sites point at this row so
+	// parent-delete can cascade-clean its workers; conventional sites
+	// leave it empty.
+	ParentSiteID string `json:"parentSiteID,omitempty"`
+
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }

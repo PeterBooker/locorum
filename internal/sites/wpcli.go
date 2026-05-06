@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -94,12 +95,27 @@ func (sm *SiteManager) wpInstallDefault(ctx context.Context, site *types.Site) e
 // `--skip-columns=guid` (the WP-recommended invariant for URL rewrites:
 // guid is a permanent identifier, not a URL, despite looking like one).
 // Returns the wp-cli output verbatim so the caller can surface row counts.
+//
+// Auto-snapshot wrap (P4): when site is running and the auto-snapshot
+// setting is on, takes a "pre_search_replace" snapshot first so a
+// botched URL rewrite is one `snapshot restore` away from undone.
+// Best-effort: snapshot failures log and continue, because refusing
+// to run search-replace because we couldn't snapshot would leave
+// users stuck. The wrap is suppressed when from == to (no-op) or the
+// site isn't running (DB unreachable).
 func (sm *SiteManager) wpSearchReplace(ctx context.Context, site *types.Site, from, to string) (string, error) {
 	if from == "" || to == "" {
 		return "", errors.New("wpSearchReplace: from and to are required")
 	}
 	if from == to {
 		return "", nil
+	}
+	if site != nil && site.Started && sm.shouldAutoSnapshot() {
+		if path, err := sm.snapshotLocked(ctx, site, "pre_search_replace"); err != nil {
+			slog.Warn("pre-search-replace auto-snapshot failed", "site", site.Slug, "err", err.Error())
+		} else {
+			slog.Info("pre-search-replace auto-snapshot saved", "path", path)
+		}
 	}
 	return sm.wpcli(ctx, site,
 		"search-replace", from, to,
@@ -111,9 +127,21 @@ func (sm *SiteManager) wpSearchReplace(ctx context.Context, site *types.Site, fr
 // wpDBImport runs `wp db import <inContainerPath>`. The caller is
 // responsible for placing the dump where wp-cli can read it (typically
 // inside the bind-mounted FilesDir).
+//
+// Auto-snapshot wrap (P4): the import wholesale replaces the current
+// database, so we capture a "pre_db_import" snapshot first whenever
+// the safety setting is on. Same fail-open semantics as
+// wpSearchReplace.
 func (sm *SiteManager) wpDBImport(ctx context.Context, site *types.Site, inContainerPath string) (string, error) {
 	if inContainerPath == "" {
 		return "", errors.New("wpDBImport: empty path")
+	}
+	if site != nil && site.Started && sm.shouldAutoSnapshot() {
+		if path, err := sm.snapshotLocked(ctx, site, "pre_db_import"); err != nil {
+			slog.Warn("pre-db-import auto-snapshot failed", "site", site.Slug, "err", err.Error())
+		} else {
+			slog.Info("pre-db-import auto-snapshot saved", "path", path)
+		}
 	}
 	return sm.wpcli(ctx, site, "db", "import", inContainerPath)
 }

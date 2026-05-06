@@ -66,6 +66,14 @@ const (
 	KeyHealthDiskWarnGB         = "health.disk_warn_gb"    // int, default 5
 	KeyHealthDiskBlockerGB      = "health.disk_blocker_gb" // int, default 1
 	KeyHealthLastSeen           = "health.last_seen"       // json, internal
+
+	// Auto-snapshot wraps for destructive ops (P4 in
+	// AGENTS-SUPPORT.md). When true (the default), Locorum captures a
+	// safety snapshot before each of: snapshot restore, wp db import,
+	// wp search-replace, agent-driven `exec` as root in the database
+	// container. Power users with their own backup discipline can
+	// disable.
+	KeyAutoSnapshotBeforeDestructive = "snapshots.auto_before_destructive"
 )
 
 // Documented default values for every accessor. Centralising these
