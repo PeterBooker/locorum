@@ -61,8 +61,12 @@ type UIState struct {
 	siteToggling map[string]bool // site ID -> whether start/stop is in progress
 
 	// Error banner state
-	errorMessage string
-	errorExpiry  time.Time
+	errorMessage     string
+	errorExpiry      time.Time
+	errorActionID    string
+	errorActionLabel string
+	errorActionRun   func()
+	errorActionBusy  bool
 
 	// Delete confirmation modal
 	showDeleteConfirm bool
@@ -148,6 +152,16 @@ type UIState struct {
 	// surfaced by the disk-low check. Zero before the first reading.
 	// Guarded by mu (top-level UIState mutex) — same as servicesHealth.
 	diskFreeBytes int64
+
+	// updateAvailable / updateURL / updateNotes / updateDismissed
+	// snapshot the latest update-check result for the Settings card and
+	// the nav rail dot. Empty updateAvailable = no banner; non-empty
+	// + matches updateDismissed = also no banner (user clicked "Dismiss
+	// this version"). Compared as semver via the updatecheck package.
+	updateAvailable string
+	updateURL       string
+	updateNotes     string
+	updateDismissed string
 }
 
 // activitySiteCache mirrors a slice of recent activity rows for one site.
@@ -352,6 +366,63 @@ func (s *UIState) HealthHydrateSeen(keys []string) {
 	s.healthSeenMu.Unlock()
 }
 
+// ─── Update-check banner ────────────────────────────────────────────────────
+
+// UpdateBannerSnapshot is a frame-stable copy of the update-check state
+// for the Settings → Diagnostics card and the nav rail dot.
+type UpdateBannerSnapshot struct {
+	Available string // version string (empty = no upgrade)
+	URL       string
+	Notes     string
+	Dismissed string
+}
+
+// HasUnreadUpdate reports whether there's an upgrade available that the
+// user has not already dismissed. Comparison is delegated to the caller
+// (updatecheck.IsStrictlyNewer) so this package stays semver-blind.
+// Cheap; safe to call from the nav rail every frame.
+func (u UpdateBannerSnapshot) HasUnreadUpdate(newer func(latest, dismissed string) bool) bool {
+	if u.Available == "" {
+		return false
+	}
+	if u.Dismissed == "" {
+		return true
+	}
+	return newer(u.Available, u.Dismissed)
+}
+
+// SetUpdateAvailable publishes the latest update-check answer.
+func (s *UIState) SetUpdateAvailable(version, url, notes string) {
+	s.mu.Lock()
+	s.updateAvailable = version
+	s.updateURL = url
+	s.updateNotes = notes
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// SetUpdateDismissed records the version the user has clicked
+// "Dismiss this version" on. Call after the persisted setting has
+// been written, so the in-memory snapshot stays consistent.
+func (s *UIState) SetUpdateDismissed(version string) {
+	s.mu.Lock()
+	s.updateDismissed = version
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// UpdateBannerSnapshot returns the current update-check state.
+func (s *UIState) UpdateBannerSnapshot() UpdateBannerSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return UpdateBannerSnapshot{
+		Available: s.updateAvailable,
+		URL:       s.updateURL,
+		Notes:     s.updateNotes,
+		Dismissed: s.updateDismissed,
+	}
+}
+
 // SetDiskFreeBytes stores the most recent host-filesystem free-byte reading
 // for the top status bar. The runner publishes this via the disk-low check;
 // main.go pulls it out and pushes here on the same cadence the services-
@@ -504,21 +575,69 @@ func (s *UIState) IsSiteToggling(id string) bool {
 
 // ─── Error Banner ───────────────────────────────────────────────────────────
 
+// errorBannerTTL caps how long an error banner stays visible before
+// auto-dismiss. Banners with an action button stay longer because the user
+// has to read, understand, and click — eight seconds isn't enough.
+const (
+	errorBannerTTL       = 8 * time.Second
+	errorBannerActionTTL = 30 * time.Second
+)
+
+// ErrorBannerSnapshot is a frame-stable copy of the error banner state.
+// The Layout pass reads it once per frame so it can render the message and
+// (optionally) an action button without holding the state mutex.
+type ErrorBannerSnapshot struct {
+	Message     string
+	ActionID    string
+	ActionLabel string
+	HasAction   bool
+	Busy        bool
+}
+
 // ShowError sets the error banner message with an 8-second auto-dismiss.
+// Any prior action button is cleared — call ShowErrorWithAction if you
+// want a button.
 func (s *UIState) ShowError(msg string) {
+	s.setError(msg, NotifyAction{}, errorBannerTTL)
+}
+
+// ShowErrorWithAction sets the error banner with an optional action
+// button. The TTL is 30 s (vs 8 s for plain errors) to give the user time
+// to act. If a.Run is nil the call behaves identically to ShowError.
+func (s *UIState) ShowErrorWithAction(msg string, a NotifyAction) {
+	ttl := errorBannerTTL
+	if a.HasRun() {
+		ttl = errorBannerActionTTL
+	}
+	s.setError(msg, a, ttl)
+}
+
+func (s *UIState) setError(msg string, a NotifyAction, ttl time.Duration) {
 	s.mu.Lock()
 	s.errorMessage = msg
-	s.errorExpiry = time.Now().Add(8 * time.Second)
+	s.errorExpiry = time.Now().Add(ttl)
+	if a.HasRun() {
+		s.errorActionID = a.ID
+		s.errorActionLabel = a.Label
+		s.errorActionRun = a.Run
+	} else {
+		s.errorActionID = ""
+		s.errorActionLabel = ""
+		s.errorActionRun = nil
+	}
+	s.errorActionBusy = false
 	s.mu.Unlock()
 	s.Invalidate()
 
 	go func() {
-		time.Sleep(8 * time.Second)
+		time.Sleep(ttl)
 		s.Invalidate()
 	}()
 }
 
 // ActiveError returns the current error message if it hasn't expired, or "".
+// Preserved for callers that don't care about the action button. New code
+// should prefer ErrorBannerSnapshot.
 func (s *UIState) ActiveError() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -527,9 +646,73 @@ func (s *UIState) ActiveError() string {
 	}
 	if time.Now().After(s.errorExpiry) {
 		s.errorMessage = ""
+		s.errorActionID = ""
+		s.errorActionLabel = ""
+		s.errorActionRun = nil
+		s.errorActionBusy = false
 		return ""
 	}
 	return s.errorMessage
+}
+
+// ErrorBannerSnapshot returns a frame-stable snapshot of the banner state.
+// The Run callback is intentionally not exposed — callers wire clicks
+// through TriggerErrorAction so the busy-flag handshake stays atomic.
+func (s *UIState) ErrorBannerSnapshot() ErrorBannerSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errorMessage == "" {
+		return ErrorBannerSnapshot{}
+	}
+	if time.Now().After(s.errorExpiry) {
+		s.errorMessage = ""
+		s.errorActionID = ""
+		s.errorActionLabel = ""
+		s.errorActionRun = nil
+		s.errorActionBusy = false
+		return ErrorBannerSnapshot{}
+	}
+	return ErrorBannerSnapshot{
+		Message:     s.errorMessage,
+		ActionID:    s.errorActionID,
+		ActionLabel: s.errorActionLabel,
+		HasAction:   s.errorActionRun != nil,
+		Busy:        s.errorActionBusy,
+	}
+}
+
+// TriggerErrorAction atomically claims the busy slot and invokes the
+// banner's action callback. Returns true if an action was started, false
+// when no callback is registered or one is already in flight. The action
+// is responsible for clearing its own busy state via ClearErrorBanner
+// when it completes (success) or by leaving the banner visible until
+// auto-dismiss (failure).
+func (s *UIState) TriggerErrorAction() bool {
+	s.mu.Lock()
+	if s.errorActionRun == nil || s.errorActionBusy {
+		s.mu.Unlock()
+		return false
+	}
+	s.errorActionBusy = true
+	action := s.errorActionRun
+	s.mu.Unlock()
+	s.Invalidate()
+	action()
+	return true
+}
+
+// ClearErrorBanner immediately dismisses the error banner. Called from
+// action callbacks after they've kicked off the requested follow-up work
+// (e.g. starting a site) so the banner doesn't hang around.
+func (s *UIState) ClearErrorBanner() {
+	s.mu.Lock()
+	s.errorMessage = ""
+	s.errorActionID = ""
+	s.errorActionLabel = ""
+	s.errorActionRun = nil
+	s.errorActionBusy = false
+	s.mu.Unlock()
+	s.Invalidate()
 }
 
 // ─── Delete Confirmation ────────────────────────────────────────────────────

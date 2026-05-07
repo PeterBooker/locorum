@@ -202,7 +202,7 @@ func (r *Router) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("writing api config: %w", err)
 	}
 	if err := r.createContainer(ctx); err != nil {
-		return fmt.Errorf("create router container: %w", err)
+		return fmt.Errorf("create router container: %w", classifyDockerStartError(err))
 	}
 	if err := r.waitReady(ctx); err != nil {
 		return fmt.Errorf("router did not become ready: %w", err)

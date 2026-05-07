@@ -72,17 +72,45 @@ func (a *App) Initialize(ctx context.Context) error {
 	// creating new ones. ReconcileNetworks is the explicit "remove orphans"
 	// pass that prevents same-name network create from failing after a
 	// daemon crash.
-	if err := a.cleanupExistingResources(ctx); err != nil {
+	if err := a.WipeLabelled(ctx); err != nil {
 		return err
 	}
 	if err := a.d.ReconcileNetworks(ctx); err != nil {
 		slog.Warn("reconcile networks: " + err.Error())
 	}
 
+	return a.BringUpGlobals(ctx)
+}
+
+// WipeLabelled removes every Locorum-owned container and network. Used
+// at startup (to clear state from a crashed previous session) and from
+// SiteManager.ResetInfrastructure (to give the user a one-click recovery
+// path). Volumes are deliberately preserved — site DB data persists
+// across both flows.
+//
+// Idempotent: safe to call when nothing is running.
+func (a *App) WipeLabelled(ctx context.Context) error {
+	labels := map[string]string{docker.LabelPlatform: docker.PlatformValue}
+	if err := a.d.RemoveContainersByLabel(ctx, labels); err != nil {
+		return fmt.Errorf("remove labelled containers: %w", err)
+	}
+	if err := a.d.RemoveNetworksByLabel(ctx, labels); err != nil {
+		return fmt.Errorf("remove labelled networks: %w", err)
+	}
+	return nil
+}
+
+// BringUpGlobals creates the global network, brings up mail + adminer,
+// and (re)starts the router with the canonical service routes pre-
+// registered. Used at the end of Initialize and from
+// SiteManager.ResetInfrastructure.
+//
+// Each step propagates the underlying error verbatim. The router itself
+// returns sentinels (router.ErrPortInUse) the UI can branch on.
+func (a *App) BringUpGlobals(ctx context.Context) error {
 	if _, err := a.d.EnsureNetwork(ctx, docker.GlobalNetworkSpec()); err != nil {
 		return fmt.Errorf("create global network: %w", err)
 	}
-
 	if err := a.ensureGlobalContainer(ctx, docker.MailSpec()); err != nil {
 		return fmt.Errorf("global mail: %w", err)
 	}
@@ -125,30 +153,29 @@ func (a *App) ensureGlobalContainer(ctx context.Context, spec docker.ContainerSp
 	return nil
 }
 
-// cleanupExistingResources wipes Locorum-owned containers and networks.
-// Resources are matched by the io.locorum.platform label.
-func (a *App) cleanupExistingResources(ctx context.Context) error {
-	labels := map[string]string{docker.LabelPlatform: docker.PlatformValue}
-	if err := a.d.RemoveContainersByLabel(ctx, labels); err != nil {
-		return err
-	}
-	if err := a.d.RemoveNetworksByLabel(ctx, labels); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (a *App) Shutdown(ctx context.Context) error {
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "nginx", "sites"))
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "config", "apache", "sites"))
 	_ = utils.DeleteDirFiles(path.Join(a.homeDir, ".locorum", "router", "dynamic"))
+	return a.WipeLabelled(ctx)
+}
 
-	labels := map[string]string{docker.LabelPlatform: docker.PlatformValue}
-	if err := a.d.RemoveContainersByLabel(ctx, labels); err != nil {
-		return err
+// ResetInfrastructure wipes every Locorum-owned container and network,
+// then re-runs the global startup sequence (network + mail + adminer +
+// router). Volumes are preserved — site DB data is untouched. Per-site
+// containers are removed and the caller is expected to reconcile the
+// "started" state in storage.
+//
+// User-facing flow: Settings → Diagnostics → "Reset Locorum
+// Infrastructure" with a confirmation modal. Idempotent and safe to
+// retry; failures bubble up verbatim so the UI banner shows what went
+// wrong.
+func (a *App) ResetInfrastructure(ctx context.Context) error {
+	if err := a.WipeLabelled(ctx); err != nil {
+		return fmt.Errorf("reset: wipe: %w", err)
 	}
-	if err := a.d.RemoveNetworksByLabel(ctx, labels); err != nil {
-		return err
+	if err := a.BringUpGlobals(ctx); err != nil {
+		return fmt.Errorf("reset: bring-up: %w", err)
 	}
 	return nil
 }

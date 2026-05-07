@@ -58,6 +58,13 @@ type Engine interface {
 	// stdout+stderr, demultiplexed for human reading.
 	ContainerLogs(ctx context.Context, name string, lines int) (string, error)
 
+	// StreamContainerLogs follows a container's stdout+stderr. The caller
+	// MUST cancel ctx to release the underlying SDK connection. Pass the
+	// zero time.Time to start at the live tail; pass a real time to
+	// resume after a reconnect. The channel closes when ctx is cancelled,
+	// the container exits, or an unrecoverable read error occurs.
+	StreamContainerLogs(ctx context.Context, name string, since time.Time) (<-chan LogLine, error)
+
 	// ChownVolume runs a privileged one-shot alpine container that
 	// recursively chowns every file in the volume to uid:gid. Used before
 	// service start so PHP-FPM/MySQL can write into the bind without

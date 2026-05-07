@@ -30,4 +30,12 @@ var (
 	// ErrSpecAmbiguous is returned by spec validation when a Mount has more
 	// than one of {Bind, Volume, Tmpfs} populated, or none of them.
 	ErrSpecAmbiguous = errors.New("mount spec must have exactly one of bind/volume/tmpfs")
+
+	// ErrDaemonUnreachable is returned by Ping (and wrapped by lifecycle
+	// methods) when the Docker daemon socket is unreachable — Docker
+	// Desktop closed, the systemd unit stopped, the user's group is wrong,
+	// etc. UI code branches on errors.Is(err, ErrDaemonUnreachable) to
+	// surface a banner action ("Show how to start Docker") instead of a
+	// raw stack trace.
+	ErrDaemonUnreachable = errors.New("docker daemon unreachable")
 )

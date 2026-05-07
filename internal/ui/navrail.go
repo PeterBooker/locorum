@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/PeterBooker/locorum/internal/sites"
+	"github.com/PeterBooker/locorum/internal/updatecheck"
 )
 
 // NavRail is the leftmost column: the brand mark, two top-level nav items
@@ -190,10 +191,18 @@ func (n *NavRail) layoutNavItem(
 	}
 
 	// Settings entry shows the System Health badge — only it; other
-	// nav items don't carry health meaning.
+	// nav items don't carry health meaning. The "update available"
+	// signal is OR-ed in: when no warn/blocker is present, the dot
+	// flips to accent to nudge the user toward Diagnostics.
 	badge := HealthBadgeNone
 	if key == NavViewSettings {
 		badge = HealthBadgeFor(n.state.HealthSnapshot())
+		if badge == HealthBadgeNone || badge == HealthBadgeInfo {
+			snap := n.state.UpdateBannerSnapshot()
+			if snap.HasUnreadUpdate(updatecheck.IsStrictlyNewer) {
+				badge = HealthBadgeUpdate
+			}
+		}
 	}
 
 	if collapsed {

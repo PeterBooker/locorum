@@ -86,6 +86,11 @@ func allKeys() []string {
 		KeyHealthDiskWarnGB,
 		KeyHealthDiskBlockerGB,
 		KeyHealthLastSeen,
+		KeyAutoSnapshotBeforeDestructive,
+		KeyDebugLogging,
+		KeyTelemetryDecided,
+		KeyUpdateDismissedVersion,
+		KeyUpdateLastAvailable,
 	}
 }
 
@@ -433,6 +438,60 @@ func (c *Config) SetHealthDiskBlockerGB(v int) error {
 		return fmt.Errorf("config: blocker threshold (%d GB) must be smaller than warn threshold (%d GB)", v, warn)
 	}
 	return c.Set(KeyHealthDiskBlockerGB, strconv.Itoa(v))
+}
+
+// ── Diagnostics ─────────────────────────────────────────────────────
+
+// DebugLogging reports whether the applog handler should emit Debug
+// records. Default false.
+func (c *Config) DebugLogging() bool {
+	return parseBool(c.raw(KeyDebugLogging), false)
+}
+
+// SetDebugLogging persists the toggle. The caller is responsible for
+// applying the new level via applog.SetDebug.
+func (c *Config) SetDebugLogging(on bool) error {
+	return c.Set(KeyDebugLogging, formatBool(on))
+}
+
+// ── Telemetry decision tri-state ────────────────────────────────────
+
+// TelemetryDecided reports whether the user has answered the first-launch
+// telemetry prompt. The first-launch modal flips this to true on any
+// answer; afterwards it never shows again. Independent of TelemetryOptIn
+// so we can distinguish "user said no" from "user hasn't been asked."
+func (c *Config) TelemetryDecided() bool {
+	return parseBool(c.raw(KeyTelemetryDecided), false)
+}
+
+// SetTelemetryDecided records that the modal has been dismissed.
+func (c *Config) SetTelemetryDecided(v bool) error {
+	return c.Set(KeyTelemetryDecided, formatBool(v))
+}
+
+// ── Update-check banner state ───────────────────────────────────────
+
+// UpdateDismissedVersion returns the version string the user last clicked
+// "Dismiss this version" on, or "" if nothing has been dismissed.
+func (c *Config) UpdateDismissedVersion() string {
+	return c.raw(KeyUpdateDismissedVersion)
+}
+
+// SetUpdateDismissedVersion persists the dismissed version.
+func (c *Config) SetUpdateDismissedVersion(v string) error {
+	return c.Set(KeyUpdateDismissedVersion, v)
+}
+
+// UpdateLastAvailable returns the most recent latest-available version
+// surfaced by the periodic update check. "" until the first check
+// completes.
+func (c *Config) UpdateLastAvailable() string {
+	return c.raw(KeyUpdateLastAvailable)
+}
+
+// SetUpdateLastAvailable persists the snapshot.
+func (c *Config) SetUpdateLastAvailable(v string) error {
+	return c.Set(KeyUpdateLastAvailable, v)
 }
 
 // HealthLastSeen returns the persisted last-seen-finding-keys JSON blob.

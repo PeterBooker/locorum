@@ -138,7 +138,7 @@ func (sm *SiteManager) Snapshot(ctx context.Context, siteID, label string) (stri
 		return "", fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return "", errors.New("site must be running to snapshot")
+		return "", fmt.Errorf("%w: cannot snapshot", ErrSiteNotRunning)
 	}
 	if !snapshotLabelPat.MatchString(label) {
 		return "", fmt.Errorf("invalid snapshot label %q: must match %s", label, snapshotLabelPat)
@@ -448,7 +448,7 @@ func (sm *SiteManager) RestoreSnapshot(ctx context.Context, siteID, snapshotPath
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return errors.New("site must be running to restore")
+		return fmt.Errorf("%w: cannot restore snapshot", ErrSiteNotRunning)
 	}
 	info := parseSnapshotName(filepath.Base(snapshotPath))
 	if info != nil && !opts.AllowEngineMismatch {

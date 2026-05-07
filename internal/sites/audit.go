@@ -2,8 +2,6 @@ package sites
 
 import (
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 // auditMaxBytes caps the audit log size before rotation. 10 MiB is a
@@ -39,7 +38,7 @@ func writeAuditLog(homeDir string, res orch.Result) {
 	defer auditMu.Unlock()
 
 	logPath := filepath.Join(homeDir, ".locorum", "lifecycle.log")
-	if err := rotateIfLarge(logPath, auditMaxBytes); err != nil {
+	if err := utils.RotateIfLarge(logPath, auditMaxBytes, 1); err != nil {
 		slog.Warn("audit log rotate failed", "err", err.Error())
 	}
 
@@ -100,20 +99,4 @@ func writeAuditLog(homeDir string, res orch.Result) {
 	if _, err := f.Write(buf); err != nil {
 		slog.Warn("audit log write failed", "err", err.Error())
 	}
-}
-
-// rotateIfLarge renames logPath to logPath.1 if it exceeds maxBytes. Old
-// .1 files are overwritten — the audit log is operational, not legal hold.
-func rotateIfLarge(logPath string, maxBytes int64) error {
-	info, err := os.Stat(logPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if info.Size() < maxBytes {
-		return nil
-	}
-	return os.Rename(logPath, logPath+".1")
 }

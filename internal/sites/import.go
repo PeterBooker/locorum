@@ -79,7 +79,7 @@ func (sm *SiteManager) ImportDB(ctx context.Context, siteID, hostPath string, op
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return errors.New("site must be running to import a database")
+		return fmt.Errorf("%w: cannot import database", ErrSiteNotRunning)
 	}
 	if hostPath == "" {
 		return errors.New("import path is empty")

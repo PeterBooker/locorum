@@ -16,6 +16,7 @@ import (
 	"gioui.org/unit"
 
 	application "github.com/PeterBooker/locorum/internal/app"
+	"github.com/PeterBooker/locorum/internal/applog"
 	settings "github.com/PeterBooker/locorum/internal/config"
 	"github.com/PeterBooker/locorum/internal/daemon"
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -25,8 +26,10 @@ import (
 	"github.com/PeterBooker/locorum/internal/router/traefik"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
+	"github.com/PeterBooker/locorum/internal/telemetry"
 	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/ui"
+	"github.com/PeterBooker/locorum/internal/updatecheck"
 	"github.com/PeterBooker/locorum/internal/utils"
 	"github.com/PeterBooker/locorum/internal/version"
 )
@@ -77,6 +80,17 @@ func main() {
 		log.Fatalln("Error getting home dir:", err)
 	}
 
+	// Install the structured-log handler before any other startup work so
+	// every record (including the "starting Locorum" line above is missed,
+	// which is fine — that one is a single banner, not a debug source).
+	logCloser, logErr := applog.Init(filepath.Join(homeDir, ".locorum", "logs"))
+	if logErr != nil {
+		// Stderr-only handler is already installed by Init's fallback;
+		// surface the file-open failure once and continue.
+		slog.Warn("applog: file logging disabled", "err", logErr.Error())
+	}
+	defer func() { _ = logCloser.Close() }()
+
 	d := docker.New()
 
 	st, err := storage.NewSQLiteStorage(context.Background())
@@ -89,6 +103,21 @@ func main() {
 	if err != nil {
 		log.Fatalln("Error loading settings:", err)
 	}
+
+	// Apply the persisted Debug Mode toggle to the slog handler. Cheap;
+	// safe to call before or after applog.Init.
+	applog.SetDebug(cfg.DebugLogging())
+
+	// Telemetry: noop sink today (UX.md §5.1, Phase A). The real
+	// transport lands once the privacy doc + vendor decision do — Phase
+	// B swaps SetDefault here for a PostHog (or self-rolled) sink, all
+	// without touching the call sites.
+	telemetry.SetDefault(telemetry.Noop{})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = telemetry.Flush(ctx)
+	}()
 
 	mkcert := tlspkg.NewMkcert(
 		filepath.Join(homeDir, ".locorum", "certs"),
@@ -138,6 +167,22 @@ func main() {
 	}
 
 	userInterface := ui.New(sm)
+
+	// Wire the Diagnostics → Reset Infrastructure card. The closure
+	// captures `a` so the UI doesn't import internal/app — invariant
+	// 1 (UI's strict diet) stays intact.
+	if dp := userInterface.Settings.DiagnosticsPanel(); dp != nil {
+		dp.SetResetInfraCard(ui.NewResetInfraCard(
+			userInterface.State, sm, userInterface.Toasts,
+			func(ctx context.Context) error { return a.ResetInfrastructure(ctx) },
+		))
+		dp.SetUpdateBanner(ui.NewUpdateBannerCard(userInterface.State, cfg))
+	}
+
+	// Hydrate the update-banner state from settings before the first
+	// frame so the dot doesn't flicker on launch.
+	userInterface.State.SetUpdateAvailable(cfg.UpdateLastAvailable(), "", "")
+	userInterface.State.SetUpdateDismissed(cfg.UpdateDismissedVersion())
 
 	// Hydrate the toast-suppression set from the persisted JSON so we
 	// don't re-toast findings the user already saw on a previous run.
@@ -288,6 +333,10 @@ func main() {
 	}()
 
 	go pollServicesHealth(d, userInterface.State)
+
+	if cfg.UpdateCheckEnabled() {
+		go runUpdateCheck(homeDir, cfg, userInterface.State)
+	}
 
 	go func() {
 		w := &app.Window{}
@@ -460,6 +509,34 @@ func currentServicesHealth(d *docker.Docker, requiredRoles []string) ui.Services
 		return ui.ServicesHealth{Status: ui.ServicesHealthDegraded}
 	default:
 		return ui.ServicesHealth{Status: ui.ServicesHealthHealthy}
+	}
+}
+
+// runUpdateCheck queries GitHub Releases (gated by the throttle file)
+// and pushes the result into UIState. Failures are logged at warn — the
+// app keeps working without the banner.
+func runUpdateCheck(homeDir string, cfg *settings.Config, state *ui.UIState) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	statePath := filepath.Join(homeDir, ".locorum", "state", "last_update_check.json")
+	res, err := updatecheck.Check(ctx, version.Version, updatecheck.Options{
+		Channel:   updatecheck.Channel(cfg.UpdateCheckChannel()),
+		StatePath: statePath,
+	})
+	if err != nil {
+		if err == updatecheck.ErrThrottled {
+			return
+		}
+		slog.Warn("update check failed", "err", err.Error())
+		return
+	}
+	if res.Latest == "" {
+		return
+	}
+	state.SetUpdateAvailable(res.Latest, res.URL, res.Notes)
+	if err := cfg.SetUpdateLastAvailable(res.Latest); err != nil {
+		slog.Warn("update check: persist last_available", "err", err.Error())
 	}
 }
 

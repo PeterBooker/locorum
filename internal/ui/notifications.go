@@ -15,6 +15,24 @@ import (
 	"gioui.org/widget/material"
 )
 
+// NotifyAction is an optional button rendered next to an error/info banner.
+// ID is a stable identifier used by tests and slog. Label is the button text.
+// Run is invoked from HandleUserInteractions (the UI render goroutine) — it
+// MUST spawn its own goroutine for any blocking work, and any UIState
+// mutation must go through the existing UIState helpers (which lock and
+// invalidate internally). Mirrors the convention every other click handler
+// uses, and the field shape of health.Action so a future merge is mechanical.
+type NotifyAction struct {
+	ID    string
+	Label string
+	Run   func()
+}
+
+// HasRun reports whether the action carries a non-nil runner. The zero
+// value of NotifyAction is "no action" — callers pass it to ShowError
+// equivalents to mean "render plain banner."
+func (a NotifyAction) HasRun() bool { return a.Run != nil }
+
 // NotificationType determines the visual style of a notification.
 type NotificationType int
 
