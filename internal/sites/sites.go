@@ -983,6 +983,88 @@ func (sm *SiteManager) PickDirectory() (string, error) {
 	return dir, nil
 }
 
+// StreamLogs follows the named service container for siteID. The
+// returned channel closes when ctx is cancelled, the container exits, or
+// the engine reports an unrecoverable read failure. When the channel
+// closes while ctx is still live AND the site is still marked started,
+// StreamLogs auto-reattaches up to 5 times with a 1-second delay between
+// attempts (each new ContainerLogs call resumes from the last seen
+// timestamp).
+//
+// service is one of "web", "php", "database", "redis" — the per-site
+// service alias. ErrNotFound on the first attach means the container has
+// not been created yet (site never started); the caller should treat
+// that as terminal and not retry.
+func (sm *SiteManager) StreamLogs(ctx context.Context, siteID, service string) (<-chan docker.LogLine, error) {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching site: %w", err)
+	}
+	if site == nil {
+		return nil, fmt.Errorf("site %q not found", siteID)
+	}
+	containerName := docker.SiteContainerName(site.Slug, service)
+
+	out := make(chan docker.LogLine, 256)
+	go func() {
+		defer close(out)
+		var since time.Time
+		for attempt := 0; attempt <= 5; attempt++ {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			ch, err := sm.d.StreamContainerLogs(ctx, containerName, since)
+			if err != nil {
+				if errors.Is(err, docker.ErrNotFound) {
+					return
+				}
+				// Surface a synthetic error line and back off.
+				select {
+				case out <- docker.LogLine{Time: time.Now(), Stream: docker.LogStreamStderr, Text: "[reconnect: " + err.Error() + "]"}:
+				case <-ctx.Done():
+					return
+				}
+				if !sleepWithCtx(ctx, time.Second) {
+					return
+				}
+				continue
+			}
+			for line := range ch {
+				since = line.Time
+				select {
+				case out <- line:
+				case <-ctx.Done():
+					return
+				}
+			}
+			// Channel closed mid-stream. If the site is still marked
+			// started, sleep + retry; otherwise stop.
+			s, err := sm.st.GetSite(siteID)
+			if err != nil || s == nil || !s.Started {
+				return
+			}
+			if !sleepWithCtx(ctx, time.Second) {
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// sleepWithCtx returns false if ctx is cancelled before d elapses.
+func sleepWithCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // GetContainerLogs returns the last N lines of logs for a site's service
 // container. Service should be one of: web, php, database, redis.
 func (sm *SiteManager) GetContainerLogs(ctx context.Context, siteID, service string, lines int) (string, error) {
@@ -1007,7 +1089,7 @@ func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return fmt.Errorf("site must be running")
+		return ErrSiteNotRunning
 	}
 
 	token := generatePassword(32)
@@ -1051,7 +1133,22 @@ if (isset($_GET['locorum_token']) && $_GET['locorum_token'] === '%s') {
 }
 
 // OpenSiteShell opens an interactive terminal session in the site's PHP container.
+// Returns utils.ErrNoTerminal if the host has no detectable terminal launcher;
+// callers branch on errors.Is to fall back to a "command copied" toast.
 func (sm *SiteManager) OpenSiteShell(siteID string) error {
+	return sm.OpenServiceShell(siteID, "php")
+}
+
+// OpenServiceShell opens a terminal exec'd into the named service
+// container for siteID. service is one of "web", "php", "database",
+// "redis". The shell binary is selected from a per-service map (Alpine
+// images only ship sh; everything else has bash) so users don't get a
+// "no such file or directory" when they click Open Shell on the nginx
+// container.
+//
+// Returns ErrSiteNotRunning when the site is stopped, and
+// utils.ErrNoTerminal when no terminal launcher could be found on PATH.
+func (sm *SiteManager) OpenServiceShell(siteID, service string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
 		return fmt.Errorf("fetching site: %w", err)
@@ -1060,11 +1157,33 @@ func (sm *SiteManager) OpenSiteShell(siteID string) error {
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return fmt.Errorf("site must be running")
+		return ErrSiteNotRunning
 	}
 
-	containerName := docker.SiteContainerName(site.Slug, "php")
-	return utils.OpenTerminalWithCommand("docker", "exec", "-it", containerName, "/bin/bash")
+	containerName := docker.SiteContainerName(site.Slug, service)
+	shell := shellBinaryForService(service)
+	return utils.OpenInTerminal([]string{"docker", "exec", "-it", containerName, shell})
+}
+
+// shellBinaryForService returns the shell path appropriate for the
+// service's image. Alpine-based images only ship /bin/sh; everything
+// else has /bin/bash. Mirrors version.go's image set:
+//
+//   - "web"      → nginx:1.28-alpine OR httpd:2.4-alpine → sh
+//   - "php"      → wodby/php:* (Alpine but ships bash)   → bash
+//   - "database" → mysql / mariadb (Debian)              → bash
+//   - "redis"    → redis:*-alpine                        → sh
+//
+// Any unknown service falls back to bash; if it's wrong the user gets a
+// clear "no such file" message inside the terminal rather than a silent
+// no-op.
+func shellBinaryForService(service string) string {
+	switch service {
+	case "web", "redis":
+		return "/bin/sh"
+	default:
+		return "/bin/bash"
+	}
 }
 
 // VersionsChange describes a desired change to a stopped site's runtime
@@ -1318,7 +1437,7 @@ func (sm *SiteManager) CheckLinks(siteID string, onProgress func(string), onDone
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if !site.Started {
-		return fmt.Errorf("site must be running")
+		return ErrSiteNotRunning
 	}
 
 	go func() {

@@ -366,6 +366,7 @@ type HealthBadgeKind int
 const (
 	HealthBadgeNone    HealthBadgeKind = iota
 	HealthBadgeInfo                    // hidden in the rail; shown only in the panel
+	HealthBadgeUpdate                  // accent — surfaced when an update is available
 	HealthBadgeWarn                    // amber
 	HealthBadgeBlocker                 // red
 )
@@ -388,12 +389,14 @@ func HealthBadgeFor(snap health.Snapshot) HealthBadgeKind {
 // Used by the nav rail to flag the Settings entry. Caller is responsible
 // for positioning.
 func LayoutHealthBadge(gtx layout.Context, kind HealthBadgeKind, th *Theme) layout.Dimensions {
-	if kind == HealthBadgeNone || kind == HealthBadgeInfo {
+	switch kind {
+	case HealthBadgeNone, HealthBadgeInfo:
 		return layout.Dimensions{}
+	case HealthBadgeUpdate:
+		return severityDot(gtx, th.Color.Accent)
+	case HealthBadgeBlocker:
+		return severityDot(gtx, th.Color.Err)
+	default:
+		return severityDot(gtx, th.Color.Warn)
 	}
-	col := th.Color.Warn
-	if kind == HealthBadgeBlocker {
-		col = th.Color.Err
-	}
-	return severityDot(gtx, col)
 }

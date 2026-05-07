@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -45,11 +47,20 @@ func (d *Docker) HasClient() bool {
 	return d.cli != nil
 }
 
-// Ping verifies the engine is reachable. Wraps client.Ping with our context
-// plumbing.
+// Ping verifies the engine is reachable. A nil client (SetClient has not
+// been called yet) and any underlying transport failure are wrapped in
+// ErrDaemonUnreachable so callers can branch with errors.Is.
 func (d *Docker) Ping(ctx context.Context) error {
-	_, err := d.cli.Ping(ctx)
-	return err
+	if d.cli == nil {
+		return fmt.Errorf("%w: docker client not initialised", ErrDaemonUnreachable)
+	}
+	if _, err := d.cli.Ping(ctx); err != nil {
+		// errors.Join keeps the SDK error chain intact (so the test
+		// suite still sees the underlying transport error) while
+		// adding our sentinel for branchable handling.
+		return errors.Join(ErrDaemonUnreachable, err)
+	}
+	return nil
 }
 
 // CheckDockerAvailable is a backward-compatible alias for Ping that logs

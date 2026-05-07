@@ -74,6 +74,29 @@ const (
 	// container. Power users with their own backup discipline can
 	// disable.
 	KeyAutoSnapshotBeforeDestructive = "snapshots.auto_before_destructive"
+
+	// KeyDebugLogging is the Settings → Diagnostics "Debug Mode" toggle.
+	// When true, the applog handler emits Debug-level records too (UI
+	// only — the runner cadence is unaffected). Default false.
+	KeyDebugLogging = "diagnostics.debug_logging"
+
+	// KeyTelemetryDecided records whether the user has answered the
+	// first-launch telemetry prompt. Distinct from KeyTelemetryOptIn,
+	// which collapses unset and "false" into the same boolean. The modal
+	// flips this to true on Opt-in, Decline, OR explicit dismiss; once
+	// flipped, the modal never shows again.
+	KeyTelemetryDecided = "telemetry.decided"
+
+	// KeyUpdateDismissedVersion records the latest available version the
+	// user dismissed via the "Dismiss this version" button on the
+	// Diagnostics card. The banner is suppressed while
+	// semver(latest) <= semver(this).
+	KeyUpdateDismissedVersion = "update_check.dismissed_version"
+
+	// KeyUpdateLastAvailable records the most recent latest-available
+	// version surfaced by the update check, so the Settings card has
+	// something to render on a fresh launch before the next fetch.
+	KeyUpdateLastAvailable = "update_check.last_available"
 )
 
 // Documented default values for every accessor. Centralising these

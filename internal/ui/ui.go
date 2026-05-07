@@ -34,11 +34,14 @@ type UI struct {
 	// Modals
 	CloneModal    *CloneModal
 	HealthBlocker *HealthBlockerModal
+	Telemetry     *TelemetryModal
 	deleteDialog  ConfirmDialog
 	deletePurge   widget.Bool
 
-	// Banner action button (e.g. "Set up trusted HTTPS").
+	// Banner action buttons. noticeBtn is the persistent info banner;
+	// errorBtn is the transient error banner's optional action.
 	noticeBtn widget.Clickable
+	errorBtn  widget.Clickable
 }
 
 func New(sm *sites.SiteManager) *UI {
@@ -66,9 +69,14 @@ func New(sm *sites.SiteManager) *UI {
 		}
 		state.Invalidate()
 	})
+	ui.Settings.SetDiagnosticsPanel(NewDiagnosticsPanel(state, sm, ui.Toasts))
+	if cfg != nil {
+		ui.Settings.SetPrivacyCard(NewPrivacyCard(state, cfg, ui.Toasts))
+	}
 	ui.SiteDetail = NewSiteDetail(state, sm, ui.Toasts)
 	ui.NewSite = NewNewSiteModal(state, sm, ui.Toasts)
 	ui.CloneModal = NewCloneModal(state, sm, ui.Toasts)
+	ui.Telemetry = NewTelemetryModal(state, cfg)
 
 	// Wire up backend callbacks to update UI state
 	sm.OnSitesUpdated = func(updatedSites []types.Site) {
@@ -76,6 +84,9 @@ func New(sm *sites.SiteManager) *UI {
 	}
 	sm.OnSiteUpdated = func(site *types.Site) {
 		state.UpdateSite(*site)
+		if dc := ui.SiteDetail.DescribeCache(); dc != nil {
+			dc.Invalidate(site.ID)
+		}
 	}
 
 	// Hook callbacks update the live-output panel.
@@ -93,6 +104,9 @@ func New(sm *sites.SiteManager) *UI {
 	}
 	sm.OnPlanDone = func(siteID string, r orch.Result) {
 		state.LifecyclePlanDone(siteID, r)
+		if dc := ui.SiteDetail.DescribeCache(); dc != nil {
+			dc.Invalidate(siteID)
+		}
 	}
 	sm.OnPullProgress = func(siteID string, p docker.PullProgress) {
 		state.LifecyclePullProgress(siteID, p)
@@ -134,12 +148,15 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 	if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
 		ui.HealthBlocker.HandleUserInteractions(gtx)
 	}
+	if ui.Telemetry != nil && ui.Telemetry.Show() {
+		ui.Telemetry.HandleUserInteractions(gtx)
+	}
 }
 
 func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 	ui.HandleUserInteractions(gtx)
 
-	errMsg := ui.State.ActiveError()
+	errBanner := ui.State.ErrorBannerSnapshot()
 	notice := ui.State.NoticeSnapshot()
 
 	return layout.Stack{}.Layout(gtx,
@@ -155,10 +172,10 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 					return ui.layoutNoticeBanner(gtx, notice)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if errMsg == "" {
+					if errBanner.Message == "" {
 						return layout.Dimensions{}
 					}
-					return ui.layoutErrorBanner(gtx, errMsg)
+					return ui.layoutErrorBanner(gtx, errBanner)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutColumns(gtx)
@@ -184,6 +201,12 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 			// after the regular modal layer so it sits on top.
 			if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
 				return ui.HealthBlocker.Layout(gtx, ui.Theme)
+			}
+			return layout.Dimensions{}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if ui.Telemetry != nil && ui.Telemetry.Show() {
+				return ui.Telemetry.Layout(gtx, ui.Theme)
 			}
 			return layout.Dimensions{}
 		}),
@@ -261,17 +284,36 @@ func (ui *UI) layoutDeleteConfirm(gtx layout.Context, th *Theme, siteName string
 	})
 }
 
-func (ui *UI) layoutErrorBanner(gtx layout.Context, msg string) layout.Dimensions {
+func (ui *UI) layoutErrorBanner(gtx layout.Context, b ErrorBannerSnapshot) layout.Dimensions {
 	th := ui.Theme
+	if ui.errorBtn.Clicked(gtx) && b.HasAction && !b.Busy {
+		ui.State.TriggerErrorAction()
+	}
 	return FillBackground(gtx, th.Color.DangerBg, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
 			Top: unit.Dp(10), Bottom: unit.Dp(10),
 			Left: th.Spacing.LG, Right: th.Spacing.LG,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th.Theme, msg)
-			lbl.Color = th.Color.DangerFg
-			lbl.TextSize = th.Sizes.Body
-			return lbl.Layout(gtx)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th.Theme, b.Message)
+					lbl.Color = th.Color.DangerFg
+					lbl.TextSize = th.Sizes.Body
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !b.HasAction {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Left: th.Spacing.MD}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						label := b.ActionLabel
+						if b.Busy {
+							label = "Working…"
+						}
+						return th.SmallGated(gtx, &ui.errorBtn, label, !b.Busy)
+					})
+				}),
+			)
 		})
 	})
 }

@@ -130,7 +130,7 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 		return CertPath{}, err
 	}
 	if !status.Installed {
-		return CertPath{}, fmt.Errorf("mkcert is not installed")
+		return CertPath{}, fmt.Errorf("%w: %s", ErrMkcertMissing, status.Message)
 	}
 	if !status.CATrusted {
 		// Refusing to issue is deliberate: a bare `mkcert <hosts>` call

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"image"
 	"strings"
 	"time"
@@ -15,9 +16,11 @@ import (
 	"gioui.org/widget/material"
 	"github.com/sqweek/dialog"
 
+	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 const (
@@ -93,6 +96,12 @@ type SiteDetail struct {
 	// goroutine on every frame for the same site.
 	recentActivityLoadedFor string
 
+	// describeCache caches sm.Describe results so Layout never blocks on
+	// SQLite/Docker. Refreshed on site mount, OnSiteUpdated, plan
+	// completion, and DB-credentials card open.
+	describeCache *DescribeCache
+	copyJSONBtn   widget.Clickable
+
 	// Docker init error
 	retryInitBtn widget.Clickable
 }
@@ -116,10 +125,15 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications)
 		activityTab:    NewActivityTab(state, sm),
 		profilingPanel: NewProfilingPanel(state, sm, toasts),
 	}
+	sd.describeCache = NewDescribeCache(sm, state)
 	sd.list.List.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
 	return sd
 }
+
+// DescribeCache exposes the per-site description cache so other panels
+// (DB credentials' "include host port" toggle) can request a refresh.
+func (sd *SiteDetail) DescribeCache() *DescribeCache { return sd.describeCache }
 
 // HooksPanel exposes the hooks tab so the root UI can render its modal
 // overlays above the main chrome.
@@ -149,11 +163,20 @@ func (sd *SiteDetail) HandleUserInteractions(gtx layout.Context) {
 		}
 	}
 
+	// Warm the describe cache the first time we observe a site (or when
+	// the user switches to a different one). The describe cache itself
+	// debounces to one in-flight load per siteID.
+	sd.describeCache.Get(site.ID, false)
+
 	sd.handleHeaderActions(gtx, site)
 
 	// Per-tab interactions.
 	switch sd.activeTab {
 	case tabDatabase:
+		// Opening the Database tab implies the user cares about the
+		// published host port — re-warm the describe cache with that
+		// flag so the next "Copy as JSON" click ships HostPort.
+		sd.describeCache.Get(site.ID, true)
 		sd.dbCreds.HandleUserInteractions(gtx, site)
 		sd.snapshotsPanel.HandleUserInteractions(gtx, site)
 	case tabUtilities:
@@ -286,6 +309,12 @@ func (sd *SiteDetail) layoutHeaderActions(gtx layout.Context, th *Theme, site *t
 				return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return th.Small(gtx, &sd.copyJSONBtn, "Copy as JSON")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if toggling {
 					return Loader(gtx, th, th.Dims.LoaderSizeSM)
 				}
@@ -331,6 +360,12 @@ func (sd *SiteDetail) layoutHeaderActions(gtx layout.Context, th *Theme, site *t
 			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return th.Small(gtx, &sd.copyJSONBtn, "Copy as JSON")
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if toggling {
 				return Loader(gtx, th, th.Dims.LoaderSizeSM)
 			}
@@ -345,28 +380,39 @@ func (sd *SiteDetail) handleHeaderActions(gtx layout.Context, site *types.Site) 
 		id := site.ID
 		sd.state.SetSiteToggling(id, true)
 		go func() {
-			if err := sd.sm.StartSite(context.Background(), id); err != nil {
-				sd.state.ShowError("Failed to start site: " + err.Error())
-			}
+			err := sd.sm.StartSite(context.Background(), id)
 			sd.state.SetSiteToggling(id, false)
+			SurfaceError(sd.state, "Failed to start site", err, nil)
 		}()
 	}
 	if sd.stopBtn.Clicked(gtx) && site.Started {
 		id := site.ID
 		sd.state.SetSiteToggling(id, true)
 		go func() {
-			if err := sd.sm.StopSite(context.Background(), id); err != nil {
-				sd.state.ShowError("Failed to stop site: " + err.Error())
-			}
+			err := sd.sm.StopSite(context.Background(), id)
 			sd.state.SetSiteToggling(id, false)
+			SurfaceError(sd.state, "Failed to stop site", err, nil)
 		}()
 	}
 	if sd.shellBtn.Clicked(gtx) && site.Started {
 		id := site.ID
+		slug := site.Slug
 		go func() {
-			if err := sd.sm.OpenSiteShell(id); err != nil {
-				sd.state.ShowError("Failed to open shell: " + err.Error())
+			err := sd.sm.OpenSiteShell(id)
+			if err == nil {
+				return
 			}
+			if errors.Is(err, utils.ErrNoTerminal) {
+				// No terminal launcher detected on PATH. Surface the
+				// command so the user can copy/paste it into the
+				// terminal of their choice.
+				cmd := "docker exec -it " + docker.SiteContainerName(slug, "php") + " /bin/bash"
+				sd.toasts.ShowInfo("No terminal found — run: " + cmd)
+				return
+			}
+			SurfaceError(sd.state, "Failed to open shell", err, func() {
+				_ = sd.sm.StartSite(context.Background(), id)
+			})
 		}()
 	}
 	if sd.filesBtn.Clicked(gtx) {
@@ -388,9 +434,10 @@ func (sd *SiteDetail) handleHeaderActions(gtx layout.Context, site *types.Site) 
 	if sd.openAdminBtn.Clicked(gtx) && site.Started {
 		id := site.ID
 		go func() {
-			if err := sd.sm.OpenAdminLogin(id); err != nil {
-				sd.state.ShowError("Failed to open admin: " + err.Error())
-			}
+			err := sd.sm.OpenAdminLogin(id)
+			SurfaceError(sd.state, "Failed to open admin", err, func() {
+				_ = sd.sm.StartSite(context.Background(), id)
+			})
 		}()
 	}
 	if sd.openSiteBtn.Clicked(gtx) && site.Started {
@@ -404,6 +451,20 @@ func (sd *SiteDetail) handleHeaderActions(gtx layout.Context, site *types.Site) 
 
 	if sd.cloneBtn.Clicked(gtx) {
 		sd.state.ShowCloneModal(site.ID, site.Name)
+	}
+	if sd.copyJSONBtn.Clicked(gtx) {
+		// Force a refresh to grab the latest description, including the
+		// host port if that toggle ever got opened on this site. The
+		// cached value is what we copy — async refresh fills the gap on
+		// the next click if cache was empty.
+		body := sd.describeCache.AsJSON(site.ID)
+		if body == "" {
+			sd.toasts.ShowInfo("Site description still loading — try again in a moment")
+			sd.describeCache.Get(site.ID, false)
+		} else {
+			CopyToClipboard(gtx, body)
+			sd.toasts.ShowSuccess("Site description copied as JSON")
+		}
 	}
 	if sd.exportBtn.Clicked(gtx) && site.Started {
 		id := site.ID

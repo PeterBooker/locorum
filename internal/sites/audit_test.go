@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/utils"
 )
 
 func TestWriteAuditLog_AppendsJSONLine(t *testing.T) {
@@ -67,7 +68,7 @@ func TestRotateIfLarge(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("small"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := rotateIfLarge(logPath, 1024); err != nil {
+	if err := utils.RotateIfLarge(logPath, 1024, 1); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 	if _, err := os.Stat(logPath + ".1"); !os.IsNotExist(err) {
@@ -79,7 +80,7 @@ func TestRotateIfLarge(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(big), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := rotateIfLarge(logPath, 1024); err != nil {
+	if err := utils.RotateIfLarge(logPath, 1024, 1); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 	if _, err := os.Stat(logPath + ".1"); err != nil {

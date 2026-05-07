@@ -47,16 +47,22 @@ type Engine struct {
 	// Disk-usage scripting for the health package's disk-low check.
 	DiskReport docker.DiskReport
 	DiskErr    error
+
+	// LogStreamHook overrides StreamContainerLogs when non-nil. Tests
+	// that need a long-lived stream (rather than a one-shot script)
+	// install a custom channel here.
+	LogStreamHook func(ctx context.Context, name string, since time.Time) (<-chan docker.LogLine, error)
 }
 
 // Container is the fake's record of a created container.
 type Container struct {
-	ID      string
-	Name    string
-	Spec    docker.ContainerSpec
-	Running bool
-	Healthy bool
-	Logs    string
+	ID          string
+	Name        string
+	Spec        docker.ContainerSpec
+	Running     bool
+	Healthy     bool
+	Logs        string
+	StreamLines []docker.LogLine
 }
 
 // Network is the fake's record of a created network.
@@ -220,6 +226,29 @@ func (e *Engine) ContainerLogs(_ context.Context, name string, _ int) (string, e
 		return "", fmt.Errorf("%w: %s", docker.ErrNotFound, name)
 	}
 	return c.Logs, nil
+}
+
+// StreamContainerLogs returns a channel that immediately yields any
+// pre-seeded LogLines from Containers[name].StreamLines (for tests that
+// want to script the stream) and then closes. Tests that need a
+// long-lived stream can override LogStreamHook.
+func (e *Engine) StreamContainerLogs(ctx context.Context, name string, since time.Time) (<-chan docker.LogLine, error) {
+	e.mu.Lock()
+	c, ok := e.Containers[name]
+	hook := e.LogStreamHook
+	e.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, name, since)
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", docker.ErrNotFound, name)
+	}
+	ch := make(chan docker.LogLine, len(c.StreamLines))
+	for _, ln := range c.StreamLines {
+		ch <- ln
+	}
+	close(ch)
+	return ch, nil
 }
 
 func (e *Engine) ChownVolume(_ context.Context, vol string, uid, gid int) error {

@@ -25,10 +25,12 @@ import (
 // validated changes back through the typed setters. Validation errors
 // surface as a transient toast — never an uncaught panic.
 type SettingsPanel struct {
-	state         *UIState
-	sm            *sites.SiteManager
-	onThemeChange func(ThemeMode)
-	healthPanel   *HealthPanel
+	state           *UIState
+	sm              *sites.SiteManager
+	onThemeChange   func(ThemeMode)
+	healthPanel     *HealthPanel
+	diagnosticPanel *DiagnosticsPanel
+	privacyCard     *PrivacyCard
 
 	themeEnum widget.Enum
 	syncedTo  string // remembers which value we last seeded from settings
@@ -121,6 +123,18 @@ func NewSettingsPanel(state *UIState, sm *sites.SiteManager, onThemeChange func(
 // nil and the section is omitted from the layout.
 func (s *SettingsPanel) SetHealthPanel(hp *HealthPanel) { s.healthPanel = hp }
 
+// SetDiagnosticsPanel wires the Diagnostics card. Optional — when nil
+// the card is omitted from the layout.
+func (s *SettingsPanel) SetDiagnosticsPanel(dp *DiagnosticsPanel) { s.diagnosticPanel = dp }
+
+// SetPrivacyCard wires the Privacy card. Optional — when nil the card
+// is omitted (e.g. tests that don't construct a Config).
+func (s *SettingsPanel) SetPrivacyCard(p *PrivacyCard) { s.privacyCard = p }
+
+// DiagnosticsPanel returns the wired panel (or nil). Used by main.go
+// to fill in the §7.4 and §7.6 sub-cards once their subsystems exist.
+func (s *SettingsPanel) DiagnosticsPanel() *DiagnosticsPanel { return s.diagnosticPanel }
+
 // HandleUserInteractions watches the theme picker for selection
 // changes, syncs the engine→version dropdown, and persists any changed
 // defaults.
@@ -137,6 +151,12 @@ func (s *SettingsPanel) HandleUserInteractions(gtx layout.Context) {
 	s.persistDefaults(gtx)
 	if s.healthPanel != nil {
 		s.healthPanel.HandleUserInteractions(gtx)
+	}
+	if s.diagnosticPanel != nil {
+		s.diagnosticPanel.HandleUserInteractions(gtx)
+	}
+	if s.privacyCard != nil {
+		s.privacyCard.HandleUserInteractions(gtx)
 	}
 }
 
@@ -291,6 +311,18 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *Theme) layout.Dimensions 
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return s.layoutNetworkAndTLS(gtx, th)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if s.diagnosticPanel == nil {
+						return layout.Dimensions{}
+					}
+					return s.diagnosticPanel.Layout(gtx, th)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if s.privacyCard == nil {
+						return layout.Dimensions{}
+					}
+					return s.privacyCard.Layout(gtx, th)
 				}),
 			)
 		})
