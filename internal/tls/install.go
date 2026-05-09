@@ -2,6 +2,7 @@ package tls
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,7 +35,7 @@ func (m *Mkcert) EnsureBinary(ctx context.Context) (string, error) {
 		return bin, nil
 	}
 	if m.binDir == "" {
-		return "", fmt.Errorf("mkcert not found and auto-download disabled (binDir empty)")
+		return "", errors.New("mkcert not found and auto-download disabled (binDir empty)")
 	}
 
 	url, err := mkcertDownloadURL()
@@ -121,7 +122,7 @@ func downloadBinary(ctx context.Context, url, dst string) error {
 	dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(dctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(dctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -139,7 +140,7 @@ func downloadBinary(ctx context.Context, url, dst string) error {
 		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	cleanup := func() { os.Remove(tmpPath) }
+	cleanup := func() { _ = os.Remove(tmpPath) }
 
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
 		tmp.Close()

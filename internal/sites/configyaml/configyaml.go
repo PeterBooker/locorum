@@ -132,7 +132,7 @@ func FromSite(s types.Site, hs []hooks.Hook) File {
 		f.DB.Engine = "mysql"
 	}
 	if f.DB.Version == "" {
-		f.DB.Version = s.MySQLVersion
+		f.DB.Version = s.MySQLVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	}
 
 	if len(hs) > 0 {

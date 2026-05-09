@@ -115,7 +115,6 @@ func envGrid(gtx layout.Context, th *Theme, cells []envCell, cols int) layout.Di
 	rows := (len(cells) + cols - 1) / cols
 	rowChildren := make([]layout.FlexChild, 0, rows)
 	for r := 0; r < rows; r++ {
-		r := r
 		rowChildren = append(rowChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			colChildren := make([]layout.FlexChild, 0, cols)
 			for c := 0; c < cols; c++ {
@@ -376,7 +375,6 @@ func activityPanel(gtx layout.Context, th *Theme, entries []activityEntry, viewA
 						}
 						children := make([]layout.FlexChild, 0, len(entries))
 						for i, e := range entries {
-							e := e
 							top := unit.Dp(0)
 							if i > 0 {
 								top = unit.Dp(7)

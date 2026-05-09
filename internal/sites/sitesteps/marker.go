@@ -51,7 +51,7 @@ func (s *EnsureMarkerStep) Apply(ctx context.Context) error {
 			"site", s.Site.Slug, "exit", res.ExitCode, "stderr", string(res.Stderr))
 		return nil
 	}
-	if len(strings.TrimSpace(string(res.Stdout))) == 0 {
+	if strings.TrimSpace(string(res.Stdout)) == "" {
 		// Fresh volume — WriteMarkerStep will stamp it after start.
 		return nil
 	}

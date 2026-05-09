@@ -302,7 +302,6 @@ func (n *NavRail) layoutGroups(gtx layout.Context, th *Theme) layout.Dimensions 
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, 0, len(stubGroups))
 				for i, g := range stubGroups {
-					i, g := i, g
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return n.layoutGroupRow(gtx, th, i, g)
 					}))

@@ -156,7 +156,7 @@ func (s *Storage) AppendActivity(ev *ActivityEvent) error {
 	if err != nil {
 		return fmt.Errorf("AppendActivity: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
 		"INSERT INTO activity_events (site_id, time, plan, kind, status, duration_ms, message, details)"+
@@ -196,7 +196,7 @@ func (s *Storage) AppendActivity(ev *ActivityEvent) error {
 // check.
 func (s *Storage) GetActivity(siteID string, limit int) ([]ActivityEvent, error) {
 	if siteID == "" {
-		return nil, fmt.Errorf("GetActivity: empty site id")
+		return nil, errors.New("GetActivity: empty site id")
 	}
 	if limit <= 0 {
 		limit = ActivityRetentionDefault
@@ -232,29 +232,29 @@ func (s *Storage) GetActivity(siteID string, limit int) ([]ActivityEvent, error)
 // This is exposed for the defensive startup sweep in app.Initialize; the
 // per-insert trim happens inside AppendActivity, so steady-state callers
 // do not need to invoke this explicitly.
-func (s *Storage) TrimActivity(siteID string, max int) error {
+func (s *Storage) TrimActivity(siteID string, limit int) error {
 	if siteID == "" {
-		return fmt.Errorf("TrimActivity: empty site id")
+		return errors.New("TrimActivity: empty site id")
 	}
-	if max <= 0 {
-		max = ActivityRetentionDefault
+	if limit <= 0 {
+		limit = ActivityRetentionDefault
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("TrimActivity: begin: %w", err)
 	}
-	defer tx.Rollback()
-	if err := trimActivityTx(tx, siteID, max); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err := trimActivityTx(tx, siteID, limit); err != nil {
 		return fmt.Errorf("TrimActivity: %w", err)
 	}
 	return tx.Commit()
 }
 
 // trimActivityTx is the in-transaction body of the trim. The DELETE keeps
-// the newest `max` rows by (time DESC, id DESC) — id breaks ties when two
+// the newest `limit` rows by (time DESC, id DESC) — id breaks ties when two
 // rows share a timestamp (sub-millisecond plans are rare but possible in
 // tests).
-func trimActivityTx(tx *sql.Tx, siteID string, max int) error {
+func trimActivityTx(tx *sql.Tx, siteID string, limit int) error {
 	_, err := tx.Exec(
 		"DELETE FROM activity_events"+
 			" WHERE site_id = ?"+
@@ -264,7 +264,7 @@ func trimActivityTx(tx *sql.Tx, siteID string, max int) error {
 			"   ORDER BY time DESC, id DESC"+
 			"   LIMIT ?"+
 			" )",
-		siteID, siteID, max,
+		siteID, siteID, limit,
 	)
 	return err
 }

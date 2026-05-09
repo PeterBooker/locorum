@@ -434,11 +434,12 @@ func (s *sitestepFuncWrap) do(ctx context.Context) error {
 	return nil
 }
 
-func rollbackGitSteps(_ context.Context, steps []*sitestepFuncWrap) {
+func rollbackGitSteps(parent context.Context, steps []*sitestepFuncWrap) {
 	// Cleanup runs even if the parent context cancelled — losing
 	// track of an orphan worktree is worse than respecting the
-	// cancellation. Give cleanup its own deadline.
-	rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// cancellation. Strip cancellation but inherit values/tracing,
+	// then layer our own deadline.
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 	defer cancel()
 	// Reverse order so dependents undo before dependencies.
 	for i := len(steps) - 1; i >= 0; i-- {

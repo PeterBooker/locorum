@@ -39,7 +39,7 @@ var ErrNoTerminal = errors.New("no terminal emulator found")
 // blocks waiting for the user to close the terminal.
 func OpenInTerminal(argv []string) error {
 	if len(argv) == 0 {
-		return fmt.Errorf("OpenInTerminal: empty argv")
+		return errors.New("OpenInTerminal: empty argv")
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -59,7 +59,7 @@ func openInTerminalMac(argv []string) error {
 	// Escape embedded quotes and backslashes so a path containing them
 	// doesn't break out of the script.
 	full := shellQuote(argv)
-	script := fmt.Sprintf(`tell application "Terminal" to do script "%s"`, escapeAppleScript(full))
+	script := `tell application "Terminal" to do script "` + escapeAppleScript(full) + `"`
 	cmd := exec.Command("osascript", "-e", script)
 	HideConsole(cmd)
 	if err := cmd.Start(); err != nil {

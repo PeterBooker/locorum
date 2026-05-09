@@ -342,7 +342,6 @@ func (he *HookEditor) layoutTaskTypeRow(gtx layout.Context, th *Theme) layout.Di
 
 	children := make([]layout.FlexChild, len(hookTaskTypeOptions))
 	for i, label := range hookTaskTypeOptions {
-		i, label := i, label
 		idxIsContainer := hookTaskTypeAt(i) != hooks.TaskExecHost
 		disabled := !containerOK && idxIsContainer
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {

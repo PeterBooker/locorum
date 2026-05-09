@@ -2,7 +2,7 @@ package health
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -34,7 +34,7 @@ func NewPortConflictCheck(engine docker.Engine, port int, routerContainerName st
 		engine:    engine,
 		port:      port,
 		routerCN:  routerContainerName,
-		humanPort: fmt.Sprintf("%d", port),
+		humanPort: strconv.Itoa(port),
 	}
 }
 

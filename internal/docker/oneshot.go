@@ -91,7 +91,11 @@ func (d *Docker) RunOneShotCapture(ctx context.Context, name, image string, cmd 
 	if err != nil {
 		return res, fmt.Errorf("oneshot create: %w", err)
 	}
-	defer func() { _ = d.cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true}) }()
+	// Strip cancellation so the cleanup runs even when ctx is already
+	// done; values/tracing from the parent are preserved.
+	defer func() {
+		_ = d.cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})
+	}()
 
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return res, fmt.Errorf("oneshot start: %w", err)

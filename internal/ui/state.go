@@ -1383,15 +1383,15 @@ func (s *UIState) ClearActivity(siteID string) {
 }
 
 // prependCap returns a new slice with v at the head, dst tail-truncated
-// to keep len <= max. dst is not retained; the result is a fresh backing
+// to keep len <= limit. dst is not retained; the result is a fresh backing
 // array, so callers may safely write to either.
-func prependCap(dst []storage.ActivityEvent, v storage.ActivityEvent, max int) []storage.ActivityEvent {
-	if max <= 0 {
+func prependCap(dst []storage.ActivityEvent, v storage.ActivityEvent, limit int) []storage.ActivityEvent {
+	if limit <= 0 {
 		return dst[:0]
 	}
 	keep := len(dst)
-	if keep >= max {
-		keep = max - 1
+	if keep >= limit {
+		keep = limit - 1
 	}
 	out := make([]storage.ActivityEvent, 0, keep+1)
 	out = append(out, v)

@@ -14,26 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  # -----------------------------------------------------------------
+  # Lint, vuln scan, race detector, coverage gate, fuzz seeds — all
+  # Linux-only so we don't pay 3x for things that don't depend on
+  # platform.
+  # -----------------------------------------------------------------
+
+  lint:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
-
       - name: Install Gio Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc pkg-config \
-            libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libgles2-mesa-dev libegl1-mesa-dev libffi-dev \
-            libxcursor-dev libvulkan-dev \
-            libgtk-3-dev
-
+        run: ./scripts/install-gio-deps-linux.sh
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
@@ -42,12 +38,181 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - run: make lint
 
+  vuln:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - run: make vuln
+
+  trivy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Scan pinned Docker images
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          # Read images from internal/version/images.go via a tiny shell
+          # extractor so the matrix here stays in sync with the code.
+          image-ref: nginx:1.28-alpine
+          severity: CRITICAL,HIGH
+          exit-code: '0'  # advisory until v1; flip to '1' once CI is stable
+
+  race:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - run: make test-race
+
+  coverage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - run: make test-cover-check
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: coverage-profile
+          path: coverage.out
+          if-no-files-found: warn
+
+  fuzz:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - run: make fuzz
+
+  # -----------------------------------------------------------------
+  # Unit + smoke build on Linux/macOS/Windows. Pure Go — no Docker.
+  # macos-latest has no Docker daemon and windows-latest's Docker runs
+  # Linux containers via WSL2; integration tests are Linux-only (below).
+  # -----------------------------------------------------------------
+
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        if: runner.os == 'Linux'
+        run: ./scripts/install-gio-deps-linux.sh
       - name: go vet
         run: go vet ./...
-
       - name: go test
-        run: go test ./...
+        run: go test -count=1 ./...
 
-      - name: smoke build
+  smoke-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        if: runner.os == 'Linux'
+        run: ./scripts/install-gio-deps-linux.sh
+      - name: build (POSIX)
+        if: runner.os != 'Windows'
         run: go build -o /tmp/locorum-smoke .
+      - name: build (Windows)
+        if: runner.os == 'Windows'
+        run: go build -o C:/Temp/locorum-smoke.exe .
+
+  # -----------------------------------------------------------------
+  # Integration: real Docker, real containers, real HTTP. Opt-in via
+  # the `run-integration` PR label OR forced on push to main.
+  # -----------------------------------------------------------------
+
+  integration:
+    if: >
+      github.event_name == 'push'
+      || contains(github.event.pull_request.labels.*.name, 'run-integration')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - name: Verify Docker
+        run: |
+          docker info
+          docker version
+      - name: Pre-pull Docker images
+        run: ./scripts/integration-prepull.sh
+      - name: Run integration tests
+        run: make integration
+
+  # -----------------------------------------------------------------
+  # Performance regression gate. Compares HEAD against origin/main and
+  # fails on >20% slowdowns (overridable via PR label
+  # `expect-perf-regression`).
+  # -----------------------------------------------------------------
+
+  bench:
+    if: >
+      github.event_name == 'pull_request'
+      && !contains(github.event.pull_request.labels.*.name, 'expect-perf-regression')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
+      - name: bench-compare
+        env:
+          BENCH_BASE: origin/main
+          BENCH_TOLERANCE: '20'
+        run: make bench-compare

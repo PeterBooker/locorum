@@ -108,7 +108,7 @@ func (c *DiskLowCheck) Run(ctx context.Context) ([]Finding, error) {
 	if freeErr != nil && dockerErr != nil {
 		// Both broken — keep the Run-error path (translated to
 		// check-failed by the runner).
-		return nil, fmt.Errorf("disk check: host=%v docker=%v", freeErr, dockerErr)
+		return nil, fmt.Errorf("disk check: host=%w docker=%w", freeErr, dockerErr)
 	}
 	return nil, nil
 }

@@ -31,12 +31,12 @@ type actionExecutor struct {
 	wg        sync.WaitGroup
 }
 
-func newActionExecutor(cap int, log *slog.Logger, metrics MetricsSink) *actionExecutor {
-	if cap <= 0 {
-		cap = defaultActionPool
+func newActionExecutor(capacity int, log *slog.Logger, metrics MetricsSink) *actionExecutor {
+	if capacity <= 0 {
+		capacity = defaultActionPool
 	}
 	return &actionExecutor{
-		sem:     make(chan struct{}, cap),
+		sem:     make(chan struct{}, capacity),
 		log:     log,
 		metrics: metrics,
 		closeCh: make(chan struct{}),
@@ -51,7 +51,7 @@ func (e *actionExecutor) submit(ctx context.Context, id string, a Action, done f
 	}
 
 	guard, _ := e.inflight.LoadOrStore(id, &atomic.Bool{})
-	bg := guard.(*atomic.Bool)
+	bg, _ := guard.(*atomic.Bool)
 	if !bg.CompareAndSwap(false, true) {
 		return ErrAlreadyRunning
 	}

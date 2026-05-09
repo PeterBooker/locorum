@@ -5,15 +5,22 @@ import (
 	"strings"
 )
 
-// Pinned Docker images used by Locorum. Centralised so upgrades are atomic
-// across the codebase and integration tests pin to the same versions.
+// Pinned Docker images used by Locorum. Centralised so upgrades are
+// atomic and Renovate (`renovate: image=...` markers) opens one PR per
+// tag bump. TESTING.md §3.10.4 plans a follow-up to pin digests as well.
 const (
+	// renovate: image=traefik versioning=docker
 	TraefikImage = "traefik:v3.5"
-	NginxImage   = "nginx:1.28-alpine"
-	ApacheImage  = "httpd:2.4-alpine"
+	// renovate: image=nginx versioning=docker
+	NginxImage = "nginx:1.28-alpine"
+	// renovate: image=httpd versioning=docker
+	ApacheImage = "httpd:2.4-alpine"
+	// renovate: image=mailhog/mailhog versioning=docker
 	MailhogImage = "mailhog/mailhog"
+	// renovate: image=adminer versioning=docker
 	AdminerImage = "adminer:latest"
-	AlpineImage  = "alpine:3"
+	// renovate: image=alpine versioning=docker
+	AlpineImage = "alpine:3"
 
 	// Per-site backend images get the user-configurable version suffix appended.
 	WodbyPHPImagePrefix = "wodby/php:"

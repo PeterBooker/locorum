@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -93,8 +94,9 @@ func run(ctx context.Context, r Runner, dir string, args ...string) (string, err
 	return stdout, nil
 }
 
-// Clone shallow-clones remote into dest. Idempotent: if dest already
-// exists and is a git repo, Clone is a no-op (fetch via Fetch).
+// CloneOptions configures the Clone call. Clone shallow-clones remote
+// into dest and is idempotent: if dest already exists and is a git
+// repo, Clone is a no-op (fetch via Fetch).
 //
 // We use --depth=1 by default to keep clones fast; agents that need
 // full history can pass extra args via CloneOptions.
@@ -118,7 +120,7 @@ type CloneOptions struct {
 func Clone(ctx context.Context, remote, dest string, opts CloneOptions) error {
 	args := []string{"clone"}
 	if opts.Depth > 0 {
-		args = append(args, "--depth", fmt.Sprintf("%d", opts.Depth))
+		args = append(args, "--depth", strconv.Itoa(opts.Depth))
 	}
 	if opts.Branch != "" {
 		args = append(args, "--branch", opts.Branch)

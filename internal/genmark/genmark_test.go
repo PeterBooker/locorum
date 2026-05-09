@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -161,16 +162,16 @@ func TestWriteIfManaged_OverwriteWhenManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	new := []byte(Header(StyleHash) + "key: new\n")
-	if err := WriteIfManaged(path, new, 0o644); err != nil {
+	updated := []byte(Header(StyleHash) + "key: new\n")
+	if err := WriteIfManaged(path, updated, 0o644); err != nil {
 		t.Fatalf("WriteIfManaged: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, new) {
-		t.Fatalf("content not updated:\ngot:\n%s\nwant:\n%s", got, new)
+	if !bytes.Equal(got, updated) {
+		t.Fatalf("content not updated:\ngot:\n%s\nwant:\n%s", got, updated)
 	}
 }
 
@@ -182,8 +183,8 @@ func TestWriteIfManaged_RefusesUserOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	new := []byte(Header(StyleHash) + "key: locorum\n")
-	err := WriteIfManaged(path, new, 0o644)
+	updated := []byte(Header(StyleHash) + "key: locorum\n")
+	err := WriteIfManaged(path, updated, 0o644)
 	if !errors.Is(err, ErrUserOwned) {
 		t.Fatalf("expected ErrUserOwned, got %v", err)
 	}
@@ -209,16 +210,16 @@ func TestWriteAtomic_OverwritesUnconditionally(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	new := []byte(Header(StyleHash) + "managed: true\n")
-	if err := WriteAtomic(path, new, 0o644); err != nil {
+	updated := []byte(Header(StyleHash) + "managed: true\n")
+	if err := WriteAtomic(path, updated, 0o644); err != nil {
 		t.Fatalf("WriteAtomic: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, new) {
-		t.Fatalf("WriteAtomic did not overwrite:\ngot:\n%s\nwant:\n%s", got, new)
+	if !bytes.Equal(got, updated) {
+		t.Fatalf("WriteAtomic did not overwrite:\ngot:\n%s\nwant:\n%s", got, updated)
 	}
 }
 
@@ -268,6 +269,12 @@ func TestWriteAtomic_RestrictedPerms(t *testing.T) {
 
 func assertMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// Windows os.Chmod only toggles the read-only bit; unix
+		// permission bits don't translate. os.Stat always reports
+		// 0666 for writable files. There's nothing to assert here.
+		return
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat %q: %v", path, err)
@@ -299,10 +306,10 @@ func assertNoTempFiles(t *testing.T, dir string) {
 
 // trunc is a small helper for keeping test failure messages readable.
 func trunc(b []byte) string {
-	const max = 60
+	const limit = 60
 	s := string(b)
-	if len(s) > max {
-		return s[:max] + "…"
+	if len(s) > limit {
+		return s[:limit] + "…"
 	}
 	return s
 }

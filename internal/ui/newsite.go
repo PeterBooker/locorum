@@ -426,7 +426,6 @@ func (m *NewSiteModal) layoutPathNotes(gtx layout.Context, th *Theme) layout.Dim
 	}
 	children := make([]layout.FlexChild, 0, len(notes))
 	for _, n := range notes {
-		n := n
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return RoundedFill(gtx, th.Color.WarnSoft, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {

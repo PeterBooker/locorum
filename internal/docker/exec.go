@@ -127,7 +127,10 @@ func (d *Docker) execWriter(ctx context.Context, containerName string, opts Exec
 		return -1, ctx.Err()
 	}
 
-	inspect, err := d.cli.ContainerExecInspect(context.Background(), created.ID)
+	// Strip cancellation so the inspect call can finish even if ctx
+	// fires between the check above and the call below; values/tracing
+	// from the parent are preserved.
+	inspect, err := d.cli.ContainerExecInspect(context.WithoutCancel(ctx), created.ID)
 	if err != nil {
 		return -1, fmt.Errorf("inspecting exec in %q: %w", containerName, err)
 	}
@@ -231,7 +234,10 @@ func (d *Docker) ExecInContainerStream(ctx context.Context, containerName string
 		return -1, ctx.Err()
 	}
 
-	inspect, err := d.cli.ContainerExecInspect(context.Background(), created.ID)
+	// Strip cancellation so the inspect call can finish even if ctx
+	// fires between the check above and the call below; values/tracing
+	// from the parent are preserved.
+	inspect, err := d.cli.ContainerExecInspect(context.WithoutCancel(ctx), created.ID)
 	if err != nil {
 		return -1, fmt.Errorf("inspecting exec in %q: %w", containerName, err)
 	}

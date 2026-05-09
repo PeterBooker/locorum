@@ -32,7 +32,7 @@ func normaliseInContainerDocroot(publicDir string) string {
 	if publicDir == "" || publicDir == "/" || publicDir == "." {
 		return ""
 	}
-	for len(publicDir) > 0 && publicDir[0] == '/' {
+	for publicDir != "" && publicDir[0] == '/' {
 		publicDir = publicDir[1:]
 	}
 	return publicDir
@@ -154,7 +154,7 @@ func (sm *SiteManager) wpOptionGet(ctx context.Context, site *types.Site, key st
 		return "", err
 	}
 	// wp-cli outputs the value with a trailing newline.
-	for len(out) > 0 && (out[len(out)-1] == '\n' || out[len(out)-1] == '\r') {
+	for out != "" && (out[len(out)-1] == '\n' || out[len(out)-1] == '\r') {
 		out = out[:len(out)-1]
 	}
 	return out, nil
@@ -210,7 +210,7 @@ func detectWordPress(filesDir, publicDir string) ([]string, error) {
 			continue
 		}
 		name := e.Name()
-		if len(name) > 0 && name[0] == '.' {
+		if name != "" && name[0] == '.' {
 			continue
 		}
 		switch name {

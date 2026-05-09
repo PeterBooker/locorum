@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,7 +23,7 @@ const chownImage = "alpine:3"
 // as root themselves.
 func (d *Docker) ChownVolume(ctx context.Context, volumeName string, uid, gid int) error {
 	if volumeName == "" {
-		return fmt.Errorf("chown volume: name required")
+		return errors.New("chown volume: name required")
 	}
 	return d.runChown(ctx, "chown-vol-"+sanitizeRunName(volumeName), volumeName, "/target", uid, gid, false)
 }
@@ -32,7 +33,7 @@ func (d *Docker) ChownVolume(ctx context.Context, volumeName string, uid, gid in
 // right ownership before nginx/PHP touch it.
 func (d *Docker) ChownPath(ctx context.Context, hostPath string, uid, gid int) error {
 	if hostPath == "" {
-		return fmt.Errorf("chown path: host path required")
+		return errors.New("chown path: host path required")
 	}
 	return d.runChown(ctx, "chown-path-"+sanitizeRunName(hostPath), hostPath, "/target", uid, gid, true)
 }

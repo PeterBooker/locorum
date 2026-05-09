@@ -318,7 +318,7 @@ func TestActivityTimeLayout_LexSortMatchesChronological(t *testing.T) {
 	for _, tc := range cases {
 		sx := tc.x.Format(activityTimeLayout)
 		sy := tc.y.Format(activityTimeLayout)
-		if !(sx < sy) {
+		if sx >= sy {
 			t.Errorf("%s: %q !< %q (chrono says %v < %v)", tc.name, sx, sy, tc.x, tc.y)
 		}
 		if len(sx) != len(sy) {

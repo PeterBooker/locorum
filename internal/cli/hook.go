@@ -15,7 +15,7 @@ import (
 // hooks panel. CLI hooks management is a P5 follow-on.
 func runHook(ctx context.Context, env *Env) ExitCode {
 	if len(env.Args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: locorum hook <list|run> [args...]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum hook <list|run> [args...]")
 		return ExitUsage
 	}
 	verb := env.Args[0]
@@ -27,11 +27,11 @@ func runHook(ctx context.Context, env *Env) ExitCode {
 	case "run":
 		return runHookRunCmd(ctx, &rest)
 	case "help", "-h", "--help":
-		fmt.Fprintln(env.Stdout, "hook list <slug>             List hooks attached to a site")
-		fmt.Fprintln(env.Stdout, "hook run <slug> --id <hook>  Run a single hook outside the lifecycle")
+		_, _ = fmt.Fprintln(env.Stdout, "hook list <slug>             List hooks attached to a site")
+		_, _ = fmt.Fprintln(env.Stdout, "hook run <slug> --id <hook>  Run a single hook outside the lifecycle")
 		return ExitOK
 	default:
-		fmt.Fprintf(env.Stderr, "locorum hook: unknown verb %q\n", verb)
+		_, _ = fmt.Fprintf(env.Stderr, "locorum hook: unknown verb %q\n", verb)
 		return ExitUsage
 	}
 }
@@ -44,23 +44,23 @@ func runHookList(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(env.Stderr, "usage: locorum hook list <slug>")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum hook list <slug>")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	var resp struct {
 		Hooks []hooks.Hook `json:"hooks"`
 	}
 	if err := cli.Call(ctx, "hook.list", siteIDParams(target, nil), &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
 	if *jsonOut {
@@ -70,20 +70,20 @@ func runHookList(ctx context.Context, env *Env) ExitCode {
 		return ExitOK
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tEVENT\tTYPE\tENABLED\tCOMMAND")
+	_, _ = fmt.Fprintln(tw, "ID\tEVENT\tTYPE\tENABLED\tCOMMAND")
 	for _, h := range resp.Hooks {
 		enabled := "off"
 		if h.Enabled {
 			enabled = "on"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
 			h.ID, h.Event, h.TaskType, enabled, truncate(h.Command, 60))
 	}
 	if err := tw.Flush(); err != nil {
 		return ExitError
 	}
 	if len(resp.Hooks) == 0 {
-		fmt.Fprintln(env.Stdout, "(no hooks)")
+		_, _ = fmt.Fprintln(env.Stdout, "(no hooks)")
 	}
 	return ExitOK
 }
@@ -96,33 +96,33 @@ func runHookRunCmd(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 || *hookID == 0 {
-		fmt.Fprintln(env.Stderr, "usage: locorum hook run <slug> --id <hook-id>")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum hook run <slug> --id <hook-id>")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	params := siteIDParams(target, map[string]any{"hookId": *hookID})
 	var resp struct {
 		Result hooks.Result `json:"result"`
 	}
 	if err := cli.Call(ctx, "hook.run", params, &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
 	r := resp.Result
-	fmt.Fprintf(env.Stdout, "exit=%d duration=%s lines=%d\n", r.ExitCode, r.Duration(), r.LinesEmitted)
+	_, _ = fmt.Fprintf(env.Stdout, "exit=%d duration=%s lines=%d\n", r.ExitCode, r.Duration(), r.LinesEmitted)
 	if r.LogPath != "" {
-		fmt.Fprintf(env.Stdout, "log: %s\n", r.LogPath)
+		_, _ = fmt.Fprintf(env.Stdout, "log: %s\n", r.LogPath)
 	}
 	if r.Err != nil {
-		fmt.Fprintln(env.Stderr, "hook error:", r.Err)
+		_, _ = fmt.Fprintln(env.Stderr, "hook error:", r.Err)
 	}
 	if r.ExitCode != 0 || r.Err != nil {
 		return ExitError

@@ -2,12 +2,13 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/errdefs"
 )
 
 // volumeExists checks whether a named volume already exists.
@@ -26,7 +27,7 @@ func (d *Docker) volumeExists(ctx context.Context, name string) (bool, error) {
 // Idempotent.
 func (d *Docker) EnsureVolume(ctx context.Context, spec VolumeSpec) (string, error) {
 	if spec.Name == "" {
-		return "", fmt.Errorf("volume name required")
+		return "", errors.New("volume name required")
 	}
 	exists, err := d.volumeExists(ctx, spec.Name)
 	if err != nil {

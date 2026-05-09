@@ -217,7 +217,7 @@ func (th *Theme) smallStyled(gtx layout.Context, btn *widget.Clickable, text str
 	return b.Layout(gtx)
 }
 
-// Backward-compatible top-level helpers (delegate to *Theme methods).
+// PrimaryButton is a backward-compatible top-level helper (delegates to *Theme methods).
 func PrimaryButton(gtx layout.Context, th *Theme, btn *widget.Clickable, text string) layout.Dimensions {
 	return th.Primary(gtx, btn, text)
 }
@@ -334,7 +334,6 @@ type KV struct {
 func KVRows(gtx layout.Context, th *Theme, items []KV) layout.Dimensions {
 	children := make([]layout.FlexChild, len(items))
 	for i, item := range items {
-		item := item
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -529,7 +528,6 @@ func (d *Dropdown) layoutOptions(gtx layout.Context, th *Theme) layout.Dimension
 func TabBar(gtx layout.Context, th *Theme, tabs []string, active int, clicks []*widget.Clickable) layout.Dimensions {
 	children := make([]layout.FlexChild, len(tabs))
 	for i, label := range tabs {
-		i, label := i, label
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			isActive := i == active
 			return layoutTab(gtx, th, clicks[i], label, isActive)

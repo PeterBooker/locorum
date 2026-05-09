@@ -299,7 +299,6 @@ func (m *HealthBlockerModal) layoutContent(gtx layout.Context, th *Theme, blocke
 		}),
 	}
 	for i, f := range blockers {
-		f := f
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			top := th.Spacing.SM
 			if i == 0 {

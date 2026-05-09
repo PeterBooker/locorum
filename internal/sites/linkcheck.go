@@ -17,7 +17,10 @@ func (sm *SiteManager) runLinkCheck(site *types.Site, onProgress func(string)) {
 	checked := sync.Map{}
 
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		// Link checker walks the user's own self-signed local sites; mkcert
+		// roots may not be installed in this Go process, so verifying would
+		// block the feature for every user who hasn't run `mkcert -install`.
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: intentional, see comment above
 	}
 	httpClient := &http.Client{Transport: transport}
 
@@ -53,7 +56,7 @@ func (sm *SiteManager) runLinkCheck(site *types.Site, onProgress func(string)) {
 			return
 		}
 
-		e.Request.Visit(link)
+		_ = e.Request.Visit(link)
 	})
 
 	c.OnResponse(func(r *colly.Response) {
@@ -69,7 +72,7 @@ func (sm *SiteManager) runLinkCheck(site *types.Site, onProgress func(string)) {
 	})
 
 	onProgress("Starting link check for " + baseURL + " ...")
-	c.Visit(baseURL)
+	_ = c.Visit(baseURL)
 	c.Wait()
 	onProgress("\nLink check complete.")
 }

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,11 +186,13 @@ func (sm *SiteManager) writeConfigYAML(site *types.Site) {
 // Different sites get independent mutexes so they can run in parallel.
 func (sm *SiteManager) siteMutex(siteID string) *sync.Mutex {
 	if v, ok := sm.siteLocks.Load(siteID); ok {
-		return v.(*sync.Mutex)
+		mu, _ := v.(*sync.Mutex)
+		return mu
 	}
 	m := &sync.Mutex{}
 	actual, _ := sm.siteLocks.LoadOrStore(siteID, m)
-	return actual.(*sync.Mutex)
+	mu, _ := actual.(*sync.Mutex)
+	return mu
 }
 
 // runHooks fires every enabled hook for ev/site, forwarding results to the
@@ -232,7 +235,7 @@ func (sm *SiteManager) runHooks(ctx context.Context, ev hooks.Event, site *types
 // RunHookNow executes a single hook for a site outside the lifecycle.
 func (sm *SiteManager) RunHookNow(ctx context.Context, h hooks.Hook) (hooks.Result, error) {
 	if sm.hooks == nil {
-		return hooks.Result{}, fmt.Errorf("hooks runner not configured")
+		return hooks.Result{}, errors.New("hooks runner not configured")
 	}
 	site, err := sm.st.GetSite(h.SiteID)
 	if err != nil {
@@ -436,8 +439,8 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	if site.DBVersion == "" {
 		// Legacy callers still set MySQLVersion; honour it before
 		// falling back to the engine's default.
-		if site.MySQLVersion != "" && site.DBEngine == string(dbengine.MySQL) {
-			site.DBVersion = site.MySQLVersion
+		if site.MySQLVersion != "" && site.DBEngine == string(dbengine.MySQL) { //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
+			site.DBVersion = site.MySQLVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		} else {
 			site.DBVersion = dbengine.MustFor(dbengine.Kind(site.DBEngine)).DefaultVersion()
 		}
@@ -1124,7 +1127,7 @@ if (isset($_GET['locorum_token']) && $_GET['locorum_token'] === '%s') {
 `, token)
 
 	pluginPath := filepath.Join(muPluginsDir, "locorum-autologin.php")
-	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0666); err != nil {
+	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0o666); err != nil {
 		return fmt.Errorf("writing auto-login plugin: %w", err)
 	}
 
@@ -1227,7 +1230,7 @@ func (sm *SiteManager) UpdateSiteVersionsWithEngine(ctx context.Context, siteID 
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if site.Started {
-		return fmt.Errorf("site must be stopped to change versions")
+		return errors.New("site must be stopped to change versions")
 	}
 
 	mu := sm.siteMutex(siteID)
@@ -1255,7 +1258,7 @@ func (sm *SiteManager) UpdateSiteVersionsWithEngine(ctx context.Context, siteID 
 		site.DBVersion = change.DBVersion
 		// Keep the legacy mirror in sync for one minor release.
 		if site.DBEngine == string(dbengine.MySQL) {
-			site.MySQLVersion = change.DBVersion
+			site.MySQLVersion = change.DBVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		}
 		changed = true
 	}
@@ -1305,7 +1308,7 @@ func (sm *SiteManager) UpdatePublicDir(ctx context.Context, siteID, publicDir st
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if site.Started {
-		return fmt.Errorf("site must be stopped to change public directory")
+		return errors.New("site must be stopped to change public directory")
 	}
 	if publicDir == site.PublicDir {
 		return nil
@@ -1346,10 +1349,10 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 	// failure (e.g. DB unreachable on a flaky daemon) shouldn't block the
 	// clone itself.
 	if site.Started {
-		if path, err := sm.snapshotLocked(ctx, site, "pre_clone"); err != nil {
+		if snapPath, err := sm.snapshotLocked(ctx, site, "pre_clone"); err != nil {
 			slog.Warn("clone: pre-clone snapshot failed", "site", site.Slug, "err", err.Error())
 		} else {
-			slog.Info("clone: pre-clone snapshot saved", "path", path)
+			slog.Info("clone: pre-clone snapshot saved", "path", snapPath)
 		}
 	}
 
@@ -1388,7 +1391,7 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		PHPVersion:    site.PHPVersion,
 		DBEngine:      site.DBEngine,
 		DBVersion:     site.DBVersion,
-		MySQLVersion:  site.MySQLVersion,
+		MySQLVersion:  site.MySQLVersion, //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		RedisVersion:  site.RedisVersion,
 		WebServer:     site.WebServer,
 		Multisite:     site.Multisite,
@@ -1419,7 +1422,7 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 			if _, err := sm.wpSearchReplace(ctx, &newSite, "https://"+site.Domain, "https://"+newDomain); err != nil {
 				slog.Warn("Search-replace failed during clone: " + err.Error())
 			}
-			os.Remove(dumpPath)
+			_ = os.Remove(dumpPath)
 		}
 	}
 
@@ -1478,7 +1481,7 @@ func (sm *SiteManager) ConnectionURL(siteID string, hostPort int) (string, error
 	eng := dbengine.Resolve(site)
 	port := ""
 	if hostPort > 0 {
-		port = fmt.Sprintf("%d", hostPort)
+		port = strconv.Itoa(hostPort)
 	}
 	return eng.ConnectionURL("127.0.0.1", port, site), nil
 }
@@ -1495,7 +1498,7 @@ func (sm *SiteManager) SetPublishDBPort(siteID string, on bool) error {
 		return fmt.Errorf("site %q not found", siteID)
 	}
 	if site.Started {
-		return fmt.Errorf("site must be stopped to change DB host-port publish")
+		return errors.New("site must be stopped to change DB host-port publish")
 	}
 	site.PublishDBPort = on
 	if _, err := sm.st.UpdateSite(site); err != nil {
@@ -1548,7 +1551,7 @@ func (sm *SiteManager) SetSPXEnabled(siteID string, enabled bool) error {
 	defer mu.Unlock()
 
 	if site.Started {
-		return fmt.Errorf("site must be stopped to change SPX profiling")
+		return errors.New("site must be stopped to change SPX profiling")
 	}
 	if site.SPXEnabled == enabled && (!enabled || site.SPXKey != "") {
 		return nil
@@ -1593,7 +1596,7 @@ func (sm *SiteManager) RotateSPXKey(siteID string) error {
 	defer mu.Unlock()
 
 	if site.Started {
-		return fmt.Errorf("site must be stopped to rotate SPX key")
+		return errors.New("site must be stopped to rotate SPX key")
 	}
 
 	key, err := generateSPXKey()

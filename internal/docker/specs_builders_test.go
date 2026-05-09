@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -251,7 +252,7 @@ func TestRedactErrSpec_DoesNotDoubleRedact(t *testing.T) {
 	original := errSimple("create container x: ok")
 	out := redactErrSpec(original, spec)
 	// Nothing to redact — should return the original error.
-	if out != original {
+	if !errors.Is(out, original) {
 		t.Errorf("redactErrSpec returned a new error when nothing was redacted: %v", out)
 	}
 }

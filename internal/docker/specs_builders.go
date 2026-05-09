@@ -57,7 +57,7 @@ func normaliseDocroot(publicDir string) string {
 	if d == "" || d == "/" || d == "." {
 		return ""
 	}
-	for len(d) > 0 && d[0] == '/' {
+	for d != "" && d[0] == '/' {
 		d = d[1:]
 	}
 	return d

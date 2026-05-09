@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -95,15 +96,16 @@ func safeDescribe(ctx context.Context, d Describer) (out string, err error) {
 // Format renders the dry-run result as a multi-line string suitable
 // for `locorum site delete --dry-run` output.
 func (r DryResult) Format() string {
-	out := fmt.Sprintf("Plan: %s (%d steps)\n", r.PlanName, len(r.Steps))
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan: %s (%d steps)\n", r.PlanName, len(r.Steps))
 	for i, s := range r.Steps {
-		out += fmt.Sprintf("  %d. %s\n", i+1, s.Name)
+		fmt.Fprintf(&b, "  %d. %s\n", i+1, s.Name)
 		if s.Error != nil {
-			out += fmt.Sprintf("     ! describe error: %s\n", s.Error)
+			fmt.Fprintf(&b, "     ! describe error: %s\n", s.Error)
 		}
 		if s.Description != "" {
-			out += fmt.Sprintf("     - %s\n", s.Description)
+			fmt.Fprintf(&b, "     - %s\n", s.Description)
 		}
 	}
-	return out
+	return b.String()
 }

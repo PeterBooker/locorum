@@ -103,8 +103,8 @@ func TestAddSite_NewMultiEngineFields(t *testing.T) {
 		t.Error("PublishDBPort lost on round-trip")
 	}
 	// Legacy mirror remains empty for mariadb sites.
-	if got.MySQLVersion != "" {
-		t.Errorf("MySQLVersion mirror should stay empty for mariadb, got %q", got.MySQLVersion)
+	if got.MySQLVersion != "" { //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
+		t.Errorf("MySQLVersion mirror should stay empty for mariadb, got %q", got.MySQLVersion) //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	}
 }
 

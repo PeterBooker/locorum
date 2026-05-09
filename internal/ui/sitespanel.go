@@ -35,7 +35,7 @@ type SitesPanel struct {
 func NewSitesPanel(state *UIState, sm *sites.SiteManager, toasts *Notifications) *SitesPanel {
 	p := &SitesPanel{state: state, sm: sm, toasts: toasts}
 	p.searchField.SingleLine = true
-	p.list.List.Axis = layout.Vertical
+	p.list.Axis = layout.Vertical
 	return p
 }
 

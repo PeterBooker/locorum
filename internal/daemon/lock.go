@@ -26,6 +26,13 @@ import (
 // ~/.locorum/state/. The full path is built by Path().
 const LockFilename = "owner.lock"
 
+// ownerInfoSuffix is appended to LockFilename to derive the path of the
+// JSON owner-info file. Splitting the OS lock from the metadata is what
+// makes ReadOwner work on Windows: LockFileEx with LOCKFILE_EXCLUSIVE_LOCK
+// is mandatory, so a non-holder cannot read the lock file's bytes. The
+// info file carries the metadata and is never locked.
+const ownerInfoSuffix = ".info"
+
 // SocketFilename is the basename of the IPC socket on POSIX. Windows
 // uses a named pipe and ignores this value (see transport_windows.go).
 const SocketFilename = "locorum.sock"
@@ -113,6 +120,61 @@ func (e *ErrLocked) Error() string {
 		e.Owner.PID, e.Owner.StartedAt.Format(time.RFC3339))
 }
 
+// ownerInfoPath returns the side-file that carries the JSON Owner
+// payload. Read freely on every platform; the lock file itself is
+// mandatory-locked on Windows so its bytes are unreadable by non-holders.
+func ownerInfoPath(lockPath string) string { return lockPath + ownerInfoSuffix }
+
+// writeOwnerInfo writes the owner JSON next to the lock file using an
+// atomic rename so concurrent readers see either the old or new payload,
+// never a partial write.
+func writeOwnerInfo(lockPath string, owner Owner) error {
+	body, err := json.Marshal(owner)
+	if err != nil {
+		return err
+	}
+	infoPath := ownerInfoPath(lockPath)
+	tmp := infoPath + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, infoPath)
+}
+
+// readOwnerInfoBestEffort reads owner JSON from the info file. Falls back
+// to reading the lock file directly so daemons written by older versions
+// (which embedded the JSON in owner.lock) still parse on Linux. On
+// Windows the legacy fallback hits the mandatory lock and returns zero —
+// the upgrade-window degradation we accept in exchange for working
+// ReadOwner everywhere else.
+func readOwnerInfoBestEffort(lockPath string) Owner {
+	if body, err := os.ReadFile(ownerInfoPath(lockPath)); err == nil {
+		body = []byte(strings.TrimSpace(string(body)))
+		if len(body) > 0 {
+			var o Owner
+			if json.Unmarshal(body, &o) == nil {
+				return o
+			}
+		}
+	}
+	body, err := os.ReadFile(lockPath)
+	if err != nil {
+		return Owner{}
+	}
+	body = []byte(strings.TrimSpace(string(body)))
+	if len(body) == 0 {
+		return Owner{}
+	}
+	var o Owner
+	if json.Unmarshal(body, &o) == nil {
+		return o
+	}
+	if pid, perr := strconv.Atoi(string(body)); perr == nil {
+		return Owner{PID: pid}
+	}
+	return Owner{}
+}
+
 // Acquire takes the owner-lock at path with stale-detection. Three
 // possible outcomes:
 //
@@ -148,8 +210,10 @@ func Acquire(path, version string) (*Lock, error) {
 	if err := platformLock(f); err != nil {
 		// We didn't get the OS lock — read the existing payload to
 		// decide whether the holder is actually alive (live → return
-		// ErrLocked, dead → re-attempt after taking over).
-		owner, _ := readOwnerFromFile(f)
+		// ErrLocked, dead → re-attempt after taking over). The info
+		// file is read separately so we don't depend on the lock file
+		// being readable while held (mandatory locking on Windows).
+		owner := readOwnerInfoBestEffort(path)
 		_ = f.Close()
 		if processAlive(owner.PID) {
 			return nil, &ErrLocked{Path: path, Owner: owner}
@@ -160,6 +224,7 @@ func Acquire(path, version string) (*Lock, error) {
 		// one retry is enough; persistent failure means something
 		// bigger is broken and the caller should see it.
 		_ = os.Remove(path)
+		_ = os.Remove(ownerInfoPath(path))
 		return acquireOnce(path, version)
 	}
 
@@ -174,7 +239,7 @@ func acquireOnce(path, version string) (*Lock, error) {
 		return nil, fmt.Errorf("open lock (retry): %w", err)
 	}
 	if err := platformLock(f); err != nil {
-		owner, _ := readOwnerFromFile(f)
+		owner := readOwnerInfoBestEffort(path)
 		_ = f.Close()
 		// A second contender beat us to it after we removed the stale
 		// file. Treat their claim as authoritative.
@@ -183,36 +248,20 @@ func acquireOnce(path, version string) (*Lock, error) {
 	return finishAcquire(f, path, version)
 }
 
-// finishAcquire writes our Owner payload and returns the held Lock.
-// Truncates whatever stale bytes survived the previous holder's crash.
+// finishAcquire writes our Owner payload to the side info file and
+// returns the held Lock. The lock file itself stays empty — the OS lock
+// is the only thing that matters for mutual exclusion, and Windows
+// mandatory-locking would block readers from seeing JSON written into it.
 func finishAcquire(f *os.File, path, version string) (*Lock, error) {
 	owner := Owner{
 		PID:       os.Getpid(),
 		StartedAt: time.Now().UTC(),
 		Version:   version,
 	}
-	body, err := json.Marshal(owner)
-	if err != nil {
+	if err := writeOwnerInfo(path, owner); err != nil {
 		_ = platformUnlock(f)
 		_ = f.Close()
-		return nil, fmt.Errorf("marshal lock owner: %w", err)
-	}
-	if err := f.Truncate(0); err != nil {
-		_ = platformUnlock(f)
-		_ = f.Close()
-		return nil, fmt.Errorf("truncate lock: %w", err)
-	}
-	if _, err := f.WriteAt(body, 0); err != nil {
-		_ = platformUnlock(f)
-		_ = f.Close()
-		return nil, fmt.Errorf("write lock: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		// Sync failure is informational — the OS lock and in-memory
-		// payload are still correct. A reader that sees an empty file
-		// here would briefly miss our Owner, but processAlive() will
-		// still return true because we hold the flock.
-		_ = err
+		return nil, fmt.Errorf("write lock owner info: %w", err)
 	}
 	return &Lock{path: path, f: f, owner: owner}, nil
 }
@@ -230,9 +279,11 @@ func (l *Lock) Release() error {
 	if l == nil || l.f == nil {
 		return nil
 	}
-	// Order matters: remove the file BEFORE unlock so a concurrent
-	// Acquire+takeover doesn't grab a fresh lock on the file we then
-	// remove out from under them.
+	// Remove the info file first so a racing Acquire that catches the
+	// gap reads "no owner" instead of stale metadata. Then remove the
+	// lock file BEFORE unlock so a concurrent Acquire+takeover doesn't
+	// grab a fresh lock on the file we then remove out from under them.
+	_ = os.Remove(ownerInfoPath(l.path))
 	_ = os.Remove(l.path)
 	_ = platformUnlock(l.f)
 	_ = l.f.Close()
@@ -242,15 +293,26 @@ func (l *Lock) Release() error {
 
 // ReadOwner reads the lock payload at path without taking the OS lock.
 // Used by the CLI to print a "daemon is running, pid=X" message before
-// it dials the socket. Returns a zero Owner and nil error when the file
-// does not exist (i.e. no daemon has ever started).
+// it dials the socket. Returns a zero Owner and nil error when no daemon
+// has ever started (neither the info file nor the legacy lock-file
+// payload is present).
 func ReadOwner(path string) (Owner, error) {
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(ownerInfoPath(path))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Owner{}, nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return Owner{}, fmt.Errorf("read owner info: %w", err)
 		}
-		return Owner{}, fmt.Errorf("read lock: %w", err)
+		// Legacy fallback: pre-split daemons embedded the JSON in
+		// owner.lock itself. On Linux this still parses; on Windows
+		// the read may be blocked by the mandatory lock and we'll
+		// surface a zero Owner.
+		body, err = os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return Owner{}, nil
+			}
+			return Owner{}, fmt.Errorf("read lock: %w", err)
+		}
 	}
 	body = []byte(strings.TrimSpace(string(body)))
 	if len(body) == 0 {
@@ -264,36 +326,7 @@ func ReadOwner(path string) (Owner, error) {
 		if pid, perr := strconv.Atoi(string(body)); perr == nil {
 			return Owner{PID: pid}, nil
 		}
-		return Owner{}, fmt.Errorf("parse lock: %w", err)
-	}
-	return owner, nil
-}
-
-// readOwnerFromFile is the same as ReadOwner but reuses an open file.
-// Returns the zero Owner on any error; callers handle "the holder may
-// be dead" via processAlive(0) → false.
-func readOwnerFromFile(f *os.File) (Owner, error) {
-	if _, err := f.Seek(0, 0); err != nil {
-		return Owner{}, err
-	}
-	stat, err := f.Stat()
-	if err != nil || stat.Size() == 0 {
-		return Owner{}, err
-	}
-	body := make([]byte, stat.Size())
-	if _, err := f.ReadAt(body, 0); err != nil {
-		return Owner{}, err
-	}
-	body = []byte(strings.TrimSpace(string(body)))
-	if len(body) == 0 {
-		return Owner{}, nil
-	}
-	var owner Owner
-	if err := json.Unmarshal(body, &owner); err != nil {
-		if pid, perr := strconv.Atoi(string(body)); perr == nil {
-			return Owner{PID: pid}, nil
-		}
-		return Owner{}, err
+		return Owner{}, fmt.Errorf("parse owner: %w", err)
 	}
 	return owner, nil
 }

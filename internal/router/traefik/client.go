@@ -48,7 +48,7 @@ func (c *Client) HTTPRouters(ctx context.Context) ([]HTTPRouter, error) {
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, dest any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, http.NoBody)
 	if err != nil {
 		return err
 	}

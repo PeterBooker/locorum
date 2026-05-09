@@ -3,6 +3,7 @@ package sites
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -145,19 +146,19 @@ func sanitiseBranchForSlug(branch string) string {
 // a user-readable error so the CLI can print it directly.
 func ValidateWorktreeOpts(remote, branch, worktreePath string) error {
 	if strings.TrimSpace(remote) == "" {
-		return fmt.Errorf("git remote is required")
+		return errors.New("git remote is required")
 	}
 	if strings.TrimSpace(branch) == "" {
-		return fmt.Errorf("git branch is required")
+		return errors.New("git branch is required")
 	}
 	if strings.ContainsRune(remote, 0) || strings.ContainsRune(branch, 0) || strings.ContainsRune(worktreePath, 0) {
-		return fmt.Errorf("input contains NUL byte")
+		return errors.New("input contains NUL byte")
 	}
 	if strings.Contains(worktreePath, "..") {
 		// Worktree path is bind-mounted into the PHP/web container.
 		// `..` segments are rarely intentional; reject them to keep
 		// the surface narrow.
-		return fmt.Errorf("worktreePath must not contain ..")
+		return fmt.Errorf("worktreePath must not contain %q", "..")
 	}
 	return nil
 }

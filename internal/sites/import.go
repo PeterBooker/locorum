@@ -98,11 +98,11 @@ func (sm *SiteManager) ImportDB(ctx context.Context, siteID, hostPath string, op
 	// imported dump turns out to be the wrong one, or if a search-replace
 	// runs over a column it shouldn't have touched.
 	if !opts.SkipSnapshot {
-		if path, err := sm.snapshotLocked(ctx, site, "pre_import"); err != nil {
+		path, err := sm.snapshotLocked(ctx, site, "pre_import")
+		if err != nil {
 			return fmt.Errorf("pre-import snapshot failed: %w (pass SkipSnapshot to override)", err)
-		} else {
-			slog.Info("import: pre-import snapshot saved", "path", path)
 		}
+		slog.Info("import: pre-import snapshot saved", "path", path)
 	}
 
 	if err := sm.runHooks(ctx, hooks.PreImportDB, site); err != nil {

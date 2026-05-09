@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,6 +14,22 @@ import (
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// tempSockPath returns a unix-socket path short enough to fit in the
+// 104-byte sun_path limit on macOS, where t.TempDir() lives under
+// /var/folders/... and routinely exceeds it.
+func tempSockPath(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		dir, err := os.MkdirTemp("/tmp", "lcr")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		return filepath.Join(dir, "s")
+	}
+	return filepath.Join(t.TempDir(), "ipc.sock")
+}
 
 // fakeService implements SiteService for round-trip tests. Just enough
 // to exercise the dispatcher's parameter parsing, scope enforcement,
@@ -87,8 +106,7 @@ func (f *fakeService) GetSites() ([]types.Site, error)              { return f.s
 func startTestServer(t *testing.T, svc SiteService) *Client {
 	t.Helper()
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 
 	ln, err := Listen(sock)
 	if err != nil {
@@ -167,8 +185,8 @@ func TestServer_NotFound_BySlug(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeNotFound {
@@ -181,8 +199,7 @@ func TestServer_ReadOnlyRejectsMutating(t *testing.T) {
 		sites: []types.Site{{ID: "id1", Slug: "shop"}},
 	}
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -212,8 +229,8 @@ func TestServer_ReadOnlyRejectsMutating(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected forbidden error, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeForbidden {
@@ -235,8 +252,7 @@ func TestServer_MCPScope_RejectsWrongSite(t *testing.T) {
 		},
 	}
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -270,8 +286,8 @@ func TestServer_MCPScope_RejectsWrongSite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected scope rejection, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeForbidden {

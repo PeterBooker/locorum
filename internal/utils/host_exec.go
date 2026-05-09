@@ -56,8 +56,9 @@ func RunHostStream(ctx context.Context, opts HostExecOptions, onLine HostLineHan
 	if len(opts.Env) > 0 {
 		// Inherit the parent environment then layer the caller's vars on top.
 		// os/exec's "later wins" semantics give the caller the final say.
-		base := append([]string(nil), envOrEmpty()...)
-		cmd.Env = append(base, opts.Env...)
+		env := append([]string(nil), envOrEmpty()...)
+		env = append(env, opts.Env...)
+		cmd.Env = env
 	}
 
 	stdout, err := cmd.StdoutPipe()

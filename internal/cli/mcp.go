@@ -16,7 +16,7 @@ import (
 // with bearer auth, for remote / multi-agent setups).
 func runMCP(ctx context.Context, env *Env) ExitCode {
 	if len(env.Args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: locorum mcp <serve|rotate-token> [flags]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum mcp <serve|rotate-token> [flags]")
 		return ExitUsage
 	}
 	verb := env.Args[0]
@@ -28,17 +28,17 @@ func runMCP(ctx context.Context, env *Env) ExitCode {
 	case "rotate-token":
 		return runMCPRotateToken(&rest)
 	case "help", "-h", "--help":
-		fmt.Fprintln(env.Stdout, "mcp serve --stdio [--profile full|readonly]")
-		fmt.Fprintln(env.Stdout, "    Run an MCP server on stdin/stdout. Reads LOCORUM_MCP_SCOPE")
-		fmt.Fprintln(env.Stdout, "    from env to scope every tool call to a single site (defence-in-depth).")
-		fmt.Fprintln(env.Stdout, "mcp serve --http 127.0.0.1:2484 [--profile full|readonly]")
-		fmt.Fprintln(env.Stdout, "    Serve MCP over HTTP. Loopback bind only; bearer-token auth")
-		fmt.Fprintln(env.Stdout, "    using the secret in ~/.locorum/state/mcp_token.")
-		fmt.Fprintln(env.Stdout, "mcp rotate-token")
-		fmt.Fprintln(env.Stdout, "    Regenerate the HTTP MCP bearer token.")
+		_, _ = fmt.Fprintln(env.Stdout, "mcp serve --stdio [--profile full|readonly]")
+		_, _ = fmt.Fprintln(env.Stdout, "    Run an MCP server on stdin/stdout. Reads LOCORUM_MCP_SCOPE")
+		_, _ = fmt.Fprintln(env.Stdout, "    from env to scope every tool call to a single site (defence-in-depth).")
+		_, _ = fmt.Fprintln(env.Stdout, "mcp serve --http 127.0.0.1:2484 [--profile full|readonly]")
+		_, _ = fmt.Fprintln(env.Stdout, "    Serve MCP over HTTP. Loopback bind only; bearer-token auth")
+		_, _ = fmt.Fprintln(env.Stdout, "    using the secret in ~/.locorum/state/mcp_token.")
+		_, _ = fmt.Fprintln(env.Stdout, "mcp rotate-token")
+		_, _ = fmt.Fprintln(env.Stdout, "    Regenerate the HTTP MCP bearer token.")
 		return ExitOK
 	default:
-		fmt.Fprintf(env.Stderr, "locorum mcp: unknown verb %q\n", verb)
+		_, _ = fmt.Fprintf(env.Stderr, "locorum mcp: unknown verb %q\n", verb)
 		return ExitUsage
 	}
 }
@@ -51,10 +51,10 @@ func runMCP(ctx context.Context, env *Env) ExitCode {
 func runMCPRotateToken(env *Env) ExitCode {
 	tok, err := mcp.RotateToken(env.HomeDir)
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return ExitError
 	}
-	fmt.Fprintln(env.Stdout, tok)
+	_, _ = fmt.Fprintln(env.Stdout, tok)
 	return ExitOK
 }
 
@@ -72,13 +72,13 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 		*stdio = true
 	}
 	if *stdio && *httpBind != "" {
-		fmt.Fprintln(env.Stderr, "locorum mcp: --stdio and --http are mutually exclusive")
+		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp: --stdio and --http are mutually exclusive")
 		return ExitUsage
 	}
 	switch *profile {
 	case daemon.ProfileFull, daemon.ProfileReadOnly:
 	default:
-		fmt.Fprintf(env.Stderr, "locorum mcp: unknown profile %q\n", *profile)
+		_, _ = fmt.Fprintf(env.Stderr, "locorum mcp: unknown profile %q\n", *profile)
 		return ExitUsage
 	}
 
@@ -95,10 +95,10 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 	if err != nil {
 		// Diagnostics go to stderr — stdout is reserved for MCP frames
 		// and any extra bytes there confuse the connected agent.
-		fmt.Fprintln(env.Stderr, "locorum mcp:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	// MCP logs go to stderr too, never stdout. Replace the default
 	// logger for the lifetime of this command so any package-level
@@ -117,7 +117,7 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 
 	if *stdio {
 		if err := srv.Serve(ctx); err != nil {
-			fmt.Fprintln(env.Stderr, "locorum mcp:", err)
+			_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 			return ExitError
 		}
 		return ExitOK
@@ -126,7 +126,7 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 	// HTTP transport. Bring up a loopback listener with bearer auth.
 	token, err := mcp.LoadOrCreateToken(env.HomeDir)
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum mcp:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 		return ExitError
 	}
 	httpSrv, err := mcp.NewHTTPServer(mcp.HTTPOptions{
@@ -136,13 +136,13 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 		Logger: logger,
 	})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum mcp:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 		return ExitUsage
 	}
-	fmt.Fprintf(env.Stderr, "locorum mcp http listening on %s\n", *httpBind)
-	fmt.Fprintf(env.Stderr, "auth token: %s (also at %s)\n", token, mcp.TokenPath(env.HomeDir))
+	_, _ = fmt.Fprintf(env.Stderr, "locorum mcp http listening on %s\n", *httpBind)
+	_, _ = fmt.Fprintf(env.Stderr, "auth token: %s (also at %s)\n", token, mcp.TokenPath(env.HomeDir))
 	if err := httpSrv.Serve(ctx); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum mcp:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 		return ExitError
 	}
 	return ExitOK

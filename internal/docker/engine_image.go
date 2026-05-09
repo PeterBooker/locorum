@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,7 +29,7 @@ func (d *Docker) imageExistsLocally(ctx context.Context, ref string) (bool, erro
 // and retry-wrapped for the BuildKit snapshot race.
 func (d *Docker) PullImage(ctx context.Context, ref string, onProgress func(PullProgress)) error {
 	if ref == "" {
-		return fmt.Errorf("image reference required")
+		return errors.New("image reference required")
 	}
 
 	exists, err := d.imageExistsLocally(ctx, ref)

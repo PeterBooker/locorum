@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 
 	"golang.org/x/sys/unix"
@@ -16,7 +17,7 @@ import (
 // reserved-for-root region.
 func hostFreeBytes(path string) (int64, error) {
 	if path == "" {
-		return 0, fmt.Errorf("hostFreeBytes: empty path")
+		return 0, errors.New("hostFreeBytes: empty path")
 	}
 	var st unix.Statfs_t
 	if err := unix.Statfs(path, &st); err != nil {
@@ -25,7 +26,7 @@ func hostFreeBytes(path string) (int64, error) {
 	// Bavail × Bsize. Both are unsigned but the result fits in int64 for
 	// any plausible filesystem size on consumer hardware (max int64 is
 	// 9.2 EB).
-	avail := uint64(st.Bavail) * uint64(st.Bsize)
+	avail := st.Bavail * uint64(st.Bsize)
 	if avail > 1<<62 {
 		// Defensive overflow guard; one petabyte+ on a workstation is
 		// implausible but report a sentinel rather than wrap to negative.

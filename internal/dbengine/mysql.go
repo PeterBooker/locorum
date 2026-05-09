@@ -236,7 +236,7 @@ func dbVersionFor(site *types.Site) string {
 	if v := strings.TrimSpace(site.DBVersion); v != "" {
 		return v
 	}
-	return site.MySQLVersion
+	return site.MySQLVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 }
 
 // publishedPorts returns the spec.Ports slice for the engine. PublishDBPort

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/docker/docker/api/types"
@@ -61,12 +62,13 @@ func (d *Docker) DiskUsage(ctx context.Context) (DiskReport, error) {
 	if err != nil {
 		return DiskReport{}, err
 	}
-	return v.(DiskReport), nil
+	rep, _ := v.(DiskReport)
+	return rep, nil
 }
 
 func (d *Docker) diskUsageInner(ctx context.Context) (DiskReport, error) {
 	if d.cli == nil {
-		return DiskReport{}, fmt.Errorf("docker: client not initialised")
+		return DiskReport{}, errors.New("docker: client not initialised")
 	}
 	du, err := d.cli.DiskUsage(ctx, types.DiskUsageOptions{})
 	if err != nil {

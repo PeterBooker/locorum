@@ -2,6 +2,7 @@ package dbengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -120,7 +121,7 @@ func (e mariadbEngine) Snapshot(ctx context.Context, ex Execer, site *types.Site
 		return cw.n, fmt.Errorf("mariadb-dump exited %d", exit)
 	}
 	if cw.n == 0 {
-		return 0, fmt.Errorf("mariadb-dump produced no output")
+		return 0, errors.New("mariadb-dump produced no output")
 	}
 	return cw.n, nil
 }
@@ -179,17 +180,17 @@ var mariadbExtraFilters = []ImportFilter{
 		// MariaDB 10.6+ prefixes mysqldump output with a conditional
 		// comment. No MySQL server interprets it; stripping is safe.
 		Name: "drop MariaDB sandbox comment",
-		Pat:  regexp.MustCompile(`/\*!999999\\?- enable the sandbox mode \*/`),
+		Pat:  regexp.MustCompile(`/\*!9{6}\\?- enable the sandbox mode \*/`),
 		Fn:   func(_ []byte) []byte { return nil },
 	},
 }
 
-// isVersionAtLeast reports whether `cand` >= `min` in dotted-decimal
+// isVersionAtLeast reports whether `cand` >= `minVal` in dotted-decimal
 // ordering. Non-numeric components compare lexicographically (rare
 // enough not to matter in practice).
-func isVersionAtLeast(cand, min string) bool {
+func isVersionAtLeast(cand, minVal string) bool {
 	ca := splitVersion(cand)
-	mi := splitVersion(min)
+	mi := splitVersion(minVal)
 	for i := 0; i < len(ca) || i < len(mi); i++ {
 		var c, m int
 		if i < len(ca) {

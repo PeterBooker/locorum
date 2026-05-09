@@ -31,16 +31,16 @@ import (
 // goroutine handles the listen + accept loop; per-request dispatch is
 // stateless so the http.Handler is goroutine-safe by construction.
 type HTTPServer struct {
-	addr     string
-	token    string
-	mux      *http.ServeMux
+	addr   string
+	token  string
+	mux    *http.ServeMux
+	core   *Server // wraps the same dispatch logic as stdio mode
+	logger *slog.Logger
+
+	mu       sync.Mutex
 	listener net.Listener
 	srv      *http.Server
-	core     *Server // wraps the same dispatch logic as stdio mode
-	logger   *slog.Logger
-
-	mu      sync.Mutex
-	stopped bool
+	stopped  bool
 }
 
 // HTTPOptions configures the HTTP server. Bind is the listen address
@@ -94,8 +94,7 @@ func (h *HTTPServer) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", h.addr, err)
 	}
-	h.listener = ln
-	h.srv = &http.Server{
+	srv := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
@@ -106,12 +105,19 @@ func (h *HTTPServer) Serve(ctx context.Context) error {
 		// memory.
 		MaxHeaderBytes: 1 << 20,
 	}
+	h.mu.Lock()
+	h.listener = ln
+	h.srv = srv
+	h.mu.Unlock()
+
 	go func() {
 		<-ctx.Done()
-		_ = h.Shutdown()
+		// ctx is already cancelled here; strip cancellation so the 5s
+		// shutdown deadline still applies.
+		_ = h.Shutdown(context.WithoutCancel(ctx))
 	}()
 	h.logger.Info("http mcp listening", "addr", h.actualAddr())
-	if err := h.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -119,12 +125,16 @@ func (h *HTTPServer) Serve(ctx context.Context) error {
 
 // actualAddr returns the bound address as the OS reports it (so a
 // :0 port shows up as a real number). Falls back to the requested
-// addr when the listener is nil.
+// addr when the listener is nil. Holds h.mu so the read of h.listener
+// is data-race-safe against Serve's write.
 func (h *HTTPServer) actualAddr() string {
-	if h.listener == nil {
+	h.mu.Lock()
+	ln := h.listener
+	h.mu.Unlock()
+	if ln == nil {
 		return h.addr
 	}
-	return h.listener.Addr().String()
+	return ln.Addr().String()
 }
 
 // Addr returns the bound listen address. Useful in tests that pass
@@ -132,19 +142,22 @@ func (h *HTTPServer) actualAddr() string {
 func (h *HTTPServer) Addr() string { return h.actualAddr() }
 
 // Shutdown stops accepting new connections and waits up to 5s for
-// in-flight requests to finish.
-func (h *HTTPServer) Shutdown() error {
+// in-flight requests to finish. The supplied parent context contributes
+// values and tracing; cancellation is layered on top of the 5s deadline
+// (whichever fires first wins).
+func (h *HTTPServer) Shutdown(parent context.Context) error {
 	h.mu.Lock()
 	if h.stopped {
 		h.mu.Unlock()
 		return nil
 	}
 	h.stopped = true
+	srv := h.srv
 	h.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	if h.srv != nil {
-		return h.srv.Shutdown(ctx)
+	if srv != nil {
+		return srv.Shutdown(ctx)
 	}
 	return nil
 }

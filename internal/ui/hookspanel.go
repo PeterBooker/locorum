@@ -237,7 +237,6 @@ func (hp *HooksPanel) layoutEvents(gtx layout.Context, th *Theme, siteID string)
 	groups := hp.groups
 	hp.mu.Unlock()
 	for _, ev := range events {
-		ev := ev
 		bucket := groups[ev]
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return hp.layoutEvent(gtx, th, siteID, ev, bucket)
@@ -302,7 +301,6 @@ func (hp *HooksPanel) layoutBucket(gtx layout.Context, th *Theme, ev hooks.Event
 
 	children := make([]layout.FlexChild, len(bucket))
 	for i, h := range bucket {
-		i, h := i, h
 		row := rowState[i]
 		row.groupIndex = i
 		row.groupSize = len(bucket)
