@@ -198,8 +198,7 @@ func TestServer_ReadOnlyRejectsMutating(t *testing.T) {
 		sites: []types.Site{{ID: "id1", Slug: "shop"}},
 	}
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -252,8 +251,7 @@ func TestServer_MCPScope_RejectsWrongSite(t *testing.T) {
 		},
 	}
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
