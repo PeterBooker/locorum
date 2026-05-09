@@ -1,0 +1,102 @@
+# Per-package coverage floors. See TESTING.md §3.4.
+#
+# Floors are set at `max(0, observed - 2 percentage points)` at landing time
+# (D16). The ratchet rule is: floors only ever go up. PRs that drop a
+# package below its floor must either restore coverage or write a justified
+# bump in CHANGELOG.md.
+#
+# CI gate: `make test-cover-check` runs go-test-coverage against this file
+# after `go test -coverprofile=coverage.out`. Failures block the merge.
+
+profile: coverage.out
+local-prefix: github.com/PeterBooker/locorum
+
+threshold:
+  total: 0
+  package: 0
+  file: 0
+
+override:
+  # Baseline measured 2026-05-08 from `make test-cover`. Targets in
+  # parentheses are the aspirational values from TESTING.md §3.4 — ratchet
+  # toward them as new tests land.
+
+  # High-coverage cores: aim is 80%+. Floors near current.
+  - threshold: 88   # observed 90.8 (target 80)
+    path: ^internal/orch$
+  - threshold: 88   # observed 90.5 (target 80)
+    path: ^internal/sites/configyaml$
+  - threshold: 80   # observed 82.3 (target 80)
+    path: ^internal/hooks$
+  - threshold: 86   # observed 88.9 (target 70)
+    path: ^internal/telemetry$
+  - threshold: 81   # observed 83.6 (target 70)
+    path: ^internal/updatecheck$
+
+  # Mid-tier: domain logic + storage. Floors near current; aspirations 75-85%.
+  - threshold: 77   # observed 79.1 (target 70)
+    path: ^internal/platform$
+  - threshold: 72   # observed 74.8 (target 80)
+    path: ^internal/config$
+  - threshold: 69   # observed 71.6 (target 75)
+    path: ^internal/assets$
+  - threshold: 64   # observed 66.4 (target 85)  ← biggest gap to ratchet
+    path: ^internal/storage$
+  - threshold: 65   # observed 67.8 (target 85) ← second-biggest
+    path: ^internal/genmark$
+  - threshold: 64   # observed 66.7 (target 60)
+    path: ^internal/git$
+  - threshold: 63   # observed 65.5 (target 70)
+    path: ^internal/dbengine$
+  - threshold: 62   # observed 64.3 (target 70)
+    path: ^internal/applog$
+  - threshold: 59   # observed 61.1 (target 65)
+    path: ^internal/health$
+
+  # Low-tier: SDK glue, daemons, UI scaffolding. Floors prevent regression.
+  - threshold: 42   # observed 44.8 (target 60)
+    path: ^internal/daemon$
+  - threshold: 34   # observed 36.8 (target 60)
+    path: ^internal/tls$
+  - threshold: 32   # observed 34.7 (target 70)
+    path: ^internal/mcp$
+  - threshold: 23   # observed 25.4 (target 75)
+    path: ^internal/utils$
+  - threshold: 23   # observed 25.3 (target 75) ← largest LOC, hardest target
+    path: ^internal/sites$
+  - threshold: 25   # observed 27.3 (target 75)
+    path: ^internal/sites/sitesteps$
+  - threshold: 18   # observed 20.9 (target 70)
+    path: ^internal/router/traefik$
+  - threshold: 16   # observed 18.3 (target 65)
+    path: ^internal/docker$
+
+  # UI layer: render-heavy, hard to unit-test. Floor is a no-regression check.
+  - threshold: 1    # observed 3.0 (target 30)
+    path: ^internal/ui$
+
+  # Always-100% packages.
+  - threshold: 100
+    path: ^internal/version$
+
+exclude:
+  paths:
+    # Test fixtures, fakes, generated code, fuzz scaffolding.
+    - _test\.go$
+    - testdata/
+    - /fake/
+    - mock_.+\.go$
+    - _fuzz_test\.go$
+
+    # main package + cmd binaries — covered by smoke build, not unit tests.
+    # Match repo-root .go files (main.go, daemon_setup.go, ...) and the
+    # internal packages whose code is wired only through main.
+    - ^[^/]+\.go$
+    - ^internal/app/
+    - ^internal/cli/
+
+    # No test files yet; floor would be 0 anyway.
+    - ^internal/router/[^/]*\.go$
+    - ^internal/types/
+    - ^internal/integration/
+    - ^internal/testutil/

@@ -42,7 +42,11 @@ MKCERT_BASE    := https://github.com/FiloSottile/mkcert/releases/download/$(MKCE
         dist-linux dist-linux-amd64 dist-linux-arm64 \
         tarball-linux-amd64 tarball-linux-arm64 \
         dist-macos dist-macos-app dmg-macos \
-        mkcert-binaries
+        mkcert-binaries \
+        lint test-race test-cover test-cover-check test-cover-baseline \
+        fuzz fuzz-nightly integration integration-prepull \
+        vuln sbom ci release-preflight reproducibility-check schema-snapshot \
+        bench bench-compare
 
 build:
 	go build -ldflags "$(LDFLAGS_DEV)" -o $(BUILD_DIR)/$(APP_NAME) .
@@ -77,10 +81,107 @@ $(ICON_DIR)/icon-%.png: assets/icon-source.svg
 	rsvg-convert -w $* -h $* -o $@ $<
 
 clean:
-	rm -rf build
+	rm -rf build coverage.out coverage.html
 
 test:
 	go test ./...
+
+# --- Quality gates ---------------------------------------------------------
+# `ci` is the gate every PR must pass. `release-preflight` adds integration
+# + reproducibility for tagging. See TESTING.md for the full plan.
+
+GOLANGCI_VERSION  ?= v2.6.0
+GOTESTCOV_VERSION ?= v2.16.0
+GOVULNCHECK_VER   ?= latest
+SYFT_VERSION      ?= v1.46.0
+GOLEAK_VERSION    ?= v1.3.0
+
+GOBIN := $(shell go env GOPATH)/bin
+
+lint:
+	@command -v golangci-lint >/dev/null 2>&1 || \
+		(echo "installing golangci-lint $(GOLANGCI_VERSION)"; \
+		 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION))
+	$(GOBIN)/golangci-lint run ./...
+
+test-race:
+	go test -count=1 -race ./...
+
+# Coverage profile. Used by test-cover-check (gating) and CI artifact upload.
+test-cover:
+	go test -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+	@go tool cover -func=coverage.out | tail -n 1
+
+# Per-package floors enforced via .testcoverage.yml (D3, D16).
+test-cover-check: test-cover
+	@command -v go-test-coverage >/dev/null 2>&1 || \
+		(echo "installing go-test-coverage $(GOTESTCOV_VERSION)"; \
+		 go install github.com/vladopajic/go-test-coverage/v2@$(GOTESTCOV_VERSION))
+	$(GOBIN)/go-test-coverage --config=./.testcoverage.yml
+
+# One-shot: print per-package coverage so floors can be set at observed - 2pp.
+# Run once when authoring or rebaselining .testcoverage.yml.
+test-cover-baseline: test-cover
+	@./scripts/coverage-baseline.sh coverage.out
+
+# Short fuzz seeds in CI (10s/target). Long-running fuzz lives in fuzz-nightly.
+FUZZ_TIME ?= 10s
+fuzz:
+	@./scripts/fuzz.sh $(FUZZ_TIME)
+
+fuzz-nightly: FUZZ_TIME=10m
+fuzz-nightly: fuzz
+
+# Real-Docker integration tests. Build tag gates compile-time inclusion;
+# the suite is opt-in via the `run-integration` PR label or push to main.
+integration:
+	@command -v docker >/dev/null 2>&1 || (echo "ERROR: docker not on PATH" && exit 1)
+	@docker info >/dev/null 2>&1 || (echo "ERROR: docker daemon not reachable" && exit 1)
+	go test -count=1 -tags=integration -timeout=30m \
+		./internal/sites/... \
+		./internal/router/... \
+		./internal/docker/...
+
+# Pre-pull every image referenced in internal/version/images.go so the
+# integration tests don't fight Docker Hub rate limits.
+integration-prepull:
+	@./scripts/integration-prepull.sh
+
+# govulncheck: Go vulnerability database. Required gate.
+vuln:
+	@command -v govulncheck >/dev/null 2>&1 || \
+		(echo "installing govulncheck"; \
+		 go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VER))
+	$(GOBIN)/govulncheck ./...
+
+# CycloneDX + SPDX SBOM via syft. Shipped alongside every release artifact.
+sbom:
+	@command -v syft >/dev/null 2>&1 || \
+		(echo "installing syft $(SYFT_VERSION)"; \
+		 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b $(GOBIN) $(SYFT_VERSION))
+	@mkdir -p $(DIST_DIR)
+	$(GOBIN)/syft . -o cyclonedx-json=$(DIST_DIR)/sbom-cyclonedx.json -o spdx-json=$(DIST_DIR)/sbom-spdx.json
+
+# Schema-drift detection. Refuses to commit if the live schema differs from
+# the checked-in golden without an accompanying migration.
+schema-snapshot:
+	@./scripts/schema-snapshot.sh
+
+# Performance benchmarks. `bench-compare` runs main + HEAD and benchstat-diffs.
+bench:
+	go test -bench=. -benchmem -count=10 -run=^$$ -benchtime=1s ./...
+
+bench-compare:
+	@./scripts/bench-compare.sh
+
+# All non-integration gates that must be green before merge.
+ci: lint vuln test-race test-cover-check fuzz
+
+# Pre-tag gate: everything `ci` does + integration + reproducibility + sbom.
+release-preflight: ci integration reproducibility-check sbom
+
+reproducibility-check:
+	@./scripts/reproducibility-check.sh
 
 # --- Bundled mkcert ---------------------------------------------------------
 # Each rule downloads one platform's mkcert into build/vendor/mkcert/<os>-<arch>/

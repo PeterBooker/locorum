@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitsDisabled"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 6am on Monday"],
+  "timezone": "UTC",
+  "prConcurrentLimit": 5,
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Pin every GitHub Action by full SHA, keep the version comment in sync.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Group Go module minor + patch bumps into one weekly PR.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go-deps-minor"
+    },
+    {
+      "description": "Group GitHub Action digest updates so we don't get one PR per action.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "patch"],
+      "groupName": "github-actions-digest"
+    },
+    {
+      "description": "Major Go module bumps stay individual so we can review each.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "review-required"]
+    },
+    {
+      "description": "Pin Docker base image digests used in internal/version/images.go.",
+      "matchManagers": ["regex"],
+      "matchPackagePatterns": [".*"],
+      "pinDigests": true
+    }
+  ],
+  "regexManagers": [
+    {
+      "description": "Bump pinned Docker image versions in internal/version/images.go.",
+      "fileMatch": ["^internal/version/images\\.go$"],
+      "matchStrings": [
+        "//\\s*renovate:\\s*image=(?<depName>[^\\s]+?)\\s+versioning=(?<versioning>[^\\s]+)\\s*\\n\\s*\\w+\\s*=\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
+}

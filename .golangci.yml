@@ -1,0 +1,159 @@
+# Locorum lint configuration.
+#
+# Security-tilted superset of DDEV's 7-linter baseline. See TESTING.md §3.0.1
+# for the rationale on each linter and the diff vs DDEV.
+#
+# Run with `make lint`. Tooling version pinned in Makefile (GOLANGCI_VERSION).
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  go: "1.25"
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      path: stdout
+      colors: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocheckcompilerdirectives
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - perfsprint
+    - revive
+    - sqlclosecheck
+    - staticcheck
+    - unconvert
+    - unused
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        # Lifecycle paths intentionally swallow Close errors after success.
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - fmt.Fprintln(os.Stderr)
+        - fmt.Fprintf(os.Stderr)
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # too noisy on Gio widget structs
+
+    gosec:
+      excludes:
+        # G104: handled by errcheck above.
+        - G104
+        # G304: we read user-controlled paths by design (site dir, mkcert, etc).
+        - G304
+        # G306: writing 0644 files is intentional for user-visible config.
+        - G306
+        # G115: integer overflow conversion warnings — we audit these manually.
+        - G115
+      severity: low
+      confidence: low
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - ifElseChain        # noisy on lifecycle plans
+        - hugeParam          # struct passing in render hot paths is intentional
+        - unnamedResult
+        - whyNoLint
+        - paramTypeCombine
+        - commentedOutCode
+        - commentFormatting
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unreachable-code
+        - name: var-declaration
+        # `exported` disabled: many internal/ packages have thin pkg-doc-only APIs.
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # at least one file in a package should have a package comment
+        - -ST1003  # ALL_CAPS naming — hooks env vars are intentionally CAPS
+
+    perfsprint:
+      err-error: false
+      errorf: true
+      sprintf1: true
+      strconcat: false
+
+    sqlclosecheck:
+      # No options; check stmt + rows + conn close.
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test files: relax unused (scaffolding) and gosec (intentional patterns).
+      - path: _test\.go
+        linters:
+          - unused
+          - gosec
+          - errcheck
+          - perfsprint
+
+      # Hot-path UI: perfsprint and gocritic hurt readability more than help.
+      - path: internal/ui/
+        linters:
+          - perfsprint
+          - gocritic
+
+      # Fakes are intentionally minimal; unused fields/funcs are OK.
+      - path: /fake/
+        linters:
+          - unused
+          - revive
+
+      # Embedded SQL/config templates are write-once.
+      - path: testdata/
+        linters:
+          - all
+
+      # Fuzz tests have intentional unused result patterns.
+      - path: _fuzz_test\.go
+        linters:
+          - errcheck
+          - unused
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -33,6 +33,11 @@ checksum:
     - glob: build/dist/*.tar.gz
     - glob: build/dist/*.msi
     - glob: build/dist/*.dmg
+    - glob: build/dist/*.sig
+    - glob: build/dist/*.cert
+    - glob: build/dist/*.cdx.json
+    - glob: build/dist/*.spdx.json
+    - glob: build/dist/locorum.intoto.jsonl
 
 snapshot:
   version_template: "{{ .Tag }}-SNAPSHOT-{{ .ShortCommit }}"
@@ -53,3 +58,8 @@ release:
     - glob: build/dist/*.tar.gz
     - glob: build/dist/*.msi
     - glob: build/dist/*.dmg
+    - glob: build/dist/*.sig
+    - glob: build/dist/*.cert
+    - glob: build/dist/*.cdx.json
+    - glob: build/dist/*.spdx.json
+    - glob: build/dist/locorum.intoto.jsonl
