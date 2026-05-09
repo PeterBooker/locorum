@@ -51,6 +51,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Install Gio Linux deps
+        run: ./scripts/install-gio-deps-linux.sh
       - run: make vuln
 
   trivy:
