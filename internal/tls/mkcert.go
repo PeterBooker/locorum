@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -119,7 +120,7 @@ func (m *Mkcert) detect(ctx context.Context) (string, Status) {
 // moved into place so a watching router never reads a half-written file.
 func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 	if len(spec.Hostnames) == 0 {
-		return CertPath{}, fmt.Errorf("at least one hostname required")
+		return CertPath{}, errors.New("at least one hostname required")
 	}
 	if !validCertName(spec.Name) {
 		return CertPath{}, fmt.Errorf("invalid cert name %q", spec.Name)
@@ -136,14 +137,14 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 		// Refusing to issue is deliberate: a bare `mkcert <hosts>` call
 		// would silently create the CA without installing it, leaving the
 		// user with an issued-but-untrusted cert and no clear next step.
-		return CertPath{}, fmt.Errorf("mkcert local CA not installed; run `mkcert -install`")
+		return CertPath{}, errors.New("mkcert local CA not installed; run `mkcert -install`")
 	}
 
 	m.mu.Lock()
 	bin := m.binary
 	m.mu.Unlock()
 	if bin == "" {
-		return CertPath{}, fmt.Errorf("mkcert binary unresolved")
+		return CertPath{}, errors.New("mkcert binary unresolved")
 	}
 
 	targetDir := filepath.Join(m.certDir, spec.Name)
@@ -165,7 +166,7 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 	if err != nil {
 		return CertPath{}, fmt.Errorf("temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tmpCert := filepath.Join(tmpDir, "cert.pem")
 	tmpKey := filepath.Join(tmpDir, "key.pem")

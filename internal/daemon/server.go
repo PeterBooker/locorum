@@ -191,7 +191,7 @@ func (s *Server) Shutdown(timeout time.Duration) {
 // produces exactly one outbound message; pipelining is supported (the
 // server reads the next frame as soon as the response is written).
 func (s *Server) handleConn(ctx context.Context, raw net.Conn) {
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 
 	conn := &Conn{
 		Profile: ProfileFull,

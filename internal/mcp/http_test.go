@@ -55,7 +55,7 @@ func startHTTPServer(t *testing.T, profile string) (*HTTPServer, string) {
 	if addr == "" {
 		t.Fatalf("server did not bind")
 	}
-	t.Cleanup(func() { _ = srv.Shutdown() })
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
 	return srv, addr
 }
 
@@ -90,6 +90,7 @@ func TestHTTP_AuthRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: got %d want 401", resp.StatusCode)
 	}
@@ -108,6 +109,7 @@ func TestHTTP_WrongTokenRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: got %d want 401", resp.StatusCode)
 	}
@@ -168,6 +170,7 @@ func TestHTTP_PostOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}

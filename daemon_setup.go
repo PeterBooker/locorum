@@ -120,7 +120,8 @@ func runDaemonMode(homeDir string, sm *sites.SiteManager, a *application.App, d 
 	lock, srv, err := startDaemonServices(ctx, homeDir, sm)
 	if err != nil {
 		reportLockError(err)
-		os.Exit(2)
+		cancel()
+		os.Exit(2) //nolint:gocritic // exitAfterDefer: cancel() called explicitly above; no other cleanup needed before fatal exit
 	}
 	defer func() {
 		srv.Shutdown(2 * time.Second)

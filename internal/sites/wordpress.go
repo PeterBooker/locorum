@@ -72,7 +72,7 @@ func (sm *SiteManager) ensureWordPress(site *types.Site) error {
 	}
 
 	// Ensure the target directory itself is writable by container processes.
-	_ = os.Chmod(targetDir, 0777)
+	_ = os.Chmod(targetDir, 0o777)
 
 	slog.Info("WordPress installed successfully")
 	return nil
@@ -95,7 +95,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 	if err != nil {
 		return fmt.Errorf("gzip reader: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 
@@ -117,7 +117,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 			continue
 		}
 
-		target := filepath.Join(destDir, name)
+		target := filepath.Join(destDir, name) //nolint:gosec // G305: traversal guarded by the Clean+HasPrefix check below
 
 		// Guard against path traversal.
 		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)+string(os.PathSeparator)) {
@@ -126,23 +126,27 @@ func extractTarGz(r io.Reader, destDir string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0777); err != nil {
+			if err := os.MkdirAll(target, 0o777); err != nil {
 				return fmt.Errorf("mkdir %q: %w", target, err)
 			}
 			// Force permissions — MkdirAll is subject to umask.
-			if err := os.Chmod(target, 0777); err != nil {
+			if err := os.Chmod(target, 0o777); err != nil {
 				return fmt.Errorf("chmod dir %q: %w", target, err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0777); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o777); err != nil {
 				return fmt.Errorf("mkdir parent %q: %w", target, err)
 			}
-			_ = os.Chmod(filepath.Dir(target), 0777)
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+			_ = os.Chmod(filepath.Dir(target), 0o777)
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o666)
 			if err != nil {
 				return fmt.Errorf("create %q: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			// Cap per-file decompression at 256 MiB. WordPress core
+			// tarballs are ~30 MiB; a hostile gzip claiming to be
+			// WordPress shouldn't get to fill the disk.
+			const maxFileBytes = 256 << 20
+			if _, err := io.Copy(f, io.LimitReader(tr, maxFileBytes)); err != nil {
 				f.Close()
 				return fmt.Errorf("write %q: %w", target, err)
 			}
@@ -161,7 +165,7 @@ func ensureWritable(root string) {
 			return nil
 		}
 		if d.IsDir() {
-			_ = os.Chmod(path, 0777)
+			_ = os.Chmod(path, 0o777)
 		}
 		return nil
 	})

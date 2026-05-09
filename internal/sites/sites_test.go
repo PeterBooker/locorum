@@ -136,7 +136,9 @@ func TestSiteMutex_DistinctSitesRunInParallel(t *testing.T) {
 
 func TestSiteMutex_SameInstanceForSameID(t *testing.T) {
 	sm := minimalSiteManager(fake.New())
-	if sm.siteMutex("x") != sm.siteMutex("x") {
+	a := sm.siteMutex("x")
+	b := sm.siteMutex("x")
+	if a != b {
 		t.Error("siteMutex returned different instances for the same id")
 	}
 }

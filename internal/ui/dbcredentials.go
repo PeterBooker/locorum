@@ -184,7 +184,6 @@ func (dc *DBCredentials) Layout(gtx layout.Context, th *Theme, site *types.Site)
 	return Section(gtx, th, "Database", func(gtx layout.Context) layout.Dimensions {
 		children := make([]layout.FlexChild, 0, len(items)+1)
 		for i, item := range items {
-			item := item
 			idx := i
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

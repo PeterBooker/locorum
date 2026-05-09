@@ -85,7 +85,7 @@ func BuildEnv(site *types.Site, ctx EnvContext) []string {
 		"LOCORUM_DOMAIN":        domain,
 		"LOCORUM_PRIMARY_URL":   primaryURL(domain),
 		"LOCORUM_PHP_VERSION":   site.PHPVersion,
-		"LOCORUM_MYSQL_VERSION": site.MySQLVersion,
+		"LOCORUM_MYSQL_VERSION": site.MySQLVersion, //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		"LOCORUM_REDIS_VERSION": site.RedisVersion,
 		"LOCORUM_WEBSERVER":     webServer,
 		"LOCORUM_MULTISITE":     site.Multisite,

@@ -2,6 +2,7 @@ package traefik
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -51,7 +52,7 @@ func NewRenderer(filesystem fs.FS) (*Renderer, error) {
 // bcrypt/htpasswd-compatible password hash for username.
 func (r *Renderer) API(username, hash string) ([]byte, error) {
 	if username == "" || hash == "" {
-		return nil, fmt.Errorf("api auth credentials required")
+		return nil, errors.New("api auth credentials required")
 	}
 	var buf bytes.Buffer
 	if err := r.apiTpl.Execute(&buf, struct {

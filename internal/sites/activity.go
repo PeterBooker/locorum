@@ -270,20 +270,20 @@ func buildActivityDetails(res orch.Result) json.RawMessage {
 	return buf
 }
 
-// truncateRunes shortens s to at most max bytes, never splitting a UTF-8
+// truncateRunes shortens s to at most maxBytes bytes, never splitting a UTF-8
 // rune. Used to bound row size before it hits SQLite. The "…" suffix is
 // added when truncation actually occurs so the UI signals elision without
 // the caller having to know.
-func truncateRunes(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+func truncateRunes(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
 		return s
 	}
 	const ellipsis = "…"
-	limit := max - len(ellipsis)
+	limit := maxBytes - len(ellipsis)
 	if limit <= 0 {
 		// Pathologically small budget — return a hard byte slice on a
 		// rune boundary. Walk back until we land on a UTF-8 start byte.
-		i := max
+		i := maxBytes
 		for i > 0 && (s[i-1]&0xC0) == 0x80 {
 			i--
 		}

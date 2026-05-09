@@ -72,10 +72,11 @@ func NewMarker(eng Kind, version, locorumVer string, now time.Time) VolumeMarker
 	}
 }
 
-// ReadMarkerFromVolume runs a one-shot alpine container that bind-mounts
-// the database data volume read-only and prints the marker file's bytes.
-// Returns (nil, ErrNoMarker) if the file is absent — fresh volumes don't
-// carry one yet, the caller writes one after first start.
+// ParseMarkerFromBytes parses the bytes captured from a one-shot alpine
+// container that bind-mounts the database data volume read-only and prints
+// the marker file's bytes. Returns (nil, ErrNoMarker) if the file is absent
+// — fresh volumes don't carry one yet, the caller writes one after first
+// start.
 //
 // This helper deliberately does NOT depend on docker.Engine being a full
 // Engine — it only needs the writer-exec path that Execer publishes. But

@@ -2,6 +2,7 @@ package sitesteps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func (s *EnsureCheckoutStep) Name() string { return "ensure-checkout" }
 
 func (s *EnsureCheckoutStep) Apply(ctx context.Context) error {
 	if s.Remote == "" || s.ParentDir == "" {
-		return fmt.Errorf("ensure-checkout: Remote and ParentDir are required")
+		return errors.New("ensure-checkout: Remote and ParentDir are required")
 	}
 	if err := os.MkdirAll(filepath.Dir(s.ParentDir), 0o755); err != nil {
 		return fmt.Errorf("ensure-checkout: parent dir: %w", err)
@@ -73,7 +74,7 @@ func (s *EnsureWorktreeStep) Name() string { return "ensure-worktree" }
 
 func (s *EnsureWorktreeStep) Apply(ctx context.Context) error {
 	if s.ParentDir == "" || s.WorktreePath == "" || s.Branch == "" {
-		return fmt.Errorf("ensure-worktree: ParentDir, WorktreePath, Branch required")
+		return errors.New("ensure-worktree: ParentDir, WorktreePath, Branch required")
 	}
 	// If the worktree path already contains a working tree, the
 	// caller already created it (e.g. partial recovery from a previous

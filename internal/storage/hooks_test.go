@@ -83,7 +83,6 @@ func TestAddHook_RejectsInvalid(t *testing.T) {
 		{"unknown service", func(h *hooks.Hook) { h.TaskType = hooks.TaskExec; h.Service = "mystery" }},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHook("site-a", hooks.PostStart, "echo")
 			tc.mut(h)

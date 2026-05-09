@@ -25,7 +25,6 @@ func TestLayoutLogo_ConstraintRobustness(t *testing.T) {
 	}
 	th := NewTheme()
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			var ops op.Ops
 			gtx := layout.Context{Constraints: c.cons, Ops: &ops}

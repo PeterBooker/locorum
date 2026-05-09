@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -22,7 +23,6 @@ func TestMigrations_ForwardRoundTrip(t *testing.T) {
 	}
 
 	for _, v := range versions {
-		v := v
 		t.Run(fmt.Sprintf("v=%d", v), func(t *testing.T) {
 			t.Parallel()
 			db := openTempDB(t)
@@ -34,7 +34,7 @@ func TestMigrations_ForwardRoundTrip(t *testing.T) {
 			}
 			schemaAtUp := dumpSchema(t, db)
 
-			if err := m.Down(); err != nil && err != migrate.ErrNoChange {
+			if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 				t.Fatalf("migrate down: %v", err)
 			}
 			if err := m.Migrate(v); err != nil {
@@ -57,15 +57,15 @@ func TestMigrations_FullUpThenFullDown(t *testing.T) {
 	defer db.Close()
 
 	m := newMigrator(t, db)
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("Up: %v", err)
 	}
-	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("Down: %v", err)
 	}
 	// And one more forward pass — proves the chain is idempotent across
 	// up→down→up.
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("Up after Down: %v", err)
 	}
 }

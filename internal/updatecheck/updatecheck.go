@@ -94,7 +94,7 @@ func Check(ctx context.Context, current string, opts Options) (Result, error) {
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", opts.RepoOwner, opts.RepoName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return Result{}, err
 	}

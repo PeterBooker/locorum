@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
 )
 
 // retryClass groups Docker SDK errors by remediation strategy. Anything not
@@ -30,7 +30,7 @@ const (
 const (
 	retryBudgetDefault   = 90 * time.Second
 	retryAttemptsDefault = 5
-	retryBackoffMin      = 200 * time.Millisecond
+	retryBackoffMinimum  = 200 * time.Millisecond
 	retryBackoffMax      = 30 * time.Second
 )
 
@@ -99,7 +99,7 @@ func withRetry[T any](
 	ctx context.Context,
 	desc string,
 	op func(context.Context) (T, error),
-	recover func(context.Context, retryClass) error,
+	tryRecover func(context.Context, retryClass) error,
 ) (T, error) {
 	var zero T
 
@@ -108,7 +108,7 @@ func withRetry[T any](
 		deadline = d
 	}
 
-	backoff := retryBackoffMin
+	backoff := retryBackoffMinimum
 	maxAttempts := retryAttemptsDefault
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -134,30 +134,30 @@ func withRetry[T any](
 		case retryBuildKitRace:
 			// Immediate retry up to 3 times; this race resolves in <1s.
 			if attempt >= 3 {
-				return zero, fmt.Errorf("%s: %w (buildkit snapshot race after 3 attempts): %v", desc, ErrTransient, err)
+				return zero, fmt.Errorf("%s: %w (buildkit snapshot race after 3 attempts): %w", desc, ErrTransient, err)
 			}
 			backoff = 50 * time.Millisecond
 		case retryNameInUse, retryNetworkExists:
 			// Side-effect cleanup, then exactly one retry.
-			if recover != nil {
-				if recErr := recover(ctx, class); recErr != nil {
+			if tryRecover != nil {
+				if recErr := tryRecover(ctx, class); recErr != nil {
 					slog.Warn("retry recover failed", "op", desc, "err", recErr.Error())
 				}
 			}
 			if attempt > 1 {
-				return zero, fmt.Errorf("%s: %w: %v", desc, ErrTransient, err)
+				return zero, fmt.Errorf("%s: %w: %w", desc, ErrTransient, err)
 			}
 		case retryDaemonRestart:
 			// Exponential backoff up to 5 attempts; daemon restarts can
 			// take 10-30s on Docker Desktop.
-			backoff = backoff * 2
+			backoff *= 2
 			if backoff > retryBackoffMax {
 				backoff = retryBackoffMax
 			}
 		}
 
 		if time.Now().Add(backoff).After(deadline) {
-			return zero, fmt.Errorf("%s: %w: budget exhausted: %v", desc, ErrTransient, err)
+			return zero, fmt.Errorf("%s: %w: budget exhausted: %w", desc, ErrTransient, err)
 		}
 
 		slog.Info("retrying after transient docker error",
@@ -179,11 +179,11 @@ func withRetryErr(
 	ctx context.Context,
 	desc string,
 	op func(context.Context) error,
-	recover func(context.Context, retryClass) error,
+	tryRecover func(context.Context, retryClass) error,
 ) error {
 	_, err := withRetry(ctx, desc, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, op(ctx)
-	}, recover)
+	}, tryRecover)
 	return err
 }
 

@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -12,6 +11,19 @@ import (
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// titleASCII upper-cases the first byte of an ASCII string. Used to render
+// short DB engine names ("mysql"/"mariadb") with a capital first letter
+// without pulling in golang.org/x/text/cases.
+func titleASCII(s string) string {
+	if s == "" {
+		return ""
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
+	}
+	return s
+}
 
 // VersionEditor shows read-only version info when a site is running,
 // and editable dropdowns when it is stopped. The DB row understands both
@@ -55,7 +67,7 @@ func (ve *VersionEditor) Layout(gtx layout.Context, th *Theme, site *types.Site)
 	if site.Started {
 		return KVRows(gtx, th, []KV{
 			{"PHP", site.PHPVersion},
-			{"DB Engine", strings.Title(site.DBEngine)},
+			{"DB Engine", titleASCII(site.DBEngine)},
 			{"DB Version", site.DBVersion},
 			{"Redis", site.RedisVersion},
 		})

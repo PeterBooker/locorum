@@ -643,7 +643,7 @@ func verifyChecksum(snapshotPath string) error {
 	}
 	expectedHex := strings.TrimSpace(strings.SplitN(string(expected), " ", 2)[0])
 	if len(expectedHex) != 64 {
-		return fmt.Errorf("malformed checksum sidecar")
+		return errors.New("malformed checksum sidecar")
 	}
 	f, err := os.Open(snapshotPath)
 	if err != nil {

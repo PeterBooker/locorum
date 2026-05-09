@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
 	"github.com/docker/go-connections/nat"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 
@@ -180,7 +181,7 @@ func (d *Docker) ContainerLogs(ctx context.Context, name string, lines int) (str
 	opts := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-		Tail:       fmt.Sprintf("%d", lines),
+		Tail:       strconv.Itoa(lines),
 	}
 	rc, err := d.cli.ContainerLogs(ctx, name, opts)
 	if err != nil {
@@ -409,7 +410,7 @@ func buildLogConfig(r Resources) (container.LogConfig, bool) {
 		Type: "json-file",
 		Config: map[string]string{
 			"max-size": size,
-			"max-file": fmt.Sprintf("%d", files),
+			"max-file": strconv.Itoa(files),
 		},
 	}, true
 }

@@ -102,7 +102,7 @@ func SanitiseUsername(in string) string {
 	//    is `^[a-z][a-z0-9._-]*$`, so any leading char other than a
 	//    lowercase letter — digit, underscore, etc. — must be moved
 	//    behind the `u-` prefix to keep the first byte alphabetic.
-	if s == "" || !(s[0] >= 'a' && s[0] <= 'z') {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
 		s = "u-" + s
 		if len(s) > MaxSanitisedUsernameLen {
 			s = s[:MaxSanitisedUsernameLen]

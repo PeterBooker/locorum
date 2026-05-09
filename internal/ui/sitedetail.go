@@ -65,8 +65,6 @@ type SiteDetail struct {
 	deleteBtn widget.Clickable
 
 	// Overview tab interactive widgets
-	openURLBtn      widget.Clickable
-	openFilesDirBtn widget.Clickable
 	publicDirEditor widget.Editor
 	savePublicDir   widget.Clickable
 	lastSiteID      string
@@ -126,7 +124,7 @@ func NewSiteDetail(state *UIState, sm *sites.SiteManager, toasts *Notifications)
 		profilingPanel: NewProfilingPanel(state, sm, toasts),
 	}
 	sd.describeCache = NewDescribeCache(sm, state)
-	sd.list.List.Axis = layout.Vertical
+	sd.list.Axis = layout.Vertical
 	sd.publicDirEditor.SingleLine = true
 	return sd
 }
@@ -499,7 +497,6 @@ func (sd *SiteDetail) layoutTabStrip(gtx layout.Context, th *Theme) layout.Dimen
 			return layout.Inset{Left: th.Spacing.LG, Right: th.Spacing.LG}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, len(tabLabels))
 				for i, lbl := range tabLabels {
-					i, lbl := i, lbl
 					children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return sd.layoutTab(gtx, th, i, lbl)
 					})

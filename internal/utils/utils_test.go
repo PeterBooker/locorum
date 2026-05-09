@@ -32,7 +32,7 @@ func TestEnsureDir_ExistingDir(t *testing.T) {
 
 func TestEnsureDir_FileConflict(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "afile")
-	if err := os.WriteFile(f, []byte("x"), 0644); err != nil {
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

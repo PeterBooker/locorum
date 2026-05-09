@@ -4,7 +4,7 @@ package fake
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,7 +65,7 @@ func (p *Provider) Issue(_ context.Context, spec tls.CertSpec) (tls.CertPath, er
 		return tls.CertPath{}, err
 	}
 	if spec.Name == "" {
-		return tls.CertPath{}, fmt.Errorf("fake.Issue: empty Name")
+		return tls.CertPath{}, errors.New("fake.Issue: empty Name")
 	}
 	if p.Root == "" {
 		dir, err := os.MkdirTemp("", "locorum-fake-tls-*")

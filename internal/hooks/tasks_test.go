@@ -72,7 +72,6 @@ func TestHookValidate(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.hook.Validate()
 			if tc.errIs == nil {

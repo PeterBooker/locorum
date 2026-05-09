@@ -5,6 +5,7 @@ package fake
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/PeterBooker/locorum/internal/hooks"
@@ -257,12 +258,12 @@ func (s *Settings) GetSetting(key string) (string, error) {
 }
 
 func joinCmd(cmd []string) string {
-	out := ""
+	var b strings.Builder
 	for i, p := range cmd {
 		if i > 0 {
-			out += " "
+			b.WriteString(" ")
 		}
-		out += p
+		b.WriteString(p)
 	}
-	return out
+	return b.String()
 }

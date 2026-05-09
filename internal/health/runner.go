@@ -265,7 +265,6 @@ func (r *Runner) runBatch(ctx context.Context) {
 
 	var wg sync.WaitGroup
 	for _, c := range r.checks {
-		c := c
 		// Suspension: skip this check if its next-run-at is in the future.
 		if r.suspendedUntil(c.ID()).After(now) {
 			continue

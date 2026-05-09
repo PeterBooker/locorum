@@ -141,7 +141,7 @@ func TestCompressWriter_RoundTrip_Zstd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(body) {
+	if !bytes.Equal(got, body) {
 		t.Errorf("round-trip mismatch:\n got = %q\nwant = %q", got, body)
 	}
 }
@@ -170,7 +170,7 @@ func TestCompressWriter_RoundTrip_Gzip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(body) {
+	if !bytes.Equal(got, body) {
 		t.Errorf("round-trip mismatch:\n got = %q\nwant = %q", got, body)
 	}
 }

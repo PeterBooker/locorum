@@ -3,6 +3,7 @@ package sites
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -58,7 +59,7 @@ var importFilters = []importFilter{
 	//    literal "enable the sandbox mode" is the unambiguous marker.
 	{
 		name: "drop MariaDB sandbox comment",
-		pat:  regexp.MustCompile(`/\*!999999\\?- enable the sandbox mode \*/`),
+		pat:  regexp.MustCompile(`/\*!9{6}\\?- enable the sandbox mode \*/`),
 		fn:   func(_ []byte) []byte { return nil },
 	},
 
@@ -148,7 +149,7 @@ func FilterImportStream(in io.Reader, out io.Writer) (int64, error) {
 		written += int64(len(line)) + 1
 	}
 	if err := scanner.Err(); err != nil {
-		if err == bufio.ErrTooLong {
+		if errors.Is(err, bufio.ErrTooLong) {
 			return written, fmt.Errorf("import dump contains a line longer than %d bytes — refusing to process; the dump is likely binary or corrupted", importMaxLineBytes)
 		}
 		return written, fmt.Errorf("scan: %w", err)

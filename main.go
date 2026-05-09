@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"log"
 	"log/slog"
 	"os"
@@ -68,10 +69,10 @@ func main() {
 	// branch on it before Gio touches the display. Skip in daemon mode:
 	// no Gio, no need to disturb display env.
 	if plat.WSL.Active && !daemonMode {
-		os.Unsetenv("WAYLAND_DISPLAY")
-		os.Setenv("GSETTINGS_BACKEND", "memory")
+		_ = os.Unsetenv("WAYLAND_DISPLAY")
+		_ = os.Setenv("GSETTINGS_BACKEND", "memory")
 		if _, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok {
-			os.Setenv("DBUS_SESSION_BUS_ADDRESS", "disabled:")
+			_ = os.Setenv("DBUS_SESSION_BUS_ADDRESS", "disabled:")
 		}
 	}
 
@@ -95,9 +96,10 @@ func main() {
 
 	st, err := storage.NewSQLiteStorage(context.Background())
 	if err != nil {
-		log.Fatalln("Error:", err)
+		_ = logCloser.Close()
+		log.Fatalln("Error:", err) //nolint:gocritic // exitAfterDefer: logCloser.Close() called explicitly above; no other cleanup needed before fatal exit
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	cfg, err := settings.New(st)
 	if err != nil {
@@ -162,7 +164,7 @@ func main() {
 
 	if daemonMode {
 		runDaemonMode(homeDir, sm, a, d)
-		st.Close()
+		_ = st.Close()
 		return
 	}
 
@@ -200,7 +202,7 @@ func main() {
 		return mkcert.InstallCA(ctx)
 	}
 	runner := newHealthRunner(plat, d, mkcert, mkcertInstaller, sm, cfg, homeDir)
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 
 	if cfg.HealthEnabled() {
 		// Subscribe before Start so the very first publication propagates
@@ -366,7 +368,7 @@ func main() {
 		// Persist the seen-keys set so the next process doesn't re-toast
 		// findings the user already dismissed. Best effort.
 		persistHealthSeen(cfg, userInterface.State)
-		st.Close()
+		_ = st.Close()
 		os.Exit(0)
 	}()
 
@@ -525,7 +527,7 @@ func runUpdateCheck(homeDir string, cfg *settings.Config, state *ui.UIState) {
 		StatePath: statePath,
 	})
 	if err != nil {
-		if err == updatecheck.ErrThrottled {
+		if errors.Is(err, updatecheck.ErrThrottled) {
 			return
 		}
 		slog.Warn("update check failed", "err", err.Error())

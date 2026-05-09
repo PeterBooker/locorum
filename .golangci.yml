@@ -57,11 +57,26 @@ linters:
       enable-all: true
       disable:
         - fieldalignment   # too noisy on Gio widget structs
+        - shadow           # off by default in golangci-lint; too many
+                           # false positives on idiomatic err shadowing
+                           # in nested scopes
 
     gosec:
       excludes:
         # G104: handled by errcheck above.
         - G104
+        # G204: Locorum shells into a fixed set of internal helpers
+        # (mkcert, host terminal emulators, git, docker CLI). The
+        # "variable" is a Locorum-resolved binary path or a hard-coded
+        # arg list, never user-supplied.
+        - G204
+        # G301: directory permissions on user-visible state under
+        # ~/.locorum/ and ~/locorum/sites/ are 0755 on purpose so the
+        # user can `ls`/`cd` their own files. Same rationale as G306.
+        - G301
+        # G302: file permissions on user-visible config are 0644 so the
+        # user can `cat`/`edit` their own files. Same rationale as G306.
+        - G302
         # G304: we read user-controlled paths by design (site dir, mkcert, etc).
         - G304
         # G306: writing 0644 files is intentional for user-visible config.
@@ -79,6 +94,9 @@ linters:
       disabled-checks:
         - ifElseChain        # noisy on lifecycle plans
         - hugeParam          # struct passing in render hot paths is intentional
+        - rangeValCopy       # iterating sites/hooks/etc. by value is intentional
+                             # — the marginal pointer-deref win isn't worth the
+                             # readability hit across hundreds of loops
         - unnamedResult
         - whyNoLint
         - paramTypeCombine

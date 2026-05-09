@@ -19,7 +19,7 @@ import (
 // so the caller still sees the operational outcome.
 func RotateIfLarge(logPath string, maxBytes int64, keep int) error {
 	if maxBytes <= 0 {
-		return fmt.Errorf("logrotate: maxBytes must be > 0")
+		return errors.New("logrotate: maxBytes must be > 0")
 	}
 	if keep <= 0 {
 		keep = 1

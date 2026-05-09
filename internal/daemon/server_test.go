@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,8 +185,8 @@ func TestServer_NotFound_BySlug(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeNotFound {
@@ -228,8 +229,8 @@ func TestServer_ReadOnlyRejectsMutating(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected forbidden error, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeForbidden {
@@ -285,8 +286,8 @@ func TestServer_MCPScope_RejectsWrongSite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected scope rejection, got nil")
 	}
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != CodeForbidden {

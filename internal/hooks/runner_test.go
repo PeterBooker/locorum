@@ -90,15 +90,15 @@ func (c *capture) opts() hooks.RunOptions {
 
 func TestRun_NoHooksFiresOnAllDone(t *testing.T) {
 	r, _, _, _, _ := newRunner(t)
-	cap := newCapture()
-	if err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts()); err != nil {
+	capt := newCapture()
+	if err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(cap.all) != 1 {
-		t.Errorf("OnAllDone fired %d times, want 1", len(cap.all))
+	if len(capt.all) != 1 {
+		t.Errorf("OnAllDone fired %d times, want 1", len(capt.all))
 	}
-	if cap.all[0].Total != 0 {
-		t.Errorf("Summary.Total = %d, want 0", cap.all[0].Total)
+	if capt.all[0].Total != 0 {
+		t.Errorf("Summary.Total = %d, want 0", capt.all[0].Total)
 	}
 }
 
@@ -109,17 +109,17 @@ func TestRun_OrderedExecution(t *testing.T) {
 	}
 	host.Default = fake.HostScript{ExitCode: 0}
 
-	cap := newCapture()
-	if err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts()); err != nil {
+	capt := newCapture()
+	if err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if len(cap.starts) != 3 {
-		t.Fatalf("starts = %d, want 3", len(cap.starts))
+	if len(capt.starts) != 3 {
+		t.Fatalf("starts = %d, want 3", len(capt.starts))
 	}
 	for i, want := range []string{"first", "second", "third"} {
-		if cap.starts[i].Command != want {
-			t.Errorf("start[%d] = %q, want %q", i, cap.starts[i].Command, want)
+		if capt.starts[i].Command != want {
+			t.Errorf("start[%d] = %q, want %q", i, capt.starts[i].Command, want)
 		}
 	}
 
@@ -133,8 +133,8 @@ func TestRun_OrderedExecution(t *testing.T) {
 		}
 	}
 
-	if cap.all[0].Succeeded != 3 || cap.all[0].Failed != 0 {
-		t.Errorf("summary: succeeded=%d failed=%d, want 3/0", cap.all[0].Succeeded, cap.all[0].Failed)
+	if capt.all[0].Succeeded != 3 || capt.all[0].Failed != 0 {
+		t.Errorf("summary: succeeded=%d failed=%d, want 3/0", capt.all[0].Succeeded, capt.all[0].Failed)
 	}
 }
 
@@ -144,14 +144,14 @@ func TestRun_DisabledHooksAreSkipped(t *testing.T) {
 	lister.Add("s", hooks.PostStart, hooks.Hook{TaskType: hooks.TaskExecHost, Command: "no", Enabled: false})
 	host.Default = fake.HostScript{ExitCode: 0}
 
-	cap := newCapture()
-	_ = r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts())
+	capt := newCapture()
+	_ = r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts())
 
 	if len(host.Calls()) != 1 {
 		t.Errorf("host calls = %d, want 1 (disabled hook should be skipped)", len(host.Calls()))
 	}
-	if cap.all[0].Skipped != 1 {
-		t.Errorf("Summary.Skipped = %d, want 1", cap.all[0].Skipped)
+	if capt.all[0].Skipped != 1 {
+		t.Errorf("Summary.Skipped = %d, want 1", capt.all[0].Skipped)
 	}
 }
 
@@ -162,16 +162,16 @@ func TestRun_FailWarnContinues(t *testing.T) {
 	host.Script["broken"] = fake.HostScript{ExitCode: 1}
 	host.Default = fake.HostScript{ExitCode: 0}
 
-	cap := newCapture()
-	if err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts()); err != nil {
+	capt := newCapture()
+	if err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts()); err != nil {
 		t.Fatalf("Run should not return err in warn mode: %v", err)
 	}
 
 	if len(host.Calls()) != 2 {
 		t.Errorf("host calls = %d, want 2 (warn mode runs them all)", len(host.Calls()))
 	}
-	if cap.all[0].Failed != 1 || cap.all[0].Succeeded != 1 {
-		t.Errorf("summary: %+v", cap.all[0])
+	if capt.all[0].Failed != 1 || capt.all[0].Succeeded != 1 {
+		t.Errorf("summary: %+v", capt.all[0])
 	}
 }
 
@@ -183,8 +183,8 @@ func TestRun_FailStrictAbortsOnFirstFailure(t *testing.T) {
 	host.Script["broken"] = fake.HostScript{ExitCode: 2}
 	host.Default = fake.HostScript{ExitCode: 0}
 
-	cap := newCapture()
-	err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts())
+	capt := newCapture()
+	err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts())
 	if err == nil {
 		t.Fatal("expected error in strict mode")
 	}
@@ -192,7 +192,7 @@ func TestRun_FailStrictAbortsOnFirstFailure(t *testing.T) {
 	if len(host.Calls()) != 1 {
 		t.Errorf("host calls = %d, want 1 (strict mode aborts after first failure)", len(host.Calls()))
 	}
-	if cap.all[0].Aborted != true {
+	if capt.all[0].Aborted != true {
 		t.Error("Summary.Aborted = false, want true")
 	}
 }
@@ -206,14 +206,14 @@ func TestRun_PerSiteFailPolicyOverridesGlobal(t *testing.T) {
 	host.Script["broken"] = fake.HostScript{ExitCode: 1}
 	host.Default = fake.HostScript{ExitCode: 0}
 
-	cap := newCapture()
-	if err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts()); err != nil {
+	capt := newCapture()
+	if err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts()); err != nil {
 		t.Fatalf("per-site false should override global true: %v", err)
 	}
 	if len(host.Calls()) != 2 {
 		t.Errorf("host calls = %d, want 2", len(host.Calls()))
 	}
-	_ = cap
+	_ = capt
 }
 
 func TestRun_SkipEnvVarShortCircuits(t *testing.T) {
@@ -223,15 +223,15 @@ func TestRun_SkipEnvVarShortCircuits(t *testing.T) {
 
 	t.Setenv("LOCORUM_SKIP_HOOKS", "1")
 
-	cap := newCapture()
-	if err := r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts()); err != nil {
+	capt := newCapture()
+	if err := r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(host.Calls()) != 0 {
 		t.Errorf("host calls = %d, want 0 (skip env should bypass)", len(host.Calls()))
 	}
-	if len(cap.all) != 1 || cap.all[0].Total != 0 {
-		t.Errorf("OnAllDone summary = %+v, want empty", cap.all)
+	if len(capt.all) != 1 || capt.all[0].Total != 0 {
+		t.Errorf("OnAllDone summary = %+v, want empty", capt.all)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestRun_ContextCancelStopsBetweenHooks(t *testing.T) {
 		ExitCode:    0,
 	}
 	host.Default = host.Script["h"]
-	cap := newCapture()
+	capt := newCapture()
 	cap2 := newCapture()
 	go func() {
 		// race-free: cancel before Run sees the second hook
@@ -262,7 +262,7 @@ func TestRun_ContextCancelStopsBetweenHooks(t *testing.T) {
 		cancel()
 	}()
 
-	_ = r.Run(ctx, hooks.PostStart, testSite(), cap.opts())
+	_ = r.Run(ctx, hooks.PostStart, testSite(), capt.opts())
 	_ = cap2
 }
 
@@ -272,14 +272,14 @@ func TestRun_PreStartContainerTaskRejectedAtRunTime(t *testing.T) {
 	lister.Add("s", hooks.PreStart, hooks.Hook{TaskType: hooks.TaskExec, Command: "echo nope", Enabled: true})
 	cont.Default = fake.ContainerScript{ExitCode: 0}
 
-	cap := newCapture()
-	_ = r.Run(context.Background(), hooks.PreStart, testSite(), cap.opts())
+	capt := newCapture()
+	_ = r.Run(context.Background(), hooks.PreStart, testSite(), capt.opts())
 
 	if len(cont.Calls()) != 0 {
 		t.Errorf("container calls = %d, want 0 (pre-start exec must be rejected)", len(cont.Calls()))
 	}
-	if cap.all[0].Failed != 1 {
-		t.Errorf("Summary.Failed = %d, want 1", cap.all[0].Failed)
+	if capt.all[0].Failed != 1 {
+		t.Errorf("Summary.Failed = %d, want 1", capt.all[0].Failed)
 	}
 }
 
@@ -292,14 +292,14 @@ func TestRun_OutputCallbackSeesStdoutAndStderr(t *testing.T) {
 		ExitCode:    0,
 	}
 
-	cap := newCapture()
-	_ = r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts())
+	capt := newCapture()
+	_ = r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts())
 
 	var (
 		seenOk   bool
 		seenWarn bool
 	)
-	for _, l := range cap.output {
+	for _, l := range capt.output {
 		if l.line == "ok" && !l.stderr {
 			seenOk = true
 		}
@@ -308,7 +308,7 @@ func TestRun_OutputCallbackSeesStdoutAndStderr(t *testing.T) {
 		}
 	}
 	if !seenOk || !seenWarn {
-		t.Errorf("output capture failed (seenOk=%v seenWarn=%v): %+v", seenOk, seenWarn, cap.output)
+		t.Errorf("output capture failed (seenOk=%v seenWarn=%v): %+v", seenOk, seenWarn, capt.output)
 	}
 }
 
@@ -317,13 +317,13 @@ func TestRun_LogFileWritten(t *testing.T) {
 	lister.Add("s", hooks.PostStart, hooks.Hook{TaskType: hooks.TaskExecHost, Command: "echo hi", Enabled: true})
 	host.Default = fake.HostScript{StdoutLines: []string{"hi"}, ExitCode: 0}
 
-	cap := newCapture()
-	_ = r.Run(context.Background(), hooks.PostStart, testSite(), cap.opts())
+	capt := newCapture()
+	_ = r.Run(context.Background(), hooks.PostStart, testSite(), capt.opts())
 
-	if cap.all[0].LogPath == "" {
+	if capt.all[0].LogPath == "" {
 		t.Fatal("Summary.LogPath should be set")
 	}
-	data, err := os.ReadFile(cap.all[0].LogPath)
+	data, err := os.ReadFile(capt.all[0].LogPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -340,10 +340,10 @@ func TestRunOne_DispatchesSingleTask(t *testing.T) {
 	r, _, _, host, _ := newRunner(t)
 	host.Default = fake.HostScript{StdoutLines: []string{"y"}, ExitCode: 0}
 
-	cap := newCapture()
+	capt := newCapture()
 	res, err := r.RunOne(context.Background(), hooks.Hook{
 		SiteID: "s", Event: hooks.PostStart, TaskType: hooks.TaskExecHost, Command: "test", Enabled: true,
-	}, testSite(), cap.opts())
+	}, testSite(), capt.opts())
 	if err != nil {
 		t.Fatalf("RunOne err = %v", err)
 	}
@@ -382,7 +382,6 @@ func TestNewRunner_RequiresAllDeps(t *testing.T) {
 		{"missing logs dir", hooks.Config{Lister: fake.NewLister(), Container: fake.NewContainer(), Host: fake.NewHost(), Settings: fake.NewSettings()}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := hooks.NewRunner(tc.cfg)
 			if err == nil {
@@ -395,15 +394,15 @@ func TestNewRunner_RequiresAllDeps(t *testing.T) {
 func TestSweepLogs_RemovesOldFiles(t *testing.T) {
 	dir := t.TempDir()
 	siteDir := filepath.Join(dir, "demo")
-	if err := os.MkdirAll(siteDir, 0755); err != nil {
+	if err := os.MkdirAll(siteDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	old := filepath.Join(siteDir, "post-start-old.log")
 	young := filepath.Join(siteDir, "post-start-young.log")
-	if err := os.WriteFile(old, []byte("o"), 0644); err != nil {
+	if err := os.WriteFile(old, []byte("o"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(young, []byte("y"), 0644); err != nil {
+	if err := os.WriteFile(young, []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Backdate the "old" file by 60 days.
@@ -427,12 +426,12 @@ func TestSweepLogs_RemovesOldFiles(t *testing.T) {
 func TestSweepLogs_CapsPerSiteCount(t *testing.T) {
 	dir := t.TempDir()
 	siteDir := filepath.Join(dir, "demo")
-	if err := os.MkdirAll(siteDir, 0755); err != nil {
+	if err := os.MkdirAll(siteDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
 		path := filepath.Join(siteDir, "post-start-"+time.Now().Add(-time.Duration(i)*time.Hour).Format("20060102T150405")+".log")
-		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		modAt := time.Now().Add(-time.Duration(i) * time.Hour)

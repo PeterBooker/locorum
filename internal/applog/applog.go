@@ -88,7 +88,6 @@ func Init(dir string) (io.Closer, error) {
 		_ = currentFile.Close()
 	}
 	currentFile = f
-	currentRotater = rw
 	return closerFunc(closeCurrent), nil
 }
 
@@ -148,10 +147,9 @@ func TailLines(n int) ([]string, error) {
 // ────────────────────────────────────────────────────────────────────────
 
 var (
-	mu             sync.Mutex
-	currentFile    *os.File
-	currentRotater *rotatingWriter
-	levelVar       = func() *slog.LevelVar {
+	mu          sync.Mutex
+	currentFile *os.File
+	levelVar    = func() *slog.LevelVar {
 		v := new(slog.LevelVar)
 		v.Set(slog.LevelInfo)
 		return v
@@ -167,7 +165,6 @@ func installStderrOnly() {
 		_ = currentFile.Close()
 		currentFile = nil
 	}
-	currentRotater = nil
 }
 
 // closeCurrent flushes and closes the active log file. Safe to call when
@@ -180,7 +177,6 @@ func closeCurrent() error {
 	}
 	err := currentFile.Close()
 	currentFile = nil
-	currentRotater = nil
 	return err
 }
 

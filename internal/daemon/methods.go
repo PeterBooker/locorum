@@ -151,7 +151,7 @@ func makeSiteDescribe(svc SiteService) Handler {
 		if err != nil {
 			return nil, err
 		}
-		desc, err := svc.Describe(ctx, id, p.listOptions.toDescribe())
+		desc, err := svc.Describe(ctx, id, p.toDescribe())
 		if err != nil {
 			return nil, err
 		}

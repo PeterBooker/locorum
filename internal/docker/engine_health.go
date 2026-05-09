@@ -106,9 +106,9 @@ func (d *Docker) WaitReady(ctx context.Context, name string, timeout time.Durati
 func (d *Docker) notReady(ctx context.Context, name string, cause error) error {
 	logs, _ := d.ContainerLogs(ctx, name, 50)
 	if logs == "" {
-		return fmt.Errorf("%w: %v", ErrContainerNotReady, cause)
+		return fmt.Errorf("%w: %w", ErrContainerNotReady, cause)
 	}
-	return fmt.Errorf("%w: %v\n--- last 50 log lines ---\n%s", ErrContainerNotReady, cause, logs)
+	return fmt.Errorf("%w: %w\n--- last 50 log lines ---\n%s", ErrContainerNotReady, cause, logs)
 }
 
 func scaleTimeout(t time.Duration) time.Duration {

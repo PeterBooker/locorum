@@ -27,7 +27,7 @@ func TestSpecBuildersBindMountsAreSlashSafe(t *testing.T) {
 		ID:       "1",
 		Slug:     "demo",
 		Name:     "Demo",
-		FilesDir: filepath.Join("/home/u", "locorum", "sites", "demo"),
+		FilesDir: filepath.Join(string(filepath.Separator), "home", "u", "locorum", "sites", "demo"),
 	}
 	homeDir := "/home/u"
 

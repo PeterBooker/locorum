@@ -58,7 +58,7 @@ func WaitForHTTP(t testing.TB, url string, opts *WaitOpts) {
 	var lastStatus int
 
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
 		if err != nil {
 			t.Fatalf("WaitForHTTP: invalid url %q: %v", url, err)
 		}

@@ -73,7 +73,7 @@ func (s *Storage) AddHook(h *hooks.Hook) error {
 	if err != nil {
 		return fmt.Errorf("AddHook: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var maxPos sql.NullInt64
 	if err := tx.QueryRow(
@@ -184,7 +184,7 @@ func (s *Storage) ReorderHooks(siteID string, ev hooks.Event, orderedIDs []int64
 	if err != nil {
 		return fmt.Errorf("ReorderHooks: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Verify every id belongs to (siteID, ev). Cheaper than per-row UPDATE
 	// guards because the existence check happens in one round trip.
@@ -195,16 +195,18 @@ func (s *Storage) ReorderHooks(siteID string, ev hooks.Event, orderedIDs []int64
 	if err != nil {
 		return fmt.Errorf("ReorderHooks: verify: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	existing := make(map[int64]struct{})
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
 			return fmt.Errorf("ReorderHooks: scan id: %w", err)
 		}
 		existing[id] = struct{}{}
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("ReorderHooks: rows: %w", err)
+	}
 
 	if len(existing) != len(orderedIDs) {
 		return fmt.Errorf("ReorderHooks: id count mismatch (got %d, have %d)", len(orderedIDs), len(existing))

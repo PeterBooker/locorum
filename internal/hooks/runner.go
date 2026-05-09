@@ -387,7 +387,7 @@ func (r *runner) openRunLog(slug string, ev Event) (*os.File, string, error) {
 		slug = "_unknown"
 	}
 	dir := filepath.Join(r.cfg.LogsBaseDir, slug)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, "", err
 	}
 	// Replace ":" so Windows accepts the filename.
@@ -397,7 +397,7 @@ func (r *runner) openRunLog(slug string, ev Event) (*os.File, string, error) {
 		name = "ad-hoc"
 	}
 	path := filepath.Join(dir, name+"-"+ts+".log")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return nil, "", err
 	}
@@ -445,11 +445,11 @@ func formatHookHeader(h Hook) string {
 	return fmt.Sprintf("[%s] %s", h.TaskType, truncate(h.Command, 80))
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	return s[:max] + "…"
+	return s[:limit] + "…"
 }
 
 // SweepLogs prunes old run-log files. Safe to call from startup. Errors

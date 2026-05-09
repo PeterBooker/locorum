@@ -3,11 +3,13 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	// register sqlite driver
 	_ "modernc.org/sqlite"
 
 	"github.com/PeterBooker/locorum/internal/types"
@@ -29,7 +31,7 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 	appDataDir := filepath.Join(cwd, ".locorum")
 	dbPath := filepath.Join(appDataDir, "storage.db")
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
 	}
 
@@ -41,7 +43,7 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 	}
 
 	if err := applyMigrations(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
@@ -71,6 +73,7 @@ func scanSite(scan func(...any) error) (*types.Site, error) {
 	if err := scan(
 		&site.ID, &site.Name, &site.Slug, &site.Domain,
 		&site.FilesDir, &site.PublicDir, &site.Started,
+		//nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		&site.PHPVersion, &site.MySQLVersion, &site.RedisVersion, &site.DBPassword,
 		&site.WebServer, &site.Multisite, &site.Salts,
 		&site.DBEngine, &site.DBVersion, &site.PublishDBPort,
@@ -94,7 +97,7 @@ func hydrateLegacyDBFields(site *types.Site) {
 		site.DBEngine = "mysql"
 	}
 	if site.DBVersion == "" {
-		site.DBVersion = site.MySQLVersion
+		site.DBVersion = site.MySQLVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	}
 }
 
@@ -123,7 +126,7 @@ func (s *Storage) GetSite(id string) (*types.Site, error) {
 	row := s.db.QueryRow("SELECT "+siteColumns+" FROM sites WHERE id = ?", id)
 	site, err := scanSite(row.Scan)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -139,13 +142,14 @@ func (s *Storage) AddSite(site *types.Site) error {
 
 	// Mirror the legacy column for one minor release so external
 	// tooling that reads mysqlVersion directly keeps working.
-	if site.MySQLVersion == "" && site.DBEngine == "mysql" {
-		site.MySQLVersion = site.DBVersion
+	if site.MySQLVersion == "" && site.DBEngine == "mysql" { //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
+		site.MySQLVersion = site.DBVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	}
 
 	_, err := s.db.Exec(
 		"INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		site.ID, site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
+		//nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
 		site.WebServer, site.Multisite, site.Salts,
 		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),
@@ -164,13 +168,14 @@ func (s *Storage) AddSite(site *types.Site) error {
 func (s *Storage) UpdateSite(site *types.Site) (*types.Site, error) {
 	site.UpdatedAt = now()
 
-	if site.MySQLVersion == "" && site.DBEngine == "mysql" {
-		site.MySQLVersion = site.DBVersion
+	if site.MySQLVersion == "" && site.DBEngine == "mysql" { //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
+		site.MySQLVersion = site.DBVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	}
 
 	_, err := s.db.Exec(
 		"UPDATE sites SET name = ?, slug = ?, domain = ?, filesDir = ?, publicDir = ?, started = ?, phpVersion = ?, mysqlVersion = ?, redisVersion = ?, dbPassword = ?, webServer = ?, multisite = ?, salts = ?, dbEngine = ?, dbVersion = ?, publishDBPort = ?, spxEnabled = ?, spxKey = ?, gitRemote = ?, gitBranch = ?, worktreePath = ?, parentSiteID = ?, updatedAt = ? WHERE id = ?",
 		site.Name, site.Slug, site.Domain, site.FilesDir, site.PublicDir, site.Started,
+		//nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		site.PHPVersion, site.MySQLVersion, site.RedisVersion, site.DBPassword,
 		site.WebServer, site.Multisite, site.Salts,
 		site.DBEngine, site.DBVersion, boolToInt(site.PublishDBPort),

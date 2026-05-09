@@ -69,10 +69,10 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 	defer outFile.Close()
 
 	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Write metadata.json
 	meta := exportMeta{
@@ -82,7 +82,7 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 		PHPVersion:   site.PHPVersion,
 		DBEngine:     site.DBEngine,
 		DBVersion:    site.DBVersion,
-		MySQLVersion: site.MySQLVersion,
+		MySQLVersion: site.MySQLVersion, //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 		RedisVersion: site.RedisVersion,
 		PublicDir:    site.PublicDir,
 		ExportedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -115,7 +115,7 @@ func (sm *SiteManager) ExportSite(ctx context.Context, id, destPath string) erro
 			return tw.WriteHeader(&tar.Header{
 				Name:     tarPath + "/",
 				Typeflag: tar.TypeDir,
-				Mode:     0755,
+				Mode:     0o755,
 			})
 		}
 
@@ -159,7 +159,7 @@ func addToTar(tw *tar.Writer, name string, data []byte) error {
 	hdr := &tar.Header{
 		Name: name,
 		Size: int64(len(data)),
-		Mode: 0644,
+		Mode: 0o644,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err

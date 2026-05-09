@@ -34,16 +34,16 @@ func runSiteCreate(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if strings.TrimSpace(*name) == "" || strings.TrimSpace(*gitRemote) == "" || strings.TrimSpace(*branch) == "" {
-		fmt.Fprintln(env.Stderr, "usage: locorum site create --name N --git-remote URL --branch B [--clone-db] [--dry-run]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum site create --name N --git-remote URL --branch B [--clone-db] [--dry-run]")
 		return ExitUsage
 	}
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	params := map[string]any{
 		"name":         *name,
@@ -60,7 +60,7 @@ func runSiteCreate(ctx context.Context, env *Env) ExitCode {
 	}
 	var resp sites.CreateWorktreeResult
 	if err := cli.Call(ctx, "site.create_worktree", params, &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
 
@@ -72,13 +72,13 @@ func runSiteCreate(ctx context.Context, env *Env) ExitCode {
 	}
 
 	if *dryRun {
-		fmt.Fprint(env.Stdout, resp.DryRunPreview)
+		_, _ = fmt.Fprint(env.Stdout, resp.DryRunPreview)
 		return ExitOK
 	}
-	fmt.Fprintf(env.Stdout, "Created %s (slug=%s)\n", resp.Site.Name, resp.DerivedSlug)
-	fmt.Fprintf(env.Stdout, "URL: https://%s\n", resp.Site.Domain)
+	_, _ = fmt.Fprintf(env.Stdout, "Created %s (slug=%s)\n", resp.Site.Name, resp.DerivedSlug)
+	_, _ = fmt.Fprintf(env.Stdout, "URL: https://%s\n", resp.Site.Domain)
 	if resp.Site.WorktreePath != "" {
-		fmt.Fprintf(env.Stdout, "Worktree: %s\n", resp.Site.WorktreePath)
+		_, _ = fmt.Fprintf(env.Stdout, "Worktree: %s\n", resp.Site.WorktreePath)
 	}
 	return ExitOK
 }
@@ -95,17 +95,17 @@ func runSiteDelete(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(env.Stderr, "usage: locorum site delete <slug-or-id> [--force] [--purge-volume] [--dry-run]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum site delete <slug-or-id> [--force] [--purge-volume] [--dry-run]")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	params := siteIDParams(target, map[string]any{
 		"purgeVolume":   *purge,
@@ -115,13 +115,13 @@ func runSiteDelete(ctx context.Context, env *Env) ExitCode {
 	})
 	var resp map[string]any
 	if err := cli.Call(ctx, "site.delete", params, &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
 	if *dryRun {
-		fmt.Fprintln(env.Stdout, "Dry run complete — no changes were made (see daemon log for the full plan).")
+		_, _ = fmt.Fprintln(env.Stdout, "Dry run complete — no changes were made (see daemon log for the full plan).")
 	} else {
-		fmt.Fprintf(env.Stdout, "%s: deleted\n", target)
+		_, _ = fmt.Fprintf(env.Stdout, "%s: deleted\n", target)
 	}
 	return ExitOK
 }

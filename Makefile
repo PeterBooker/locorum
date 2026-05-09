@@ -148,11 +148,14 @@ integration-prepull:
 	@./scripts/integration-prepull.sh
 
 # govulncheck: Go vulnerability database. Required gate.
+# scripts/vuln-check.sh applies a documented allowlist for upstream
+# advisories that have no fix and aren't reachable from this consumer
+# (currently 2 Moby daemon CVEs). New IDs always fail.
 vuln:
 	@command -v govulncheck >/dev/null 2>&1 || \
 		(echo "installing govulncheck"; \
 		 go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VER))
-	$(GOBIN)/govulncheck ./...
+	@PATH="$(GOBIN):$$PATH" ./scripts/vuln-check.sh
 
 # CycloneDX + SPDX SBOM via syft. Shipped alongside every release artifact.
 sbom:

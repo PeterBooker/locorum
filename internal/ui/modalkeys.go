@@ -43,7 +43,7 @@ func ProcessModalKeys(gtx layout.Context, tag event.Tag) ModalKeyResult {
 	return r
 }
 
-// FocusModalKeys declares tag as a key event receiver and requests focus on
+// ModalFocus declares tag as a key event receiver and requests focus on
 // the first call after the modal becomes visible. Call from the modal's
 // Layout() before Process is called for the next frame.
 type ModalFocus struct {

@@ -115,9 +115,9 @@ func (sm *SiteManager) MigrateEngine(ctx context.Context, siteID string, opts Mi
 	site.DBEngine = targetEngine
 	site.DBVersion = opts.TargetVersion
 	if site.DBEngine == string(dbengine.MySQL) {
-		site.MySQLVersion = opts.TargetVersion
+		site.MySQLVersion = opts.TargetVersion //nolint:staticcheck // SA1019: legacy mirror, kept for back-compat with rows written before the DBVersion+DBEngine split
 	} else {
-		site.MySQLVersion = "" // legacy mirror only meaningful for MySQL
+		site.MySQLVersion = "" //nolint:staticcheck // SA1019: legacy mirror only meaningful for MySQL
 	}
 	if _, err := sm.st.UpdateSite(site); err != nil {
 		mu.Unlock()

@@ -112,7 +112,9 @@ func (h *HTTPServer) Serve(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		_ = h.Shutdown()
+		// ctx is already cancelled here; strip cancellation so the 5s
+		// shutdown deadline still applies.
+		_ = h.Shutdown(context.WithoutCancel(ctx))
 	}()
 	h.logger.Info("http mcp listening", "addr", h.actualAddr())
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -140,8 +142,10 @@ func (h *HTTPServer) actualAddr() string {
 func (h *HTTPServer) Addr() string { return h.actualAddr() }
 
 // Shutdown stops accepting new connections and waits up to 5s for
-// in-flight requests to finish.
-func (h *HTTPServer) Shutdown() error {
+// in-flight requests to finish. The supplied parent context contributes
+// values and tracing; cancellation is layered on top of the 5s deadline
+// (whichever fires first wins).
+func (h *HTTPServer) Shutdown(parent context.Context) error {
 	h.mu.Lock()
 	if h.stopped {
 		h.mu.Unlock()
@@ -150,7 +154,7 @@ func (h *HTTPServer) Shutdown() error {
 	h.stopped = true
 	srv := h.srv
 	h.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	if srv != nil {
 		return srv.Shutdown(ctx)

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -111,8 +111,8 @@ func (d *Docker) StreamContainerLogs(ctx context.Context, name string, since tim
 		stdout, stderr = stdoutW, stderrW
 
 		_, copyErr := stdcopy.StdCopy(stdout, stderr, rc)
-		stdoutW.Close()
-		stderrW.Close()
+		_ = stdoutW.Close()
+		_ = stderrW.Close()
 		<-stdoutDone
 		<-stderrDone
 
@@ -167,7 +167,7 @@ func newLinePump(ctx context.Context, out chan<- LogLine, stream LogStream) (*li
 	lp := &linePump{ctx: ctx, out: out, stream: stream, done: done, pipe: pw}
 	go func() {
 		defer close(done)
-		defer pr.Close()
+		defer func() { _ = pr.Close() }()
 		pump(ctx, out, pr, stream)
 	}()
 	return lp, done

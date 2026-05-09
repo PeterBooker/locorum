@@ -115,7 +115,7 @@ func Dispatch(args []string, env *Env) (ExitCode, bool) {
 		printHelp(env.Stdout, env.Version)
 		return ExitOK, true
 	default:
-		fmt.Fprintf(env.Stderr, "locorum: unknown command %q\n", verb)
+		_, _ = fmt.Fprintf(env.Stderr, "locorum: unknown command %q\n", verb)
 		printHelp(env.Stderr, env.Version)
 		return ExitUsage, true
 	}
@@ -150,17 +150,17 @@ func IsDaemonVerb(args []string) bool {
 
 // printHelp renders top-level help.
 func printHelp(w io.Writer, version string) {
-	fmt.Fprintf(w, "Locorum %s — local WordPress dev environments\n\n", version)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  locorum                          Launch the GUI")
-	fmt.Fprintln(w, "  locorum <command> [args...]      Run a CLI command (talks to a running daemon)")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
+	_, _ = fmt.Fprintf(w, "Locorum %s — local WordPress dev environments\n\n", version)
+	_, _ = fmt.Fprintln(w, "Usage:")
+	_, _ = fmt.Fprintln(w, "  locorum                          Launch the GUI")
+	_, _ = fmt.Fprintln(w, "  locorum <command> [args...]      Run a CLI command (talks to a running daemon)")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Commands:")
 	for _, c := range commands {
-		fmt.Fprintf(w, "  %-10s %s\n", c.name, c.summary)
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", c.name, c.summary)
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run `locorum <command> --help` for command-specific options.")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Run `locorum <command> --help` for command-specific options.")
 }
 
 // signalContext returns a context cancelled by Ctrl-C / SIGTERM. The

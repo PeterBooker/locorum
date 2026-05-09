@@ -265,7 +265,6 @@ func (pp *ProfilingPanel) layoutReportRows(gtx layout.Context, th *Theme, report
 	now := time.Now()
 	children := make([]layout.FlexChild, 0, len(reports))
 	for _, r := range reports {
-		r := r
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
@@ -296,7 +295,7 @@ func (pp *ProfilingPanel) layoutReportRows(gtx layout.Context, th *Theme, report
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // copyableRow renders a Label / selectable mono value / Copy button row.
-func (pp *ProfilingPanel) copyableRow(gtx layout.Context, th *Theme, label, value string, sel *widget.Selectable, copy *widget.Clickable) layout.Dimensions {
+func (pp *ProfilingPanel) copyableRow(gtx layout.Context, th *Theme, label, value string, sel *widget.Selectable, copyBtn *widget.Clickable) layout.Dimensions {
 	return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -311,7 +310,7 @@ func (pp *ProfilingPanel) copyableRow(gtx layout.Context, th *Theme, label, valu
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return SmallButton(gtx, th, copy, "Copy")
+					return SmallButton(gtx, th, copyBtn, "Copy")
 				})
 			}),
 		)

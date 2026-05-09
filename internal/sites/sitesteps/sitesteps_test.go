@@ -255,7 +255,7 @@ func TestEnsureSPXStep_KeyChangeIsPickedUp(t *testing.T) {
 // contains is a tiny string-contains helper so tests stay free of
 // strings.Contains imports per the existing pattern in this file.
 func contains(haystack, needle string) bool {
-	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
+	return needle == "" || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
 }
 
 func indexOf(s, sub string) int {

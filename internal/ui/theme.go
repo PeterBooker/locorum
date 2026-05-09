@@ -68,26 +68,26 @@ func NewTheme() *Theme {
 
 // SetMode swaps the active palette to the requested mode. ThemeSystem resolves
 // to Dark or Light via DetectSystemTheme().
-func (t *Theme) SetMode(mode ThemeMode) {
-	t.Mode = mode
-	if t.ResolvedMode() == ThemeLight {
-		t.Color = LightPalette()
+func (th *Theme) SetMode(mode ThemeMode) {
+	th.Mode = mode
+	if th.ResolvedMode() == ThemeLight {
+		th.Color = LightPalette()
 	} else {
-		t.Color = DarkPalette()
+		th.Color = DarkPalette()
 	}
-	t.Theme.Fg = t.Color.Fg
-	t.Theme.Bg = t.Color.Bg
-	t.Theme.ContrastBg = t.Color.Accent
-	t.Theme.ContrastFg = t.Color.AccentFg
+	th.Fg = th.Color.Fg
+	th.Bg = th.Color.Bg
+	th.ContrastBg = th.Color.Accent
+	th.ContrastFg = th.Color.AccentFg
 }
 
 // ResolvedMode returns the effective theme mode, resolving ThemeSystem to
 // either ThemeDark or ThemeLight via DetectSystemTheme.
-func (t *Theme) ResolvedMode() ThemeMode {
-	if t.Mode == ThemeSystem {
+func (th *Theme) ResolvedMode() ThemeMode {
+	if th.Mode == ThemeSystem {
 		return DetectSystemTheme()
 	}
-	return t.Mode
+	return th.Mode
 }
 
 // ParseThemeMode converts a stored string into a ThemeMode. Unknown / empty
@@ -119,8 +119,8 @@ func (m ThemeMode) String() string {
 
 // Hovered returns a slightly lighter (dark theme) or darker (light theme)
 // variant of the input color, suitable for hover states.
-func (t *Theme) Hovered(c color.NRGBA) color.NRGBA {
-	if t.ResolvedMode() == ThemeLight {
+func (th *Theme) Hovered(c color.NRGBA) color.NRGBA {
+	if th.ResolvedMode() == ThemeLight {
 		return darken(c, 0.08)
 	}
 	return lighten(c, 0.10)
@@ -128,7 +128,7 @@ func (t *Theme) Hovered(c color.NRGBA) color.NRGBA {
 
 // Disabled returns a desaturated, alpha-reduced version of the input color,
 // suitable for disabled controls.
-func (t *Theme) Disabled(c color.NRGBA) color.NRGBA {
+func (th *Theme) Disabled(c color.NRGBA) color.NRGBA {
 	out := c
 	out.A = uint8(float32(out.A) * 0.45)
 	return out
@@ -136,7 +136,7 @@ func (t *Theme) Disabled(c color.NRGBA) color.NRGBA {
 
 // ContrastText returns black or white depending on whether the input
 // background color is light or dark, optimised for body text legibility.
-func (t *Theme) ContrastText(bg color.NRGBA) color.NRGBA {
+func (th *Theme) ContrastText(bg color.NRGBA) color.NRGBA {
 	r := float32(bg.R) / 255
 	g := float32(bg.G) / 255
 	b := float32(bg.B) / 255

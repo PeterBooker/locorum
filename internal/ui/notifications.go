@@ -219,7 +219,6 @@ func (n *Notifications) LayoutBell(gtx layout.Context, th *Theme) layout.Dimensi
 func (n *Notifications) layoutFloating(gtx layout.Context, th *Theme, items []*Notification) layout.Dimensions {
 	children := make([]layout.FlexChild, len(items))
 	for i, item := range items {
-		item := item
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: th.Spacing.SM}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layoutNotificationCard(gtx, th, item, nil)
@@ -268,7 +267,6 @@ func (n *Notifications) layoutHistoryPanel(gtx layout.Context, th *Theme, items 
 					}
 					children := make([]layout.FlexChild, len(items))
 					for i, item := range items {
-						item := item
 						children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Bottom: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layoutNotificationCard(gtx, th, item, &item.dismiss)

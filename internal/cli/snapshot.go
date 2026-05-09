@@ -13,7 +13,7 @@ import (
 // runSnapshot dispatches `locorum snapshot …`.
 func runSnapshot(ctx context.Context, env *Env) ExitCode {
 	if len(env.Args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: locorum snapshot <list|create|restore> [args...]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum snapshot <list|create|restore> [args...]")
 		return ExitUsage
 	}
 	verb := env.Args[0]
@@ -27,12 +27,12 @@ func runSnapshot(ctx context.Context, env *Env) ExitCode {
 	case "restore":
 		return runSnapshotRestore(ctx, &rest)
 	case "help", "-h", "--help":
-		fmt.Fprintln(env.Stdout, "snapshot list <slug>           List snapshots for a site")
-		fmt.Fprintln(env.Stdout, "snapshot create <slug> [--label L]")
-		fmt.Fprintln(env.Stdout, "snapshot restore <slug> --path P [--force]")
+		_, _ = fmt.Fprintln(env.Stdout, "snapshot list <slug>           List snapshots for a site")
+		_, _ = fmt.Fprintln(env.Stdout, "snapshot create <slug> [--label L]")
+		_, _ = fmt.Fprintln(env.Stdout, "snapshot restore <slug> --path P [--force]")
 		return ExitOK
 	default:
-		fmt.Fprintf(env.Stderr, "locorum snapshot: unknown verb %q\n", verb)
+		_, _ = fmt.Fprintf(env.Stderr, "locorum snapshot: unknown verb %q\n", verb)
 		return ExitUsage
 	}
 }
@@ -45,23 +45,23 @@ func runSnapshotList(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(env.Stderr, "usage: locorum snapshot list <slug>")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum snapshot list <slug>")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	var resp struct {
 		Snapshots []sites.SnapshotInfo `json:"snapshots"`
 	}
 	if err := cli.Call(ctx, "snapshot.list", siteIDParams(target, nil), &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
 	if *jsonOut {
@@ -71,9 +71,9 @@ func runSnapshotList(ctx context.Context, env *Env) ExitCode {
 		return ExitOK
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "FILENAME\tLABEL\tENGINE\tVERSION\tSIZE\tCREATED")
+	_, _ = fmt.Fprintln(tw, "FILENAME\tLABEL\tENGINE\tVERSION\tSIZE\tCREATED")
 	for _, s := range resp.Snapshots {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n",
 			s.Filename, s.Label, s.Engine, s.Version, s.SizeBytes,
 			s.CreatedAt.Format("2006-01-02 15:04"))
 	}
@@ -81,7 +81,7 @@ func runSnapshotList(ctx context.Context, env *Env) ExitCode {
 		return ExitError
 	}
 	if len(resp.Snapshots) == 0 {
-		fmt.Fprintln(env.Stdout, "(no snapshots yet)")
+		_, _ = fmt.Fprintln(env.Stdout, "(no snapshots yet)")
 	}
 	return ExitOK
 }
@@ -94,27 +94,27 @@ func runSnapshotCreate(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(env.Stderr, "usage: locorum snapshot create <slug> [--label L]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum snapshot create <slug> [--label L]")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	var resp struct {
 		Path string `json:"path"`
 	}
 	params := siteIDParams(target, map[string]any{"label": *label})
 	if err := cli.Call(ctx, "snapshot.create", params, &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	fmt.Fprintln(env.Stdout, resp.Path)
+	_, _ = fmt.Fprintln(env.Stdout, resp.Path)
 	return ExitOK
 }
 
@@ -127,17 +127,17 @@ func runSnapshotRestore(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	if fs.NArg() != 1 || *path == "" {
-		fmt.Fprintln(env.Stderr, "usage: locorum snapshot restore <slug> --path /abs/path.sql.zst [--force]")
+		_, _ = fmt.Fprintln(env.Stderr, "usage: locorum snapshot restore <slug> --path /abs/path.sql.zst [--force]")
 		return ExitUsage
 	}
 	target := fs.Arg(0)
 
 	cli, err := dial(ctx, env, daemon.HelloOptions{})
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	params := siteIDParams(target, map[string]any{
 		"path":  *path,
@@ -145,9 +145,9 @@ func runSnapshotRestore(ctx context.Context, env *Env) ExitCode {
 	})
 	var resp struct{}
 	if err := cli.Call(ctx, "snapshot.restore", params, &resp); err != nil {
-		fmt.Fprintln(env.Stderr, "locorum:", err)
+		_, _ = fmt.Fprintln(env.Stderr, "locorum:", err)
 		return errToExit(err)
 	}
-	fmt.Fprintln(env.Stdout, "snapshot restored")
+	_, _ = fmt.Fprintln(env.Stdout, "snapshot restored")
 	return ExitOK
 }

@@ -2,6 +2,7 @@ package dbengine
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -54,7 +55,7 @@ func FilterImportStream(filters []ImportFilter, in io.Reader, out io.Writer) (in
 		written += int64(len(line)) + 1
 	}
 	if err := scanner.Err(); err != nil {
-		if err == bufio.ErrTooLong {
+		if errors.Is(err, bufio.ErrTooLong) {
 			return written, fmt.Errorf("import dump contains a line longer than %d bytes — refusing to process; the dump is likely binary or corrupted", MaxLineBytes)
 		}
 		return written, fmt.Errorf("scan: %w", err)

@@ -215,13 +215,13 @@ func (s *Snapshot) HighestSeverity() Severity {
 	if s == nil {
 		return 0
 	}
-	var max Severity
+	var worst Severity
 	for _, f := range s.Findings {
-		if f.Severity > max {
-			max = f.Severity
+		if f.Severity > worst {
+			worst = f.Severity
 		}
 	}
-	return max
+	return worst
 }
 
 // CountAt counts findings of the given severity. Convenience for UI badge

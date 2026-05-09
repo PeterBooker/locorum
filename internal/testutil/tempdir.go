@@ -27,7 +27,6 @@ func TempLocorumHome(t testing.TB) string {
 		if err := os.Setenv(k, dir); err != nil {
 			t.Fatalf("setenv %s: %v", k, err)
 		}
-		k := k
 		t.Cleanup(func() {
 			if hadOld {
 				_ = os.Setenv(k, old)

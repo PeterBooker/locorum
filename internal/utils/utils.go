@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,7 +16,7 @@ import (
 func EnsureDir(path string) error {
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0755); err != nil {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %q: %w", path, err)
 		}
 
@@ -193,7 +194,7 @@ func OpenTerminalWithCommand(args ...string) error {
 	fullCmd := strings.Join(args, " ")
 	switch runtime.GOOS {
 	case "darwin":
-		script := fmt.Sprintf(`tell application "Terminal" to do script "%s"`, fullCmd)
+		script := fmt.Sprintf(`tell application "Terminal" to do script %q`, fullCmd)
 		return exec.Command("osascript", "-e", script).Start()
 	case "windows":
 		return exec.Command("cmd.exe", "/C", "start", "cmd.exe", "/K", fullCmd).Start()
@@ -247,7 +248,7 @@ func OpenTerminalWithCommand(args ...string) error {
 				return exec.Command(t.name, cmdArgs...).Start()
 			}
 		}
-		return fmt.Errorf("no terminal emulator found")
+		return errors.New("no terminal emulator found")
 	}
 }
 
@@ -260,13 +261,13 @@ func CopyDir(src, dst string) error {
 		rel, _ := filepath.Rel(src, p)
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0777)
+			return os.MkdirAll(target, 0o777)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0666)
+		return os.WriteFile(target, data, 0o666)
 	})
 }
 
@@ -295,7 +296,7 @@ func PickDirectoryInWSL() (string, error) {
 	}
 	dir := strings.TrimSpace(string(out))
 	if dir == "" {
-		return "", fmt.Errorf("no directory selected")
+		return "", errors.New("no directory selected")
 	}
 	return dir, nil
 }

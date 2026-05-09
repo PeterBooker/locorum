@@ -170,19 +170,20 @@ func Run(ctx context.Context, plan Plan, cb Callbacks) Result {
 // rollbackPrior calls Rollback on every Succeeded step before failedAt, in
 // reverse order, using a fresh non-cancelled-context for cleanup. Returns
 // true once at least one Rollback fired.
-func rollbackPrior(_ context.Context, steps []Step, failedAt int, res *Result, cb Callbacks) bool {
+func rollbackPrior(parent context.Context, steps []Step, failedAt int, res *Result, cb Callbacks) bool {
 	// Cleanup runs even if the parent context cancelled — losing track of
 	// orphan resources is worse than respecting the cancellation here. We
-	// give cleanup a generous deadline of its own.
-	rbCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// strip cancellation but inherit values/tracing, then layer a
+	// generous deadline of our own.
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 60*time.Second)
 	defer cancel()
 
-	any := false
+	found := false
 	for i := failedAt - 1; i >= 0; i-- {
 		if res.Steps[i].Status != StatusSucceeded {
 			continue
 		}
-		any = true
+		found = true
 		s := steps[i]
 		err := safeRollback(rbCtx, s)
 		res.Steps[i].Status = StatusRolledBack
@@ -193,7 +194,7 @@ func rollbackPrior(_ context.Context, steps []Step, failedAt int, res *Result, c
 				"plan", res.PlanName, "step", s.Name(), "err", err.Error())
 		}
 	}
-	return any
+	return found
 }
 
 // safeApply runs Step.Apply with panic recovery so a bug in one step

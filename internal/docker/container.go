@@ -7,7 +7,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
 )
 
 // ContainersByLabel lists all containers (running or stopped) whose labels

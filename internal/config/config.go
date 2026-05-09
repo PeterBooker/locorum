@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ type Config struct {
 // row rather than silently using defaults.
 func New(st Store) (*Config, error) {
 	if st == nil {
-		return nil, fmt.Errorf("config: nil store")
+		return nil, errors.New("config: nil store")
 	}
 	c := &Config{st: st, cached: map[string]string{}}
 	if err := c.Reload(); err != nil {
@@ -265,7 +266,7 @@ func (c *Config) SetThemeMode(v string) error {
 // dbengine package validates the actual image tag at site start.
 func (c *Config) SetPHPVersionDefault(v string) error {
 	if v == "" {
-		return fmt.Errorf("config: php version cannot be empty")
+		return errors.New("config: php version cannot be empty")
 	}
 	return c.Set(KeyDefaultPHPVersion, v)
 }
@@ -281,7 +282,7 @@ func (c *Config) SetDBEngineDefault(v string) error {
 // SetDBVersionDefault accepts any non-empty version string.
 func (c *Config) SetDBVersionDefault(v string) error {
 	if v == "" {
-		return fmt.Errorf("config: db version cannot be empty")
+		return errors.New("config: db version cannot be empty")
 	}
 	return c.Set(KeyDefaultDBVersion, v)
 }
@@ -289,7 +290,7 @@ func (c *Config) SetDBVersionDefault(v string) error {
 // SetRedisVersionDefault accepts any non-empty version string.
 func (c *Config) SetRedisVersionDefault(v string) error {
 	if v == "" {
-		return fmt.Errorf("config: redis version cannot be empty")
+		return errors.New("config: redis version cannot be empty")
 	}
 	return c.Set(KeyDefaultRedisVersion, v)
 }

@@ -41,7 +41,7 @@ type HelloOptions struct {
 	MCPScope string
 }
 
-// Dial connects to the daemon socket / pipe and performs the
+// DialClient connects to the daemon socket / pipe and performs the
 // client.hello handshake. ctx bounds the dial + handshake.
 func DialClient(ctx context.Context, socket string, hello HelloOptions) (*Client, error) {
 	conn, err := Dial(ctx, socket)

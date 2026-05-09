@@ -88,7 +88,7 @@ func NewActivityTab(state *UIState, sm *sites.SiteManager) *ActivityTab {
 		rowClicks:  make(map[int64]*widget.Clickable),
 		loadingFor: make(map[string]bool),
 	}
-	at.list.List.Axis = layout.Vertical
+	at.list.Axis = layout.Vertical
 	return at
 }
 
@@ -255,7 +255,6 @@ func activityTabDetail(gtx layout.Context, th *Theme, ev storage.ActivityEvent) 
 			}
 			children := make([]layout.FlexChild, 0, len(d.Steps))
 			for i, step := range d.Steps {
-				step := step
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					top := unit.Dp(0)
 					if i > 0 {

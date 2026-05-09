@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
+	// register sqlite driver
 	_ "modernc.org/sqlite"
 )
 
@@ -23,7 +24,7 @@ func NewTestStorage(t testing.TB) *Storage {
 	}
 	db.SetMaxOpenConns(1)
 	if err := applyMigrations(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		t.Fatalf("apply migrations: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
