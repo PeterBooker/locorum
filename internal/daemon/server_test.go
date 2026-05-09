@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,6 +13,22 @@ import (
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// tempSockPath returns a unix-socket path short enough to fit in the
+// 104-byte sun_path limit on macOS, where t.TempDir() lives under
+// /var/folders/... and routinely exceeds it.
+func tempSockPath(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		dir, err := os.MkdirTemp("/tmp", "lcr")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		return filepath.Join(dir, "s")
+	}
+	return filepath.Join(t.TempDir(), "ipc.sock")
+}
 
 // fakeService implements SiteService for round-trip tests. Just enough
 // to exercise the dispatcher's parameter parsing, scope enforcement,
@@ -87,8 +105,7 @@ func (f *fakeService) GetSites() ([]types.Site, error)              { return f.s
 func startTestServer(t *testing.T, svc SiteService) *Client {
 	t.Helper()
 
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "ipc.sock")
+	sock := tempSockPath(t)
 
 	ln, err := Listen(sock)
 	if err != nil {
