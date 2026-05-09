@@ -10,13 +10,13 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
-# Skip the *Prefix entries that end in ":" — those are concatenation
-# stubs, not pullable images.
+# Skip *Prefix and *Suffix constants — those are concatenation stubs
+# (e.g. "wodby/php:", "-alpine"), not pullable images.
 mapfile -t images < <(
-    awk -F'"' '/^\s*[A-Z][A-Za-z0-9]+\s*=\s*"/ {
-        v = $2
-        if (v ~ /:$/) next
-        print v
+    awk -F'"' 'match($0, /^[[:space:]]*([A-Z][A-Za-z0-9]+)[[:space:]]*=[[:space:]]*"/, m) {
+        name = m[1]
+        if (name ~ /(Prefix|Suffix)$/) next
+        print $2
     }' internal/version/images.go | sort -u
 )
 
