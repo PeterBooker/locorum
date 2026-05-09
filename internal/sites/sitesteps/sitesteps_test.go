@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -215,8 +216,12 @@ func TestEnsureSPXStep_Enabled_WritesKeyAndDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key INI: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("key INI mode = %o, want 0600", mode)
+	if runtime.GOOS != "windows" {
+		// Windows os.Chmod doesn't translate unix permission bits;
+		// os.Stat always reports 0666 for writable files.
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("key INI mode = %o, want 0600", mode)
+		}
 	}
 
 	// Rollback must NOT delete: data dir might hold reports.

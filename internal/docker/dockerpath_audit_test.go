@@ -2,6 +2,7 @@ package docker
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,14 @@ import (
 // builders must produce strings that DockerPath leaves alone, which is
 // the contract every "production" path satisfies.
 func TestSpecBuildersBindMountsAreSlashSafe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// On Windows, filepath.Join legitimately returns backslashes.
+		// The production safety net is buildMounts → platform.DockerPath,
+		// covered by TestBuildMountsCallsDockerPath below with literal
+		// Windows paths. This audit's contract — "builders alone produce
+		// slash-canonical paths" — only holds on Linux runners.
+		t.Skip("audit only applies on Linux runners; see TestBuildMountsCallsDockerPath for Windows coverage")
+	}
 	site := &types.Site{
 		ID:       "1",
 		Slug:     "demo",

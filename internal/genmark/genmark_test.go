@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -268,6 +269,12 @@ func TestWriteAtomic_RestrictedPerms(t *testing.T) {
 
 func assertMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// Windows os.Chmod only toggles the read-only bit; unix
+		// permission bits don't translate. os.Stat always reports
+		// 0666 for writable files. There's nothing to assert here.
+		return
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat %q: %v", path, err)

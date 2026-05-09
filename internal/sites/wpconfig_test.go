@@ -246,7 +246,11 @@ func TestWpDocrootDir(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := wpDocrootDir(&types.Site{FilesDir: c.filesDir, PublicDir: c.publicDir})
-		if got != c.want {
+		// wpDocrootDir returns a host-side path: filepath.Join produces
+		// backslashes on Windows. Normalise both sides for the
+		// equality check so the test exercises join semantics, not
+		// the OS separator.
+		if filepath.ToSlash(got) != c.want {
 			t.Errorf("wpDocrootDir(%q,%q) = %q, want %q", c.filesDir, c.publicDir, got, c.want)
 		}
 	}
