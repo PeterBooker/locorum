@@ -12,7 +12,7 @@ import (
 )
 
 // MetricsSink is the optional observability hook. Default is the no-op
-// sink; a future telemetry subsystem plugs in a real implementation.
+// sink; tests inject a recorder to assert per-check timing and outcomes.
 type MetricsSink interface {
 	ObserveCheck(id string, dur time.Duration, findings int, err error)
 	ObserveAction(id string, dur time.Duration, err error)

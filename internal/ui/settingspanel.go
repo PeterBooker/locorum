@@ -30,7 +30,6 @@ type SettingsPanel struct {
 	onThemeChange   func(ThemeMode)
 	healthPanel     *HealthPanel
 	diagnosticPanel *DiagnosticsPanel
-	privacyCard     *PrivacyCard
 
 	themeEnum widget.Enum
 	syncedTo  string // remembers which value we last seeded from settings
@@ -127,10 +126,6 @@ func (s *SettingsPanel) SetHealthPanel(hp *HealthPanel) { s.healthPanel = hp }
 // the card is omitted from the layout.
 func (s *SettingsPanel) SetDiagnosticsPanel(dp *DiagnosticsPanel) { s.diagnosticPanel = dp }
 
-// SetPrivacyCard wires the Privacy card. Optional — when nil the card
-// is omitted (e.g. tests that don't construct a Config).
-func (s *SettingsPanel) SetPrivacyCard(p *PrivacyCard) { s.privacyCard = p }
-
 // DiagnosticsPanel returns the wired panel (or nil). Used by main.go
 // to fill in the §7.4 and §7.6 sub-cards once their subsystems exist.
 func (s *SettingsPanel) DiagnosticsPanel() *DiagnosticsPanel { return s.diagnosticPanel }
@@ -154,9 +149,6 @@ func (s *SettingsPanel) HandleUserInteractions(gtx layout.Context) {
 	}
 	if s.diagnosticPanel != nil {
 		s.diagnosticPanel.HandleUserInteractions(gtx)
-	}
-	if s.privacyCard != nil {
-		s.privacyCard.HandleUserInteractions(gtx)
 	}
 }
 
@@ -317,12 +309,6 @@ func (s *SettingsPanel) Layout(gtx layout.Context, th *Theme) layout.Dimensions 
 						return layout.Dimensions{}
 					}
 					return s.diagnosticPanel.Layout(gtx, th)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if s.privacyCard == nil {
-						return layout.Dimensions{}
-					}
-					return s.privacyCard.Layout(gtx, th)
 				}),
 			)
 		})

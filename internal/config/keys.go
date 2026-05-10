@@ -50,10 +50,6 @@ const (
 	// integration. Values: "auto", "bind", "mutagen". Default "auto".
 	KeyPerformanceMode = "performance.mode"
 
-	// Telemetry. Reserved for LEARNINGS §7.3. Default off.
-	KeyTelemetryOptIn  = "telemetry.opt_in"
-	KeyTelemetryClient = "telemetry.client_id"
-
 	// Update check. Reserved for LEARNINGS §7.4.
 	KeyUpdateCheckEnabled = "update_check.enabled"
 	KeyUpdateCheckChannel = "update_check.channel"
@@ -79,13 +75,6 @@ const (
 	// When true, the applog handler emits Debug-level records too (UI
 	// only — the runner cadence is unaffected). Default false.
 	KeyDebugLogging = "diagnostics.debug_logging"
-
-	// KeyTelemetryDecided records whether the user has answered the
-	// first-launch telemetry prompt. Distinct from KeyTelemetryOptIn,
-	// which collapses unset and "false" into the same boolean. The modal
-	// flips this to true on Opt-in, Decline, OR explicit dismiss; once
-	// flipped, the modal never shows again.
-	KeyTelemetryDecided = "telemetry.decided"
 
 	// KeyUpdateDismissedVersion records the latest available version the
 	// user dismissed via the "Dismiss this version" button on the

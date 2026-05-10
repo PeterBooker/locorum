@@ -77,8 +77,6 @@ func allKeys() []string {
 		KeyRouterHTTPSPort,
 		KeyMkcertPath,
 		KeyPerformanceMode,
-		KeyTelemetryOptIn,
-		KeyTelemetryClient,
 		KeyUpdateCheckEnabled,
 		KeyUpdateCheckChannel,
 		KeyHealthEnabled,
@@ -89,7 +87,6 @@ func allKeys() []string {
 		KeyHealthLastSeen,
 		KeyAutoSnapshotBeforeDestructive,
 		KeyDebugLogging,
-		KeyTelemetryDecided,
 		KeyUpdateDismissedVersion,
 		KeyUpdateLastAvailable,
 	}
@@ -194,25 +191,12 @@ func (c *Config) UpdateCheckChannel() string {
 	return DefaultUpdateChannel
 }
 
-// TelemetryClientID returns the persisted hashed client identifier,
-// generated lazily by the telemetry subsystem when opt-in is granted.
-// Empty until first set.
-func (c *Config) TelemetryClientID() string {
-	return c.raw(KeyTelemetryClient)
-}
-
 // ── Bool accessors ──────────────────────────────────────────────────
 
 // PublishDBPortDefault returns whether the new-site modal should
 // pre-tick the "publish DB host port" switch. Default false.
 func (c *Config) PublishDBPortDefault() bool {
 	return parseBool(c.raw(KeyDefaultPublishDBPort), false)
-}
-
-// TelemetryOptIn reports whether the user has opted in to telemetry.
-// Default false (off). Telemetry must check this before sending.
-func (c *Config) TelemetryOptIn() bool {
-	return parseBool(c.raw(KeyTelemetryOptIn), false)
 }
 
 // UpdateCheckEnabled reports whether to perform background update
@@ -332,19 +316,6 @@ func (c *Config) SetRouterHTTPSPort(port int) error {
 	return c.Set(KeyRouterHTTPSPort, strconv.Itoa(port))
 }
 
-// SetTelemetryOptIn flips the opt-in. A change from false→true does
-// NOT generate a client ID; the telemetry subsystem owns that flow so
-// the unprivileged config package never produces an identifier.
-func (c *Config) SetTelemetryOptIn(v bool) error {
-	return c.Set(KeyTelemetryOptIn, formatBool(v))
-}
-
-// SetTelemetryClientID is called once by the telemetry subsystem when
-// it generates the hashed device ID.
-func (c *Config) SetTelemetryClientID(v string) error {
-	return c.Set(KeyTelemetryClient, v)
-}
-
 // SetUpdateCheckEnabled toggles the background update check.
 func (c *Config) SetUpdateCheckEnabled(v bool) error {
 	return c.Set(KeyUpdateCheckEnabled, formatBool(v))
@@ -453,21 +424,6 @@ func (c *Config) DebugLogging() bool {
 // applying the new level via applog.SetDebug.
 func (c *Config) SetDebugLogging(on bool) error {
 	return c.Set(KeyDebugLogging, formatBool(on))
-}
-
-// ── Telemetry decision tri-state ────────────────────────────────────
-
-// TelemetryDecided reports whether the user has answered the first-launch
-// telemetry prompt. The first-launch modal flips this to true on any
-// answer; afterwards it never shows again. Independent of TelemetryOptIn
-// so we can distinguish "user said no" from "user hasn't been asked."
-func (c *Config) TelemetryDecided() bool {
-	return parseBool(c.raw(KeyTelemetryDecided), false)
-}
-
-// SetTelemetryDecided records that the modal has been dismissed.
-func (c *Config) SetTelemetryDecided(v bool) error {
-	return c.Set(KeyTelemetryDecided, formatBool(v))
 }
 
 // ── Update-check banner state ───────────────────────────────────────

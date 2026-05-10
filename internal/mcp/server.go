@@ -268,7 +268,7 @@ func (s *Server) write(resp response) {
 
 // callDaemon is a convenience that proxies an IPC call. Tools use it
 // rather than reaching into s.client directly so future cross-cutting
-// behaviour (telemetry, retry on disconnect) lands in one place.
+// behaviour (retry on disconnect, tracing) lands in one place.
 func (s *Server) callDaemon(ctx context.Context, method string, params, out any) error {
 	return s.client.Call(ctx, method, params, out)
 }

@@ -34,7 +34,8 @@ type Client struct {
 
 // HelloOptions configures the client.hello handshake. Most clients
 // declare PeerKind ("cli", "mcp", "gui-test") so the daemon can
-// distinguish traffic in telemetry. Profile / MCPScope are MCP-only.
+// distinguish traffic in its activity log. Profile / MCPScope are
+// MCP-only.
 type HelloOptions struct {
 	PeerKind string
 	Profile  string

@@ -81,9 +81,6 @@ func TestDefaultsWhenStorageEmpty(t *testing.T) {
 	if c.RouterHTTPSPort() != DefaultRouterHTTPS {
 		t.Errorf("RouterHTTPSPort default: got %d", c.RouterHTTPSPort())
 	}
-	if c.TelemetryOptIn() != false {
-		t.Errorf("TelemetryOptIn default: got true")
-	}
 	if c.UpdateCheckEnabled() != true {
 		t.Errorf("UpdateCheckEnabled default: got false (should be opt-out)")
 	}
@@ -148,14 +145,6 @@ func TestSettersAndGetters(t *testing.T) {
 	must("perf", c.SetPerformanceMode("mutagen"))
 	if got := c.PerformanceMode(); got != "mutagen" {
 		t.Errorf("perf: got %q", got)
-	}
-	must("telemetry", c.SetTelemetryOptIn(true))
-	if !c.TelemetryOptIn() {
-		t.Errorf("telemetry: false")
-	}
-	must("client", c.SetTelemetryClientID("hash-abc"))
-	if got := c.TelemetryClientID(); got != "hash-abc" {
-		t.Errorf("client: got %q", got)
 	}
 	must("ucenable", c.SetUpdateCheckEnabled(false))
 	if c.UpdateCheckEnabled() {

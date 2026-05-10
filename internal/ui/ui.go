@@ -34,7 +34,6 @@ type UI struct {
 	// Modals
 	CloneModal    *CloneModal
 	HealthBlocker *HealthBlockerModal
-	Telemetry     *TelemetryModal
 	PortHolders   *PortHoldersModal
 	deleteDialog  ConfirmDialog
 	deletePurge   widget.Bool
@@ -71,13 +70,9 @@ func New(sm *sites.SiteManager) *UI {
 		state.Invalidate()
 	})
 	ui.Settings.SetDiagnosticsPanel(NewDiagnosticsPanel(state, sm, ui.Toasts))
-	if cfg != nil {
-		ui.Settings.SetPrivacyCard(NewPrivacyCard(state, cfg, ui.Toasts))
-	}
 	ui.SiteDetail = NewSiteDetail(state, sm, ui.Toasts)
 	ui.NewSite = NewNewSiteModal(state, sm, ui.Toasts)
 	ui.CloneModal = NewCloneModal(state, sm, ui.Toasts)
-	ui.Telemetry = NewTelemetryModal(state, cfg)
 	ui.PortHolders = NewPortHoldersModal(state)
 
 	// Wire up backend callbacks to update UI state
@@ -150,9 +145,6 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 	if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
 		ui.HealthBlocker.HandleUserInteractions(gtx)
 	}
-	if ui.Telemetry != nil && ui.Telemetry.Show() {
-		ui.Telemetry.HandleUserInteractions(gtx)
-	}
 	if show, _, _ := ui.State.GetPortHoldersModal(); show {
 		ui.PortHolders.HandleUserInteractions(gtx)
 	}
@@ -206,12 +198,6 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 			// after the regular modal layer so it sits on top.
 			if ui.HealthBlocker != nil && ui.HealthBlocker.HasBlocker() {
 				return ui.HealthBlocker.Layout(gtx, ui.Theme)
-			}
-			return layout.Dimensions{}
-		}),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if ui.Telemetry != nil && ui.Telemetry.Show() {
-				return ui.Telemetry.Layout(gtx, ui.Theme)
 			}
 			return layout.Dimensions{}
 		}),

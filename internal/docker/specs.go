@@ -42,9 +42,10 @@ type ContainerSpec struct {
 }
 
 // EnvSecret is an environment variable whose value must never appear in
-// log lines, error messages, or telemetry. The engine sets it on the
-// container exactly like Env, but redacts it from anything Locorum itself
-// emits. We cannot hide it from `docker inspect`; that's documented.
+// log lines, error messages, or activity events. The engine sets it on
+// the container exactly like Env, but redacts it from anything Locorum
+// itself emits. We cannot hide it from `docker inspect`; that's
+// documented.
 type EnvSecret struct {
 	Key   string
 	Value string

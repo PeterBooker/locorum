@@ -48,7 +48,8 @@ const (
 	// VerdictUserOwned: disk file is marked-managed but the
 	// genmark.WriteAtomic short-circuit found the bytes already
 	// equal — same outcome as NoOp from the user's perspective.
-	// Reserved for telemetry; callers can fold it into NoOp.
+	// Distinct verdict so future audit logging can distinguish the
+	// two paths; callers without that need can fold it into NoOp.
 	VerdictUserOwned
 
 	// VerdictMergeNeeded: disk file diverged from both the
@@ -175,7 +176,7 @@ func SaveState(path string, s State) error {
 // Plus a "missing on disk" cell that always writes.
 //
 // onWrite is called per file the function actually wrote — useful
-// for telemetry / tests. Pass nil to ignore.
+// for tests and progress reporting. Pass nil to ignore.
 //
 // Reconcile returns a Report and, on any unexpected IO during the
 // walk, an error. Per-file errors stay in Report.Files[i].Err so
