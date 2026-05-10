@@ -113,7 +113,7 @@ func TestPHPSpec_BindsWPCliPhar(t *testing.T) {
 	site := builderTestSite()
 	spec := PHPSpec(site, "/home/x")
 
-	wantSrc := filepath.Join("/home/x", ".locorum", "bin", "wp")
+	wantSrc := filepath.FromSlash("/home/x/.locorum/bin/wp")
 	wantDst := "/usr/local/bin/wp"
 	for _, m := range spec.Mounts {
 		if m.Bind == nil {

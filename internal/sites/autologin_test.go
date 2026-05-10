@@ -152,13 +152,14 @@ func TestAutoLoginAppRoot_HandlesPublicDir(t *testing.T) {
 	// The function returns the unmodified FilesDir for empty / "/" public
 	// dirs and filepath.Join(FilesDir, PublicDir) otherwise — so the
 	// "joined" cases use platform-native separators on Windows.
+	joined := filepath.FromSlash("/x/public")
 	cases := []struct {
 		filesDir, publicDir, want string
 	}{
 		{"/x", "", "/x"},
 		{"/x", "/", "/x"},
-		{"/x", "public", filepath.Join("/x", "public")},
-		{"/x", "/public/", filepath.Join("/x", "public")},
+		{"/x", "public", joined},
+		{"/x", "/public/", joined},
 	}
 	for _, tc := range cases {
 		got := autoLoginAppRoot(&types.Site{FilesDir: tc.filesDir, PublicDir: tc.publicDir})
