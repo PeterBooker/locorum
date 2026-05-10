@@ -71,7 +71,7 @@ func (r *rotatingWriter) rotate() error {
 	}
 	if err := utils.RotateIfLarge(r.logPath, 1, r.keep); err != nil {
 		// Reopen so subsequent writes don't disappear; surface the error.
-		f, openErr := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f, openErr := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if openErr != nil {
 			return errors.Join(err, openErr)
 		}
@@ -79,7 +79,7 @@ func (r *rotatingWriter) rotate() error {
 		r.inner = &truncatedWriter{w: f, max: MaxLineBytes}
 		return err
 	}
-	f, err := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("reopen after rotate: %w", err)
 	}

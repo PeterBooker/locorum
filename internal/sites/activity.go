@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/storage"
 	"github.com/PeterBooker/locorum/internal/types"
 )
@@ -152,7 +153,7 @@ func renderActivityMessage(kind storage.ActivityKind, status storage.ActivitySta
 	default:
 		msg = string(kind)
 	}
-	return truncateRunes(msg, activityMessageMaxBytes)
+	return truncateRunes(secrets.RedactString(msg), activityMessageMaxBytes)
 }
 
 func renderSucceededMessage(kind storage.ActivityKind, site *types.Site) string {
@@ -255,12 +256,12 @@ func buildActivityDetails(res orch.Result) json.RawMessage {
 			DurationMS: s.Duration.Milliseconds(),
 		}
 		if s.Error != nil {
-			entry.Error = truncateRunes(s.Error.Error(), activityErrorMaxBytes)
+			entry.Error = truncateRunes(secrets.RedactString(s.Error.Error()), activityErrorMaxBytes)
 		}
 		d.Steps = append(d.Steps, entry)
 	}
 	if res.FinalError != nil {
-		d.Error = truncateRunes(res.FinalError.Error(), activityErrorMaxBytes)
+		d.Error = truncateRunes(secrets.RedactString(res.FinalError.Error()), activityErrorMaxBytes)
 	}
 	buf, err := json.Marshal(d)
 	if err != nil {

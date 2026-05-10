@@ -16,6 +16,41 @@ import (
 	"time"
 )
 
+// TestCertPath_IsZero locks the empty-path discriminator. Callers
+// (mkcert.Issue, the UI) branch on IsZero to decide whether to reissue
+// or skip; a regression in the predicate silently turns a missing
+// cert into a "we have one" outcome.
+func TestCertPath_IsZero(t *testing.T) {
+	if !(CertPath{}).IsZero() {
+		t.Errorf("zero-value CertPath must be IsZero")
+	}
+	if (CertPath{CertFile: "a"}).IsZero() {
+		t.Errorf("CertPath with CertFile set must NOT be IsZero")
+	}
+	if (CertPath{KeyFile: "a"}).IsZero() {
+		t.Errorf("CertPath with KeyFile set must NOT be IsZero")
+	}
+	if (CertPath{CertFile: "a", KeyFile: "b"}).IsZero() {
+		t.Errorf("fully-populated CertPath must NOT be IsZero")
+	}
+}
+
+// TestMkcert_InvalidateClearsCache asserts that invalidate() actually
+// resets the Available() cache. EnsureBinary / InstallCA call this so
+// the UI sees the post-install state immediately instead of waiting
+// 30s for the TTL — a no-op invalidate would silently regress that UX.
+func TestMkcert_InvalidateClearsCache(t *testing.T) {
+	m := NewMkcert("/nonexistent", "/nonexistent")
+	m.cachedAt = time.Now()
+	if m.cachedAt.IsZero() {
+		t.Fatalf("seed precondition failed")
+	}
+	m.invalidate()
+	if !m.cachedAt.IsZero() {
+		t.Errorf("invalidate() did not clear cachedAt; UI will see stale Available() state")
+	}
+}
+
 func TestValidCertName(t *testing.T) {
 	valid := []string{"site-foo", "svc-mail", "abc123", "FOO_bar", "a"}
 	invalid := []string{"", ".", "..", "../escape", "with spaces", "with/slash", "with$"}

@@ -2,6 +2,8 @@ package tls
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -43,7 +45,16 @@ func (m *Mkcert) EnsureBinary(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	if err := os.MkdirAll(m.binDir, 0o755); err != nil {
+	expectedHash, ok := mkcertSHA256[runtime.GOOS+"/"+runtime.GOARCH]
+	if !ok {
+		// No pinned hash for this platform → refuse to download. This is
+		// stricter than mkcertDownloadURL's allowlist by design: a
+		// supported-platform-without-a-hash combination is a developer
+		// oversight, not a runtime condition we should let pass silently.
+		return "", fmt.Errorf("no pinned mkcert sha256 for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	if err := os.MkdirAll(m.binDir, 0o700); err != nil {
 		return "", fmt.Errorf("create bin dir: %w", err)
 	}
 
@@ -53,11 +64,11 @@ func (m *Mkcert) EnsureBinary(ctx context.Context) (string, error) {
 	}
 	dst := filepath.Join(m.binDir, name)
 
-	if err := downloadBinary(ctx, url, dst); err != nil {
+	if err := downloadBinary(ctx, url, dst, expectedHash); err != nil {
 		return "", err
 	}
 	m.invalidate()
-	slog.Info("downloaded mkcert", "url", url, "dst", dst)
+	slog.Info("downloaded mkcert", "url", url, "dst", dst, "sha256", expectedHash)
 	return dst, nil
 }
 
@@ -105,20 +116,29 @@ func (m *Mkcert) InstallCA(ctx context.Context) error {
 // mkcertDownloadURL returns the canonical filippo.io redirect URL for the
 // pinned mkcert version on the current platform. Unsupported combos return
 // an error so the UI can show a precise message instead of a 404.
+//
+// FreeBSD is intentionally absent: upstream stopped publishing FreeBSD
+// binaries at v1.4.4. Adding it back would mean shipping an unverifiable
+// download path, which the SHA-256 pin in mkcert_hashes.go is meant to
+// rule out.
 func mkcertDownloadURL() (string, error) {
 	pair := runtime.GOOS + "/" + runtime.GOARCH
 	switch pair {
 	case "linux/amd64", "linux/arm64", "linux/arm",
 		"darwin/amd64", "darwin/arm64",
-		"windows/amd64", "windows/arm64",
-		"freebsd/amd64", "freebsd/arm64", "freebsd/arm":
+		"windows/amd64", "windows/arm64":
 	default:
 		return "", fmt.Errorf("no prebuilt mkcert binary for %s", pair)
 	}
 	return "https://dl.filippo.io/mkcert/" + MkcertVersion + "?for=" + pair, nil
 }
 
-func downloadBinary(ctx context.Context, url, dst string) error {
+// downloadBinary fetches url, verifies its SHA-256 against expectedHash,
+// chmods 0o700 (owner-execute only — auto-downloaded binaries don't need
+// to be world-runnable), and atomically installs to dst. A hash mismatch
+// is fatal — the temp file is removed and an error returned, so a tampered
+// binary never replaces an existing one.
+func downloadBinary(ctx context.Context, url, dst, expectedHash string) error {
 	dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
@@ -142,7 +162,10 @@ func downloadBinary(ctx context.Context, url, dst string) error {
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	hasher := sha256.New()
+	// Cap the download at 16 MiB (mkcert is ~5 MiB; 3× headroom).
+	const maxBytes int64 = 16 << 20
+	if _, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(resp.Body, maxBytes+1)); err != nil {
 		tmp.Close()
 		cleanup()
 		return fmt.Errorf("write binary: %w", err)
@@ -151,7 +174,17 @@ func downloadBinary(ctx context.Context, url, dst string) error {
 		cleanup()
 		return fmt.Errorf("close binary: %w", err)
 	}
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
+
+	gotHash := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(gotHash, expectedHash) {
+		cleanup()
+		return fmt.Errorf("mkcert integrity check failed: sha256 mismatch (expected %s, got %s) — refusing to install",
+			expectedHash, gotHash)
+	}
+
+	// 0o700: only the owner needs to run this binary; downloaded code
+	// should not be discoverable by other local users on a shared host.
+	if err := os.Chmod(tmpPath, 0o700); err != nil {
 		cleanup()
 		return fmt.Errorf("chmod binary: %w", err)
 	}

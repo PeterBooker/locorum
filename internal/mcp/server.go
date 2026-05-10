@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/PeterBooker/locorum/internal/daemon"
+	"github.com/PeterBooker/locorum/internal/secrets"
 )
 
 // Server is the MCP stdio server. Constructed once per process; the
@@ -228,12 +229,15 @@ func (s *Server) writeResult(id json.RawMessage, result any) {
 	s.write(resp)
 }
 
-// writeError encodes a transport-level error.
+// writeError encodes a transport-level error. Messages are passed through
+// secrets.RedactString so a backend error that echoes a DB password into
+// its message — e.g. a Docker exec error reflecting argv — is sanitised
+// before reaching the MCP client.
 func (s *Server) writeError(id json.RawMessage, code int, msg string) {
 	resp := response{
 		JSONRPC: jsonRPCVersion,
 		ID:      id,
-		Error:   &rpcError{Code: code, Message: msg},
+		Error:   &rpcError{Code: code, Message: secrets.RedactString(msg)},
 	}
 	s.write(resp)
 }
@@ -241,9 +245,10 @@ func (s *Server) writeError(id json.RawMessage, code int, msg string) {
 // writeToolError encodes a tool-level error inside a successful
 // response (isError=true). MCP separates these so the agent can
 // recover from a tool failure without treating it as a fatal RPC bug.
+// Same redaction discipline as writeError.
 func (s *Server) writeToolError(id json.RawMessage, msg string) {
 	body, _ := json.Marshal(toolCallResult{
-		Content: []contentPart{{Type: "text", Text: msg}},
+		Content: []contentPart{{Type: "text", Text: secrets.RedactString(msg)}},
 		IsError: true,
 	})
 	resp := response{JSONRPC: jsonRPCVersion, ID: id, Result: body}

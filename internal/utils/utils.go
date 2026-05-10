@@ -253,6 +253,11 @@ func OpenTerminalWithCommand(args ...string) error {
 }
 
 // CopyDir recursively copies the directory at src to dst.
+//
+// 0o755 dirs / 0o644 files: the destination tree is owned by the host user
+// and (for sites) read by the PHP container running as the same UID. World-
+// readable bits keep nginx workers happy without granting writes — closing
+// the "drop a webshell into the docroot" path that 0o777/0o666 enabled.
 func CopyDir(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -261,13 +266,13 @@ func CopyDir(src, dst string) error {
 		rel, _ := filepath.Rel(src, p)
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o777)
+			return os.MkdirAll(target, 0o755)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o666)
+		return os.WriteFile(target, data, 0o644)
 	})
 }
 

@@ -285,9 +285,10 @@ func dedupePairs(pairs []SearchReplacePair) []SearchReplacePair {
 
 // prepareDump opens hostPath, transparently decompresses based on
 // extension, runs the import-filter pipeline, and writes the cleaned SQL
-// to dst. dst is created with 0640 (readable by the PHP UID after the
-// chown step on next start; readable now by virtue of the bind-mount
-// chmod at site creation). Atomic via tmpfile+rename — a partial dump
+// to dst. dst is created with 0600 — the PHP container runs as the host
+// user's UID (PHPUserGroup) on Unix, so owner-read is sufficient and we
+// avoid leaking dump contents (WP user hashes, salts) to other local users
+// via group-readable bits. Atomic via tmpfile+rename — a partial dump
 // is never visible to wp-cli.
 func prepareDump(hostPath, dst string) error {
 	src, err := os.Open(hostPath)
@@ -337,7 +338,7 @@ func prepareDump(hostPath, dst string) error {
 	}
 	closed = true
 
-	if err := os.Chmod(tmpName, 0o640); err != nil {
+	if err := os.Chmod(tmpName, 0o600); err != nil {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("chmod: %w", err)
 	}

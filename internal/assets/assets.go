@@ -156,6 +156,7 @@ func SaveState(path string, s State) error {
 		return fmt.Errorf("assets: marshal state: %w", err)
 	}
 	body = append(body, '\n')
+	// asset_hashes.json is internal bookkeeping only — no secrets.
 	return genmark.WriteAtomic(path, body, 0o644)
 }
 

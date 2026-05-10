@@ -14,6 +14,7 @@ import (
 
 	"github.com/PeterBooker/locorum/internal/dbengine"
 	"github.com/PeterBooker/locorum/internal/git"
+	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/types"
 )
 
@@ -141,6 +142,11 @@ func (sm *SiteManager) CreateWorktreeSite(ctx context.Context, opts CreateWorktr
 	worktreePath := filepath.Join(worktreeRoot, derivedSlug)
 	derivedDomain := derivedSlug + ".localhost"
 
+	dbPassword, err := generatePassword(16)
+	if err != nil {
+		return nil, fmt.Errorf("generating db password: %w", err)
+	}
+
 	// Build the row up front so DryRun can return a full preview.
 	newSite := types.Site{
 		ID:           uuid.NewString(),
@@ -154,7 +160,7 @@ func (sm *SiteManager) CreateWorktreeSite(ctx context.Context, opts CreateWorktr
 		DBEngine:     firstNonEmpty(opts.DBEngine, parent.DBEngine),
 		DBVersion:    firstNonEmpty(opts.DBVersion, parent.DBVersion),
 		RedisVersion: firstNonEmpty(opts.RedisVersion, parent.RedisVersion),
-		DBPassword:   generatePassword(16),
+		DBPassword:   dbPassword,
 		GitRemote:    opts.GitRemote,
 		GitBranch:    opts.Branch,
 		WorktreePath: worktreePath,
@@ -232,6 +238,7 @@ func (sm *SiteManager) CreateWorktreeSite(ctx context.Context, opts CreateWorktr
 		}
 		return nil, fmt.Errorf("persist new site: %w", err)
 	}
+	secrets.Add(newSite.DBPassword)
 	sm.writeConfigYAML(&newSite)
 	sm.emitSitesUpdate()
 
@@ -295,6 +302,10 @@ func (sm *SiteManager) resolveOrCreateParent(opts CreateWorktreeOptions) (types.
 	// Auto-create a stub parent. The parent's FilesDir holds the
 	// canonical clone; worktrees live in <parent-dir>.worktrees/.
 	homeSites := filepath.Join(sm.homeDir, "locorum", "sites", parentSlug)
+	dbPassword, err := generatePassword(16)
+	if err != nil {
+		return types.Site{}, false, fmt.Errorf("generating db password: %w", err)
+	}
 	parent := types.Site{
 		ID:        uuid.NewString(),
 		Name:      parentSlug,
@@ -311,11 +322,12 @@ func (sm *SiteManager) resolveOrCreateParent(opts CreateWorktreeOptions) (types.
 		// the worktree separately.
 		PHPVersion:   "8.4",
 		RedisVersion: "8.0",
-		DBPassword:   generatePassword(16),
+		DBPassword:   dbPassword,
 	}
 	if err := sm.st.AddSite(&parent); err != nil {
 		return types.Site{}, false, fmt.Errorf("add parent site: %w", err)
 	}
+	secrets.Add(parent.DBPassword)
 	return parent, true, nil
 }
 

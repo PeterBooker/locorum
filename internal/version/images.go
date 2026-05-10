@@ -18,7 +18,10 @@ const (
 	// renovate: image=mailhog/mailhog versioning=docker
 	MailhogImage = "mailhog/mailhog"
 	// renovate: image=adminer versioning=docker
-	AdminerImage = "adminer:latest"
+	// Pinned to a major+minor tag (not :latest) so a malicious upstream
+	// re-tag of `:latest` cannot land in our admin DB UI silently. Bump
+	// in lockstep with the renovate PR.
+	AdminerImage = "adminer:5.4.2-standalone"
 	// renovate: image=alpine versioning=docker
 	AlpineImage = "alpine:3"
 
@@ -29,6 +32,38 @@ const (
 	RedisImagePrefix    = "redis:"
 	RedisImageSuffix    = "-alpine"
 )
+
+// WP-CLI is bundled as a phar binary downloaded once at app start and
+// bind-mounted into every PHP container at /usr/local/bin/wp. The wodby
+// image does not carry wp-cli, but every Locorum lifecycle path that
+// touches WordPress (`wp core install` after StartSite, search-replace
+// after DB import, multisite convert) needs it. Pinning the version +
+// SHA-512 here means:
+//
+//   - One PR (Renovate-style) bumps the binary atomically — no drift.
+//   - The on-disk phar is content-addressed: a corrupted or tampered
+//     download is detected and refused before the file is moved into
+//     place (see internal/wpcli.EnsurePhar).
+//   - The release URL is reproducible: GitHub's release-asset URL is
+//     immutable per tag, so verification is deterministic across hosts.
+//
+// To bump:
+//
+//	curl -sSL https://github.com/wp-cli/wp-cli/releases/download/vX.Y.Z/wp-cli-X.Y.Z.phar | sha512sum
+//
+// then update both constants and the test fixture.
+const (
+	WPCliVersion = "v2.12.0"
+	WPCliSHA512  = "be928f6b8ca1e8dfb9d2f4b75a13aa4aee0896f8a9a0a1c45cd5d2c98605e6172e6d014dda2e27f88c98befc16c040cbb2bd1bfa121510ea5cdf5f6a30fe8832"
+)
+
+// WPCliDownloadURL returns the canonical GitHub Releases URL for the
+// pinned wp-cli phar. Centralised so the install logic and the
+// docs/build pipeline share one definition.
+func WPCliDownloadURL() string {
+	num := strings.TrimPrefix(WPCliVersion, "v")
+	return "https://github.com/wp-cli/wp-cli/releases/download/" + WPCliVersion + "/wp-cli-" + num + ".phar"
+}
 
 // MinSupportedDockerServerMajor / MinSupportedDockerServerMinor are the
 // Docker daemon version below which we surface a "Docker too old" warning

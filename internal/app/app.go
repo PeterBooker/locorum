@@ -12,6 +12,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/docker"
 	"github.com/PeterBooker/locorum/internal/router"
 	"github.com/PeterBooker/locorum/internal/utils"
+	"github.com/PeterBooker/locorum/internal/wpcli"
 
 	"github.com/docker/docker/client"
 )
@@ -50,6 +51,18 @@ func (a *App) Initialize(ctx context.Context) error {
 	}
 	if err := a.d.CheckDockerAvailable(ctx); err != nil {
 		return err
+	}
+
+	// wp-cli is bind-mounted into every PHP container. Download +
+	// SHA-512 verify happens at most once per pinned-version bump
+	// (see internal/wpcli). Failure here is non-fatal so the user
+	// can still inspect existing sites — but lifecycle methods that
+	// invoke wp-cli will surface the missing-file error clearly.
+	if pharPath, err := wpcli.EnsurePhar(a.homeDir); err != nil {
+		slog.Warn("wp-cli phar unavailable; site lifecycle steps that invoke wp will fail",
+			"err", err.Error())
+	} else {
+		slog.Info("wp-cli phar ready", "path", pharPath)
 	}
 
 	// Identify the daemon up front so health checks can read a cached

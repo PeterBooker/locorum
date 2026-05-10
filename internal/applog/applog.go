@@ -66,7 +66,10 @@ func Init(dir string) (io.Closer, error) {
 		fmt.Fprintf(os.Stderr, "applog: rotate failed: %v\n", err)
 	}
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	// 0o600: error strings logged here can include filesystem paths (revealing
+	// the username) and occasionally fragments of upstream error messages from
+	// Docker that haven't been through the secret redactor.
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		installStderrOnly()
 		return nopCloser{}, fmt.Errorf("applog: open %q: %w", logPath, err)

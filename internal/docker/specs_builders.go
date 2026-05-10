@@ -96,12 +96,36 @@ func permissiveSecurity() SecurityOptions {
 // resourceDefaults returns the Resources struct every container gets unless
 // the builder overrides it. Log size cap (10m × 3 = 30MB) prevents a single
 // chatty container from filling /var/lib/docker.
-func resourceDefaults() Resources {
-	return Resources{
+//
+// Memory limits are role-scoped: a runaway PHP plugin or aggressive WP-CRON
+// can no longer OOM-kill the user's desktop. The numbers are conservative
+// enough that real-world WordPress installs run comfortably without
+// trip-wiring on a typical 100-page site, but tight enough that a fork-bomb
+// in a hook or a hostile import is contained inside the container's cgroup.
+//
+// Defaults can be lifted on big-memory boxes via a future global setting
+// (see internal/config); the current values are the safe-by-default cap.
+//
+// roleResources returns per-role resource caps. New container builders
+// should call this with their RoleX constant to pick up the right
+// memory ceiling.
+func roleResources(role Role) Resources {
+	r := Resources{
 		LogMaxSize:  "10m",
 		LogMaxFiles: 3,
 		PidsLimit:   1024,
 	}
+	switch role {
+	case RolePHP:
+		r.MemoryLimit = 512 << 20
+	case RoleDatabase:
+		r.MemoryLimit = 1024 << 20
+	case RoleRedis:
+		r.MemoryLimit = 256 << 20
+	case RoleWeb, RoleMail, RoleAdminer, RoleRouter:
+		r.MemoryLimit = 128 << 20
+	}
+	return r
 }
 
 // NginxWebSpec builds the per-site nginx web container spec.
@@ -133,7 +157,7 @@ func NginxWebSpec(site *types.Site, homeDir string) ContainerSpec {
 			StartPeriod: 1 * time.Second,
 		},
 		Security:  hardenedSecurity("CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE", "DAC_OVERRIDE"),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RoleWeb),
 		Init:      true,
 		Restart:   RestartNo,
 	}
@@ -168,7 +192,7 @@ func ApacheWebSpec(site *types.Site, homeDir string) ContainerSpec {
 			StartPeriod: 1 * time.Second,
 		},
 		Security:  hardenedSecurity("CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE", "DAC_OVERRIDE"),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RoleWeb),
 		Init:      true,
 		Restart:   RestartNo,
 	}
@@ -212,14 +236,33 @@ func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 		"LOCORUM_APPROOT=/var/www/html",
 		"LOCORUM_SITE_SLUG=" + site.Slug,
 		"LOCORUM_MULTISITE=" + site.Multisite,
+		// wodby/php's FPM pool defaults to user/group www-data (UID 82),
+		// but the container itself runs as the host user (UID 1000 →
+		// wodby). With the default, FPM workers can't read 0600 files
+		// owned by 1000:1000 — wp-config.php, wp-config-locorum.php,
+		// import dumps, the auto-login plugin — and PHP fails with
+		// "Permission denied" on require_once. Forcing the pool to
+		// wodby/wodby restores the invariant the rest of the codebase
+		// already assumes ("PHP runs as the host UID"); see the comments
+		// in wpconfig.go, sites.go, wordpress.go, import.go.
+		"PHP_FPM_USER=wodby",
+		"PHP_FPM_GROUP=wodby",
 	}
 	secrets := []EnvSecret{
 		{Key: "MYSQL_PASSWORD", Value: site.DBPassword},
 	}
+	// wodby/php does not ship wp-cli. The host-side phar is downloaded
+	// + verified once at app start (internal/wpcli.EnsurePhar) and
+	// bind-mounted read-only into every PHP container. Path must stay
+	// in lockstep with wpcli.PharPath; see WPCliMountAgreement_test
+	// for the assertion.
+	wpcliPharHost := filepath.Join(homeDir, ".locorum", "bin", "wp")
+
 	mounts := []Mount{
 		{Bind: &BindMount{Source: phpIniPath, Target: "/usr/local/etc/php/conf.d/zzz-php.ini"}},
 		{Bind: &BindMount{Source: spxIniPath, Target: "/usr/local/etc/php/conf.d/zzz-spx.ini"}},
 		{Bind: &BindMount{Source: site.FilesDir, Target: "/var/www/html"}},
+		{Bind: &BindMount{Source: wpcliPharHost, Target: "/usr/local/bin/wp", ReadOnly: true}},
 	}
 
 	if site.SPXEnabled {
@@ -275,7 +318,7 @@ func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 		// wodby/php uses sudo in its entrypoint; see permissiveSecurity
 		// for why we can't apply our hardened defaults here.
 		Security:  permissiveSecurity(),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RolePHP),
 		Init:      true,
 		Restart:   RestartNo,
 	}
@@ -309,7 +352,7 @@ func RedisSpec(site *types.Site) ContainerSpec {
 		// to the redis user. CHOWN + SETUID + SETGID are the minimum it
 		// needs; DAC_OVERRIDE covers the post-chown read paths.
 		Security:  hardenedSecurity("CHOWN", "SETGID", "SETUID", "DAC_OVERRIDE"),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RoleRedis),
 		Init:      true,
 		Restart:   RestartNo,
 	}
@@ -338,7 +381,7 @@ func MailSpec() ContainerSpec {
 			StartPeriod: 1 * time.Second,
 		},
 		Security:  hardenedSecurity(),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RoleMail),
 		Init:      true,
 		Restart:   RestartNo,
 	}
@@ -368,7 +411,7 @@ func AdminerSpec() ContainerSpec {
 			StartPeriod: 1 * time.Second,
 		},
 		Security:  hardenedSecurity(),
-		Resources: resourceDefaults(),
+		Resources: roleResources(RoleAdminer),
 		Init:      true,
 		Restart:   RestartNo,
 	}

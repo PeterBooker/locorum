@@ -134,12 +134,17 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	}
 
 	// wp-config.php: respect a user-stripped signature, otherwise write.
+	// 0o600: contains DB_PASSWORD and the eight WP auth/secure salts. The
+	// PHP container runs as the host user's UID (PHPUserGroup) so owner-only
+	// read is sufficient — and crucially, anyone else with a shell on the
+	// host (other accounts, sandboxed apps, build agents) cannot recover
+	// the salts and forge logged-in session cookies.
 	mainPath := filepath.Join(dir, "wp-config.php")
 	mainBytes, err := renderTemplate(sm.config, "config/wordpress/wp-config.tmpl.php", data)
 	if err != nil {
 		return fmt.Errorf("render wp-config.php: %w", err)
 	}
-	if err := genmark.WriteIfManaged(mainPath, mainBytes, 0o644); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
+	if err := genmark.WriteIfManaged(mainPath, mainBytes, 0o600); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
 		return fmt.Errorf("write wp-config.php: %w", err)
 	}
 
@@ -152,7 +157,7 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	if err != nil {
 		return fmt.Errorf("render wp-config-locorum.php: %w", err)
 	}
-	if err := genmark.WriteIfManaged(includePath, includeBytes, 0o644); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
+	if err := genmark.WriteIfManaged(includePath, includeBytes, 0o600); err != nil && !errors.Is(err, genmark.ErrUserOwned) {
 		return fmt.Errorf("write wp-config-locorum.php: %w", err)
 	}
 

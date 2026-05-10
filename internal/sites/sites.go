@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -33,6 +34,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/router"
+	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/sites/configyaml"
 	"github.com/PeterBooker/locorum/internal/sites/sitesteps"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -409,13 +411,15 @@ func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 }
 
 // generatePassword returns a cryptographically random hex string of n bytes.
-func generatePassword(n int) string {
+// crypto/rand.Read failure is rare but never silently substituted — a degraded
+// secret would be a critical security regression for everything that depends on
+// it (DB passwords, auto-login tokens). Callers must propagate the error.
+func generatePassword(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		// Should never happen — crypto/rand reads from OS.
-		return "password"
+		return "", fmt.Errorf("crypto/rand read failed: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func (sm *SiteManager) AddSite(site types.Site) error {
@@ -423,7 +427,11 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
 	site.Started = false
-	site.DBPassword = generatePassword(16)
+	pw, err := generatePassword(16)
+	if err != nil {
+		return fmt.Errorf("generating db password: %w", err)
+	}
+	site.DBPassword = pw
 	if site.WebServer == "" {
 		site.WebServer = "nginx"
 	}
@@ -454,6 +462,11 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	if err := sm.st.AddSite(&site); err != nil {
 		return err
 	}
+
+	// Register every newly-generated secret so any error string the
+	// backend later surfaces (audit log, activity event, daemon RPC
+	// reply, MCP error body) is automatically scrubbed.
+	secrets.Add(site.DBPassword)
 
 	sm.writeConfigYAML(&site)
 	sm.emitSitesUpdate()
@@ -488,13 +501,6 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	plan := orch.Plan{
 		Name: "start-site:" + site.Slug,
 		Steps: []orch.Step{
-			&sitesteps.FuncStep{
-				Label: "ensure-files-writable",
-				Do: func(_ context.Context) error {
-					ensureWritable(site.FilesDir)
-					return nil
-				},
-			},
 			&sitesteps.EnsureSPXStep{Site: site, HomeDir: sm.homeDir},
 			&sitesteps.FuncStep{
 				Label: "ensure-wordpress",
@@ -506,6 +512,12 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 				Label: "ensure-wp-config",
 				Do: func(_ context.Context) error {
 					return sm.EnsureWPConfig(site)
+				},
+			},
+			&sitesteps.FuncStep{
+				Label: "ensure-autologin-plugin",
+				Do: func(_ context.Context) error {
+					return installAutoLoginPlugin(site)
 				},
 			},
 			&sitesteps.FuncStep{
@@ -549,6 +561,17 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	if _, err := sm.st.UpdateSite(site); err != nil {
 		slog.Error("Failed to update site: " + err.Error())
 		return err
+	}
+
+	// Run `wp core install` so the user lands on a working WordPress
+	// dashboard, not the 5-minute install wizard. wpInstallDefault is
+	// idempotent (short-circuits when wp_options.siteurl is set), so
+	// repeated starts no-op. The same call lives inside
+	// ensureMultisiteWithHooks below for the multisite path; we hoist it
+	// here so single-site (the common case) gets the same treatment.
+	if err := sm.wpInstallDefault(ctx, site); err != nil {
+		slog.Error("Failed to run wp core install: " + err.Error())
+		return fmt.Errorf("wp core install: %w", err)
 	}
 
 	if site.Multisite != "" {
@@ -907,6 +930,11 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 		return err
 	}
 
+	// Drop secret values from the redaction registry: the row is gone,
+	// nothing should still emit them, and keeping stale entries grows
+	// the redaction pass without bound.
+	secrets.Remove(site.DBPassword)
+
 	sm.emitSitesUpdate()
 	return nil
 }
@@ -940,17 +968,22 @@ func (sm *SiteManager) emitSitesUpdate() {
 }
 
 // ReconcileState marks all sites as stopped in the database. Called on
-// startup after Initialize() has cleaned up all containers.
+// startup after Initialize() has cleaned up all containers. Also seeds
+// the secret-redaction registry with every persisted DB password so any
+// error string surfaced before the first Add/Clone is still scrubbed.
 func (sm *SiteManager) ReconcileState() error {
-	sites, err := sm.st.GetSites()
+	rows, err := sm.st.GetSites()
 	if err != nil {
 		return err
 	}
 
-	for i := range sites {
-		if sites[i].Started {
-			sites[i].Started = false
-			if _, err := sm.st.UpdateSite(&sites[i]); err != nil {
+	for i := range rows {
+		if rows[i].DBPassword != "" {
+			secrets.Add(rows[i].DBPassword)
+		}
+		if rows[i].Started {
+			rows[i].Started = false
+			if _, err := sm.st.UpdateSite(&rows[i]); err != nil {
 				slog.Error("Failed to reconcile site state: " + err.Error())
 			}
 		}
@@ -1082,7 +1115,27 @@ func (sm *SiteManager) GetContainerLogs(ctx context.Context, siteID, service str
 	return sm.d.ContainerLogs(ctx, containerName, lines)
 }
 
-// OpenAdminLogin generates a one-time auto-login URL and opens it in the browser.
+// OpenAdminLogin issues a one-time auto-login token and opens the
+// browser at the wp-admin URL with the token attached. The persistent
+// mu-plugin (installed at StartSite via installAutoLoginPlugin) reads
+// the token from disk, validates it, deletes it, and authenticates
+// the request.
+//
+// The redesign over the previous "write a self-deleting plugin per
+// click" approach closes three failure modes the old code had:
+//
+//  1. Browser prefetch / speculative request races: the old plugin
+//     deleted itself the first time it fired, so a second request
+//     arriving immediately after found no plugin and fell through to
+//     wp-login.php?reauth=1.
+//  2. File-permission edge cases: a 0600 plugin owned by the host UID
+//     was unreadable to FPM workers running as a different user.
+//  3. Silent failure: the old plugin redirected to admin_url() even
+//     when admin-user lookup returned nothing, producing a confusing
+//     login-screen bounce instead of a clean no-op.
+//
+// The new mu-plugin is permanent and idempotent; only the tiny token
+// file is per-click.
 func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
@@ -1095,40 +1148,17 @@ func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 		return ErrSiteNotRunning
 	}
 
-	token := generatePassword(32)
-
-	targetDir := site.FilesDir
-	if site.PublicDir != "" && site.PublicDir != "/" {
-		targetDir = filepath.Join(site.FilesDir, site.PublicDir)
-	}
-	muPluginsDir := filepath.Join(targetDir, "wp-content", "mu-plugins")
-	if err := utils.EnsureDir(muPluginsDir); err != nil {
-		return fmt.Errorf("creating mu-plugins dir: %w", err)
+	// Belt-and-braces: re-run the idempotent plugin install in case the
+	// site predates this change or the user removed the plugin. genmark
+	// short-circuits on byte-identical content, so the cost is one
+	// stat() in the steady state.
+	if err := installAutoLoginPlugin(site); err != nil {
+		return fmt.Errorf("installing auto-login plugin: %w", err)
 	}
 
-	pluginContent := fmt.Sprintf(`<?php
-// Locorum auto-login — single-use, self-deleting.
-if (isset($_GET['locorum_token']) && $_GET['locorum_token'] === '%s') {
-    add_action('init', function() {
-        $user = get_user_by('login', 'admin');
-        if (!$user) {
-            $users = get_users(array('role' => 'administrator', 'number' => 1));
-            $user = !empty($users) ? $users[0] : null;
-        }
-        if ($user) {
-            wp_set_current_user($user->ID);
-            wp_set_auth_cookie($user->ID, true);
-        }
-        @unlink(__FILE__);
-        wp_redirect(admin_url());
-        exit;
-    });
-}
-`, token)
-
-	pluginPath := filepath.Join(muPluginsDir, "locorum-autologin.php")
-	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0o666); err != nil {
-		return fmt.Errorf("writing auto-login plugin: %w", err)
+	token, err := writeAutoLoginToken(site)
+	if err != nil {
+		return fmt.Errorf("writing auto-login token: %w", err)
 	}
 
 	loginURL := fmt.Sprintf("https://%s/wp-admin/?locorum_token=%s", site.Domain, token)
@@ -1369,17 +1399,22 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 
 	var dbDump string
 	if site.Started {
-		containerName := docker.SiteContainerName(site.Slug, "database")
-		dump, err := sm.d.ExecInContainer(ctx, containerName, []string{
-			"mysqldump", "-u", "wordpress", "-p" + site.DBPassword, "wordpress",
-		})
-		if err != nil {
+		// Use the engine's hardened Snapshot path: it injects MYSQL_PWD via
+		// the container env so the password never reaches the process arg
+		// list (where docker top / /proc/<pid>/cmdline would expose it).
+		var dumpBuf bytes.Buffer
+		eng := dbengine.Resolve(site)
+		if _, err := eng.Snapshot(ctx, sm.d, site, &dumpBuf); err != nil {
 			slog.Warn("Could not dump database during clone: " + err.Error())
 		} else {
-			dbDump = dump
+			dbDump = dumpBuf.String()
 		}
 	}
 
+	newPassword, err := generatePassword(16)
+	if err != nil {
+		return fmt.Errorf("generating db password for clone: %w", err)
+	}
 	newSite := types.Site{
 		ID:            uuid.NewString(),
 		Name:          newName,
@@ -1396,12 +1431,13 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		WebServer:     site.WebServer,
 		Multisite:     site.Multisite,
 		PublishDBPort: site.PublishDBPort,
-		DBPassword:    generatePassword(16),
+		DBPassword:    newPassword,
 	}
 
 	if err := sm.st.AddSite(&newSite); err != nil {
 		return fmt.Errorf("adding cloned site to database: %w", err)
 	}
+	secrets.Add(newSite.DBPassword)
 
 	// StartSite acquires its own per-site mutex (newSite.ID).
 	if err := sm.StartSite(ctx, newSite.ID); err != nil {
@@ -1413,7 +1449,9 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		time.Sleep(5 * time.Second)
 
 		dumpPath := filepath.Join(newFilesDir, "locorum-clone-dump.sql")
-		if err := os.WriteFile(dumpPath, []byte(dbDump), 0o666); err != nil {
+		// 0o600: dump contains every WP row including user password hashes
+		// and salts. PHP container reads it as host UID; owner-only suffices.
+		if err := os.WriteFile(dumpPath, []byte(dbDump), 0o600); err != nil {
 			slog.Warn("Failed to write clone dump file: " + err.Error())
 		} else {
 			if _, err := sm.wpDBImport(ctx, &newSite, "/var/www/html/locorum-clone-dump.sql"); err != nil {

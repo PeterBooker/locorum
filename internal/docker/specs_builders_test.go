@@ -2,6 +2,7 @@ package docker
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,6 +102,54 @@ func TestPHPSpec_PasswordOnlyInEnvSecrets(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("MYSQL_PASSWORD not in EnvSecrets")
+	}
+}
+
+// TestPHPSpec_BindsWPCliPhar guards the wp-cli bind mount: every PHP
+// container must see /usr/local/bin/wp backed by ~/.locorum/bin/wp on
+// the host. Without it `wp core install` (and every other lifecycle
+// step that calls wp-cli) fails with "wp: command not found".
+func TestPHPSpec_BindsWPCliPhar(t *testing.T) {
+	site := builderTestSite()
+	spec := PHPSpec(site, "/home/x")
+
+	wantSrc := filepath.FromSlash("/home/x/.locorum/bin/wp")
+	wantDst := "/usr/local/bin/wp"
+	for _, m := range spec.Mounts {
+		if m.Bind == nil {
+			continue
+		}
+		if m.Bind.Target == wantDst {
+			if m.Bind.Source != wantSrc {
+				t.Errorf("wp bind source = %q, want %q (must match wpcli.PharPath)", m.Bind.Source, wantSrc)
+			}
+			if !m.Bind.ReadOnly {
+				t.Errorf("wp bind must be read-only — containers must not mutate the verified phar")
+			}
+			return
+		}
+	}
+	t.Errorf("PHPSpec.Mounts missing the /usr/local/bin/wp bind — wp-cli will not be available in the container")
+}
+
+// TestPHPSpec_FPMUserOverride locks in the workaround for wodby/php's
+// FPM pool defaulting to www-data (UID 82). Without these env vars, FPM
+// workers can't read the 0600 wp-config files owned by 1000:1000 and
+// every WordPress request fails with "Permission denied" on require_once.
+func TestPHPSpec_FPMUserOverride(t *testing.T) {
+	site := builderTestSite()
+	spec := PHPSpec(site, "/home/x")
+
+	want := map[string]bool{"PHP_FPM_USER=wodby": false, "PHP_FPM_GROUP=wodby": false}
+	for _, e := range spec.Env {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("PHPSpec.Env missing %q — FPM workers will fall back to www-data and can't read 0600 wp-config*", k)
+		}
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/PeterBooker/locorum/internal/secrets"
 )
 
 // Handler is the per-method implementation. Receives the connection
@@ -321,11 +323,13 @@ func (s *Server) dispatch(ctx context.Context, conn *Conn, req Request, mu *sync
 		return entry.handler(ctx, conn, req.Params)
 	}()
 	if err != nil {
+		// Redact: backend errors can carry container-side strings that
+		// reflect env values or container secrets back to the client.
 		var me *MethodError
 		if errors.As(err, &me) {
-			resp.Error = &RPCError{Code: me.Code, Message: me.Error()}
+			resp.Error = &RPCError{Code: me.Code, Message: secrets.RedactString(me.Error())}
 		} else {
-			resp.Error = &RPCError{Code: codeInternalError, Message: err.Error()}
+			resp.Error = &RPCError{Code: codeInternalError, Message: secrets.RedactString(err.Error())}
 		}
 		writeResponse(mu, enc, resp)
 		return
@@ -344,6 +348,13 @@ func (s *Server) dispatch(ctx context.Context, conn *Conn, req Request, mu *sync
 // handleHello processes the client.hello handshake. The client
 // declares its kind / profile / scope; the daemon stamps the conn
 // metadata and replies with server.info.
+//
+// TRUST MODEL: profile and mcpScope are taken at face value. This is safe
+// only because peer authentication is implicit at the transport layer —
+// the Unix socket is mode 0600 and the Windows named pipe is owner-ACL'd
+// (see transport_unix.go / transport_windows.go), so "if you can connect,
+// you are the user". A future TCP / HTTP transport MUST NOT inherit this
+// trust posture without per-call authorization. See SECURITY.md L5.
 func (s *Server) handleHello(conn *Conn, req Request, mu *sync.Mutex, enc *json.Encoder) {
 	type helloParams struct {
 		PeerKind string `json:"peerKind"`
