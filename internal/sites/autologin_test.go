@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -40,8 +41,12 @@ func TestInstallAutoLoginPlugin_WritesIdempotentlyAndCarriesMarker(t *testing.T)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if mode := st.Mode().Perm(); mode != 0o600 {
-		t.Errorf("plugin mode = %v, want 0o600", mode)
+	// Windows reports modes via the read-only bit only (0o666 / 0o444),
+	// so the POSIX-grade 0o600 assertion is meaningless there.
+	if runtime.GOOS != "windows" {
+		if mode := st.Mode().Perm(); mode != 0o600 {
+			t.Errorf("plugin mode = %v, want 0o600", mode)
+		}
 	}
 
 	// Idempotent: a second call must not error and must not change the
@@ -123,8 +128,10 @@ func TestWriteAutoLoginToken_AtomicAndOneTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if mode := st.Mode().Perm(); mode != 0o600 {
-		t.Errorf("token mode = %v, want 0o600", mode)
+	if runtime.GOOS != "windows" {
+		if mode := st.Mode().Perm(); mode != 0o600 {
+			t.Errorf("token mode = %v, want 0o600", mode)
+		}
 	}
 
 	// Repeated calls produce fresh tokens (no replay).
@@ -142,13 +149,16 @@ func TestWriteAutoLoginToken_AtomicAndOneTime(t *testing.T) {
 // means the docroot is the site files dir; anything else is a
 // subdirectory underneath it.
 func TestAutoLoginAppRoot_HandlesPublicDir(t *testing.T) {
+	// The function returns the unmodified FilesDir for empty / "/" public
+	// dirs and filepath.Join(FilesDir, PublicDir) otherwise — so the
+	// "joined" cases use platform-native separators on Windows.
 	cases := []struct {
 		filesDir, publicDir, want string
 	}{
 		{"/x", "", "/x"},
 		{"/x", "/", "/x"},
-		{"/x", "public", "/x/public"},
-		{"/x", "/public/", "/x/public"},
+		{"/x", "public", filepath.Join("/x", "public")},
+		{"/x", "/public/", filepath.Join("/x", "public")},
 	}
 	for _, tc := range cases {
 		got := autoLoginAppRoot(&types.Site{FilesDir: tc.filesDir, PublicDir: tc.publicDir})

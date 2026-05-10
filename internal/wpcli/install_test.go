@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,8 +74,12 @@ func TestEnsurePhar_DownloadsAndVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if mode := st.Mode().Perm(); mode != 0o755 {
-		t.Errorf("phar mode = %v, want 0o755", mode)
+	// Windows reports modes only via the read-only bit (0o666 / 0o444),
+	// so the POSIX 0o755 assertion is meaningless there.
+	if runtime.GOOS != "windows" {
+		if mode := st.Mode().Perm(); mode != 0o755 {
+			t.Errorf("phar mode = %v, want 0o755", mode)
+		}
 	}
 }
 

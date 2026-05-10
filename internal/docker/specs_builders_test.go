@@ -2,6 +2,7 @@ package docker
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -112,7 +113,7 @@ func TestPHPSpec_BindsWPCliPhar(t *testing.T) {
 	site := builderTestSite()
 	spec := PHPSpec(site, "/home/x")
 
-	wantSrc := "/home/x/.locorum/bin/wp"
+	wantSrc := filepath.Join("/home/x", ".locorum", "bin", "wp")
 	wantDst := "/usr/local/bin/wp"
 	for _, m := range spec.Mounts {
 		if m.Bind == nil {
