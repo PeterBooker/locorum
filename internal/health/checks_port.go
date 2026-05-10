@@ -22,19 +22,28 @@ type PortConflictCheck struct {
 	port      int
 	routerCN  string // container name to attribute the bind to (locorum-global-router)
 	humanPort string // for finding text ("80", "443")
+
+	// holdersSink, when non-nil, attaches a "Show port holders" Action to
+	// every finding produced by this check. The sink receives the
+	// formatted lookup text (lsof rows on Unix, Get-NetTCPConnection on
+	// Windows) and is expected to surface it to the user (typically by
+	// pushing it into a UIState modal). See [BundledOpts.PortHolderSink].
+	holdersSink func(port int, text string)
 }
 
 // NewPortConflictCheck constructs a check for a single port. The router's
 // container name is a parameter so the health package doesn't depend on
 // internal/router/traefik (which would drag genmark + tls + docker spec
 // templating into our import graph). The Bundled() factory passes
-// traefik.ContainerName.
-func NewPortConflictCheck(engine docker.Engine, port int, routerContainerName string) *PortConflictCheck {
+// traefik.ContainerName. holdersSink is optional — pass nil to omit the
+// inline action.
+func NewPortConflictCheck(engine docker.Engine, port int, routerContainerName string, holdersSink func(port int, text string)) *PortConflictCheck {
 	return &PortConflictCheck{
-		engine:    engine,
-		port:      port,
-		routerCN:  routerContainerName,
-		humanPort: strconv.Itoa(port),
+		engine:      engine,
+		port:        port,
+		routerCN:    routerContainerName,
+		humanPort:   strconv.Itoa(port),
+		holdersSink: holdersSink,
 	}
 }
 
@@ -52,13 +61,27 @@ func (c *PortConflictCheck) Run(ctx context.Context) ([]Finding, error) {
 		// Locorum's own bind. Nothing to warn about.
 		return nil, nil
 	}
-	return []Finding{{
+	f := Finding{
 		ID:       c.ID(),
 		Severity: SeverityWarn,
 		Title:    "Port " + c.humanPort + " is held by another process",
 		Detail: "Another process is listening on 127.0.0.1:" + c.humanPort +
 			". Locorum's router cannot bind it; sites may be unreachable.",
-		Remediation: "Stop the conflicting service (`lsof -iTCP:" + c.humanPort + "` lists candidates), then re-check.",
+		Remediation: "Stop the conflicting service, then re-check. Click the action below to identify it.",
 		HelpURL:     "https://docs.locorum.dev/troubleshooting/ports",
-	}}, nil
+	}
+	if c.holdersSink != nil {
+		port := c.port
+		sink := c.holdersSink
+		f.Action = &Action{
+			Label:   "Show port holders",
+			Timeout: portHolderLookupTimeout + time.Second,
+			Run: func(actCtx context.Context) error {
+				text, _ := lookupPortHolders(actCtx, port)
+				sink(port, text)
+				return nil
+			},
+		}
+	}
+	return []Finding{f}, nil
 }

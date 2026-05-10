@@ -25,6 +25,11 @@ type Provider struct {
 	// AvailableErr forces Available to error.
 	AvailableErr error
 
+	// CapabilitiesValue is what Capabilities returns. Zero value means
+	// "no extra trust stores to surface" — tests that need the Java or
+	// Firefox-on-Windows code paths set it explicitly.
+	CapabilitiesValue tls.Capabilities
+
 	// IssueErr forces the next Issue to error, then clears.
 	IssueErr error
 
@@ -54,6 +59,12 @@ func (p *Provider) Available(_ context.Context) (tls.Status, error) {
 		return tls.Status{}, p.AvailableErr
 	}
 	return p.AvailableStatus, nil
+}
+
+func (p *Provider) Capabilities(_ context.Context) tls.Capabilities {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.CapabilitiesValue
 }
 
 func (p *Provider) Issue(_ context.Context, spec tls.CertSpec) (tls.CertPath, error) {

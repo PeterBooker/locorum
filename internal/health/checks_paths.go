@@ -59,8 +59,14 @@ func (c *WSLMntCCheck) Run(ctx context.Context) ([]Finding, error) {
 	return out, nil
 }
 
-// WindowsLongPathCheck warns when any registered site root would breach
-// Windows' MAX_PATH limit once WordPress's deepest plugin path is appended.
+// WindowsLongPathCheck flags registered sites whose root path would
+// breach Windows' MAX_PATH limit once WordPress's deepest plugin path is
+// appended. Severity is conditional: when the OS has LongPathsEnabled
+// set, the kernel handles the overflow and we emit a soft Warn (some
+// legacy plugins still don't honour the manifest opt-in). When the flag
+// is unset, the site cannot reliably function and we emit a Blocker —
+// the lifecycle layer's AddSite/StartSite refuse to start the same site
+// for the same reason; the panel surfaces the rationale.
 type WindowsLongPathCheck struct {
 	platformInfo *platform.Info
 	sites        SiteRootLister
@@ -87,16 +93,25 @@ func (c *WindowsLongPathCheck) Run(ctx context.Context) ([]Finding, error) {
 		if !platform.IsLongPath(root) {
 			continue
 		}
-		out = append(out, Finding{
+		f := Finding{
 			ID:       c.ID(),
 			DedupKey: root,
-			Severity: SeverityWarn,
-			Title:    "Path may exceed Windows 260-character limit",
-			Detail: "The site at " + root + " is long enough that some WordPress plugin assets " +
-				"may exceed Windows MAX_PATH.",
-			Remediation: "Move the site under a shorter path, or enable LongPathsEnabled in the registry.",
-			HelpURL:     "https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation",
-		})
+			HelpURL:  "https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation",
+		}
+		if c.platformInfo.LongPathsEnabled {
+			f.Severity = SeverityWarn
+			f.Title = "Path may exceed Windows 260-character limit"
+			f.Detail = "The site at " + root + " is long enough that some WordPress plugin assets " +
+				"may exceed Windows MAX_PATH. LongPathsEnabled is set, but not every plugin honours it."
+			f.Remediation = "Move the site under a shorter path for the strongest guarantee."
+		} else {
+			f.Severity = SeverityBlocker
+			f.Title = "Path exceeds Windows 260-character limit"
+			f.Detail = "The site at " + root + " breaches Windows MAX_PATH and LongPathsEnabled is not set; " +
+				"Locorum will refuse to start it until the path is shortened or the registry flag is enabled."
+			f.Remediation = "Move the site under a shorter path (≤ 200 chars), or enable LongPathsEnabled in the registry (admin) and restart Locorum."
+		}
+		out = append(out, f)
 	}
 	return out, nil
 }

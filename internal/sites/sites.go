@@ -33,6 +33,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/git"
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/platform"
 	"github.com/PeterBooker/locorum/internal/router"
 	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/sites/configyaml"
@@ -422,7 +423,34 @@ func generatePassword(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// checkPathBlocking refuses with a precise typed error when the site's
+// path triggers a [PathSeverityBlock] note for the current platform. It's
+// the single chokepoint AddSite + StartSite share — keep new lifecycle
+// methods consistent by funnelling through it rather than re-deriving the
+// check inline.
+func (sm *SiteManager) checkPathBlocking(filesDir string) error {
+	if !platform.IsInitialized() {
+		return nil
+	}
+	notes := ValidateSitePath(filesDir, platform.Get())
+	for _, n := range notes {
+		if n.Severity != PathSeverityBlock {
+			continue
+		}
+		return fmt.Errorf("%w: %s", ErrPathTooLong, n.Remediation)
+	}
+	return nil
+}
+
 func (sm *SiteManager) AddSite(site types.Site) error {
+	// Refuse paths that would breach Windows MAX_PATH on a host without
+	// LongPathsEnabled. The UI's debounced ValidateSitePath already
+	// disables the Create button in that case, but enforce here too so
+	// scripted callers (CLI, MCP, daemon RPC) get the same protection.
+	if err := sm.checkPathBlocking(site.FilesDir); err != nil {
+		return err
+	}
+
 	site.ID = uuid.NewString()
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
@@ -486,6 +514,14 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	}
 	if site == nil {
 		return fmt.Errorf("site %q not found", id)
+	}
+
+	// Backstop sites whose path was tolerable when registered but is no
+	// longer valid (LongPathsEnabled was disabled, or the row was
+	// imported from a Linux host). Refuse to spin containers on a path
+	// the OS can't actually serve.
+	if err := sm.checkPathBlocking(site.FilesDir); err != nil {
+		return err
 	}
 
 	mu := sm.siteMutex(id)

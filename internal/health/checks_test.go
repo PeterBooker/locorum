@@ -139,7 +139,7 @@ func TestPortConflictCheckOurRouter(t *testing.T) {
 	})
 	_ = e.StartContainer(context.Background(), "locorum-global-router")
 
-	c := NewPortConflictCheck(e, port, "locorum-global-router")
+	c := NewPortConflictCheck(e, port, "locorum-global-router", nil)
 	out, err := c.Run(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -159,7 +159,7 @@ func TestPortConflictCheckForeignBind(t *testing.T) {
 
 	e := fake.New() // no router container
 
-	c := NewPortConflictCheck(e, port, "locorum-global-router")
+	c := NewPortConflictCheck(e, port, "locorum-global-router", nil)
 	out, _ := c.Run(context.Background())
 	if len(out) != 1 {
 		t.Fatalf("expected 1 conflict warning; got %d", len(out))
@@ -169,6 +169,50 @@ func TestPortConflictCheckForeignBind(t *testing.T) {
 	}
 	if out[0].ID != "port-conflict-"+strconv.Itoa(port) {
 		t.Errorf("ID mismatch: %q", out[0].ID)
+	}
+}
+
+// TestPortConflictCheckAttachesShowHoldersActionWhenSinkProvided locks
+// in the F14 wiring: when the bundled options carry a non-nil
+// PortHolderSink, every conflict finding gains a one-click action that
+// pipes the platform-specific holder text into the sink. The action's
+// Run is exercised here so the goroutine path is covered in CI.
+func TestPortConflictCheckAttachesShowHoldersActionWhenSinkProvided(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	e := fake.New() // no router container ⇒ foreign bind
+	var (
+		sinkPort int
+		sinkText string
+	)
+	sink := func(p int, text string) {
+		sinkPort = p
+		sinkText = text
+	}
+	c := NewPortConflictCheck(e, port, "locorum-global-router", sink)
+	out, _ := c.Run(context.Background())
+	if len(out) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(out))
+	}
+	if out[0].Action == nil {
+		t.Fatal("expected an Action attached when sink is provided")
+	}
+	if out[0].Action.Run == nil {
+		t.Fatal("Action.Run must be non-nil")
+	}
+	if err := out[0].Action.Run(context.Background()); err != nil {
+		t.Fatalf("Action.Run returned %v; expected nil", err)
+	}
+	if sinkPort != port {
+		t.Errorf("sink saw port %d, want %d", sinkPort, port)
+	}
+	if sinkText == "" {
+		t.Errorf("sink received empty text; expected lookupPortHolders output")
 	}
 }
 
@@ -182,7 +226,7 @@ func TestPortConflictCheckNoListener(t *testing.T) {
 	ln.Close()
 
 	e := fake.New()
-	c := NewPortConflictCheck(e, port, "locorum-global-router")
+	c := NewPortConflictCheck(e, port, "locorum-global-router", nil)
 	out, _ := c.Run(context.Background())
 	if len(out) != 0 {
 		t.Errorf("expected no finding when nothing listens; got %+v", out)

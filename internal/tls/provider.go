@@ -13,6 +13,14 @@ type Provider interface {
 	// installed. Cheap; callers may invoke this on every UI tick.
 	Available(ctx context.Context) (Status, error)
 
+	// Capabilities reports environment-derived gaps in trust-store
+	// coverage. Used by the System Health panel to surface "you have
+	// Java installed; mkcert from a GUI process didn't touch the
+	// cacerts keystore" style notes after Available reports OK.
+	// Best-effort: each leg short-circuits to a zero value on probe
+	// failure.
+	Capabilities(ctx context.Context) Capabilities
+
 	// Issue creates or refreshes a cert covering the given hostnames and
 	// returns its on-disk paths. Idempotent: regenerates only if the
 	// existing cert's SANs do not match the spec (so repeated calls are

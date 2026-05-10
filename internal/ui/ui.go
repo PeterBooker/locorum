@@ -35,6 +35,7 @@ type UI struct {
 	CloneModal    *CloneModal
 	HealthBlocker *HealthBlockerModal
 	Telemetry     *TelemetryModal
+	PortHolders   *PortHoldersModal
 	deleteDialog  ConfirmDialog
 	deletePurge   widget.Bool
 
@@ -77,6 +78,7 @@ func New(sm *sites.SiteManager) *UI {
 	ui.NewSite = NewNewSiteModal(state, sm, ui.Toasts)
 	ui.CloneModal = NewCloneModal(state, sm, ui.Toasts)
 	ui.Telemetry = NewTelemetryModal(state, cfg)
+	ui.PortHolders = NewPortHoldersModal(state)
 
 	// Wire up backend callbacks to update UI state
 	sm.OnSitesUpdated = func(updatedSites []types.Site) {
@@ -151,6 +153,9 @@ func (ui *UI) HandleUserInteractions(gtx layout.Context) {
 	if ui.Telemetry != nil && ui.Telemetry.Show() {
 		ui.Telemetry.HandleUserInteractions(gtx)
 	}
+	if show, _, _ := ui.State.GetPortHoldersModal(); show {
+		ui.PortHolders.HandleUserInteractions(gtx)
+	}
 }
 
 func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
@@ -209,6 +214,15 @@ func (ui *UI) Layout(gtx layout.Context) layout.Dimensions {
 				return ui.Telemetry.Layout(gtx, ui.Theme)
 			}
 			return layout.Dimensions{}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if ui.PortHolders == nil {
+				return layout.Dimensions{}
+			}
+			if show, _, _ := ui.State.GetPortHoldersModal(); !show {
+				return layout.Dimensions{}
+			}
+			return ui.PortHolders.Layout(gtx, ui.Theme)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.Toasts.Layout(gtx, ui.Theme)

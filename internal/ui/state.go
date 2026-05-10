@@ -153,6 +153,15 @@ type UIState struct {
 	// Guarded by mu (top-level UIState mutex) — same as servicesHealth.
 	diskFreeBytes int64
 
+	// Port-holders modal state. Populated when the user clicks "Show
+	// port holders" on a port-conflict health finding. The action's
+	// goroutine pushes the lookup text + port number here; the modal
+	// reads via [GetPortHoldersModal] on every frame and disappears
+	// when [DismissPortHoldersModal] is called.
+	showPortHoldersModal bool
+	portHoldersPort      int
+	portHoldersText      string
+
 	// updateAvailable / updateURL / updateNotes / updateDismissed
 	// snapshot the latest update-check result for the Settings card and
 	// the nav rail dot. Empty updateAvailable = no banner; non-empty
@@ -915,6 +924,41 @@ func (s *UIState) SetCloneLoading(loading bool) {
 	s.cloneLoading = loading
 	s.mu.Unlock()
 	s.Invalidate()
+}
+
+// ─── Port Holders Modal ─────────────────────────────────────────────────────
+
+// ShowPortHoldersModal pushes a port-holder lookup result into the
+// modal. Called from the [health.Action] goroutine wired up by the
+// PortHolderSink in main.go. Multiple calls overwrite — the modal is
+// single-instance because two port conflicts almost always share a
+// root cause and the user only needs to see one.
+func (s *UIState) ShowPortHoldersModal(port int, text string) {
+	s.mu.Lock()
+	s.showPortHoldersModal = true
+	s.portHoldersPort = port
+	s.portHoldersText = text
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// DismissPortHoldersModal hides the modal and clears the cached text.
+// Called by the modal's Close button.
+func (s *UIState) DismissPortHoldersModal() {
+	s.mu.Lock()
+	s.showPortHoldersModal = false
+	s.portHoldersPort = 0
+	s.portHoldersText = ""
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// GetPortHoldersModal returns the current modal state. Layout reads
+// this once per frame; the bool is the "should render" gate.
+func (s *UIState) GetPortHoldersModal() (show bool, port int, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.showPortHoldersModal, s.portHoldersPort, s.portHoldersText
 }
 
 func (s *UIState) IsCloneLoading() bool {

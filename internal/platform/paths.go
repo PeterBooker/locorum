@@ -68,8 +68,10 @@ func DockerPath(p string) string {
 // MAX_PATH limit.
 //
 // Returns false on non-Windows hosts — Linux/macOS path limits are far
-// higher and IsLongPath would just produce noise. The check is informational;
-// a true result does NOT block site creation, just adds a yellow note.
+// higher and IsLongPath would just produce noise. The check answers a
+// pure path question; whether the result is a hard error or a soft
+// warning is decided by the caller in conjunction with
+// [Info.LongPathsEnabled] (see [LongPathBlocking]).
 func IsLongPath(p string) bool {
 	if runtime.GOOS != "windows" {
 		return false
@@ -83,6 +85,27 @@ func IsLongPath(p string) bool {
 		return false
 	}
 	return len(p)+1+WPMaxPluginPathSuffix > WindowsMaxPath
+}
+
+// LongPathBlocking reports whether p is a *blocking* long-path problem on
+// the host described by info: i.e. the path would breach MAX_PATH AND the
+// OS does not have the LongPathsEnabled registry flag set. When the flag
+// is set, the OS handles the overflow and the caller should downgrade the
+// finding to a soft note.
+//
+// Pure: no I/O, no globals, safe to call on every keystroke. Returns
+// false for nil info, empty p, or non-Windows hosts.
+func LongPathBlocking(p string, info *Info) bool {
+	if info == nil {
+		return false
+	}
+	if info.OS != "windows" {
+		return false
+	}
+	if info.LongPathsEnabled {
+		return false
+	}
+	return IsLongPath(p)
 }
 
 // IsMntC reports whether p is on Windows-host-mounted DrvFS under WSL2
