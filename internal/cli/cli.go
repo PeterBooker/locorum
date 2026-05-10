@@ -181,7 +181,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 // returned client is closed by the caller on completion.
 //
 // hello.PeerKind defaults to "cli" when empty so all CLI traffic shows
-// up uniformly in the daemon's telemetry.
+// up uniformly in the daemon's activity log.
 func dial(ctx context.Context, env *Env, hello daemon.HelloOptions) (*daemon.Client, error) {
 	if hello.PeerKind == "" {
 		hello.PeerKind = "cli"

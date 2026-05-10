@@ -28,8 +28,6 @@ override:
     path: ^internal/sites/configyaml$
   - threshold: 80   # observed 82.3 (target 80)
     path: ^internal/hooks$
-  - threshold: 86   # observed 88.9 (target 70)
-    path: ^internal/telemetry$
   - threshold: 81   # observed 83.6 (target 70)
     path: ^internal/updatecheck$
 

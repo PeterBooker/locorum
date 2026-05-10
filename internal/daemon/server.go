@@ -29,7 +29,8 @@ type Handler func(ctx context.Context, conn *Conn, params json.RawMessage) (any,
 
 // Conn is the per-connection metadata exposed to handlers. PeerKind is
 // the self-declared client identity (cli, mcp, gui) — useful for
-// telemetry and "agent ran 17 mutations in the last hour" counters.
+// activity-log attribution and "agent ran 17 mutations in the last
+// hour" counters.
 // MCPScope, when non-empty, restricts every handler call to a specific
 // site slug; the dispatcher enforces this for site-scoped methods so
 // rogue MCP tool calls cannot pivot to a sibling worktree (D6 in the

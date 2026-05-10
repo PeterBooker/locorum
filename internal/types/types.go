@@ -40,6 +40,13 @@ type Site struct {
 	// applied at next start; mid-life toggling is rejected upstream.
 	SPXEnabled bool `json:"spxEnabled"`
 
+	// LanEnabled opts the site in to LAN access (ACCESS.md). When true
+	// and the host has a usable IPv4 LAN address, an additional
+	// `<slug>.<lan-ip-dashed>.<lan-domain>` hostname is added to the
+	// site's TLS cert SAN list and routing rule so phones and tablets
+	// on the same Wi-Fi can reach the site over HTTPS.
+	LanEnabled bool `json:"lanEnabled"`
+
 	// SPXKey is the per-site secret SPX requires on every profile or UI
 	// request (URL query param + cookie value). Generated on first
 	// enable and persisted; toggling SPX off keeps the key so a later

@@ -34,7 +34,8 @@ type Client struct {
 
 // HelloOptions configures the client.hello handshake. Most clients
 // declare PeerKind ("cli", "mcp", "gui-test") so the daemon can
-// distinguish traffic in telemetry. Profile / MCPScope are MCP-only.
+// distinguish traffic in its activity log. Profile / MCPScope are
+// MCP-only.
 type HelloOptions struct {
 	PeerKind string
 	Profile  string
@@ -53,7 +54,7 @@ func DialClient(ctx context.Context, socket string, hello HelloOptions) (*Client
 
 	// Even an empty hello succeeds against a Full daemon: it just
 	// stamps the conn with the defaults. We always send one so the
-	// daemon knows where to route activity events for telemetry.
+	// daemon knows how to attribute activity events back to the peer.
 	helloParams := struct {
 		PeerKind string `json:"peerKind,omitempty"`
 		Profile  string `json:"profile,omitempty"`

@@ -142,11 +142,23 @@ func BuildSiteRule(route router.SiteRoute) string {
 		parts = append(parts, fmt.Sprintf("Host(`%s`)", h))
 	}
 	if route.WildcardHost != "" {
-		suffix := strings.TrimPrefix(route.WildcardHost, "*.")
-		pattern := "^[^.]+\\." + regexp.QuoteMeta(suffix) + "$"
-		parts = append(parts, fmt.Sprintf("HostRegexp(`%s`)", pattern))
+		parts = append(parts, fmt.Sprintf("HostRegexp(`%s`)", wildcardRegex(route.WildcardHost)))
+	}
+	for _, w := range route.ExtraWildcardHosts {
+		if w == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("HostRegexp(`%s`)", wildcardRegex(w)))
 	}
 	return strings.Join(parts, " || ")
+}
+
+// wildcardRegex turns a "*.example.com" wildcard into the
+// single-label-matching anchored regex Traefik expects. RFC 6125 — a
+// wildcard matches exactly one DNS label, so we anchor with `[^.]+`.
+func wildcardRegex(wildcard string) string {
+	suffix := strings.TrimPrefix(wildcard, "*.")
+	return "^[^.]+\\." + regexp.QuoteMeta(suffix) + "$"
 }
 
 // BuildServiceRule constructs the rule for a global service.

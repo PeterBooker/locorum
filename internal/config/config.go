@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,8 +78,6 @@ func allKeys() []string {
 		KeyRouterHTTPSPort,
 		KeyMkcertPath,
 		KeyPerformanceMode,
-		KeyTelemetryOptIn,
-		KeyTelemetryClient,
 		KeyUpdateCheckEnabled,
 		KeyUpdateCheckChannel,
 		KeyHealthEnabled,
@@ -89,9 +88,11 @@ func allKeys() []string {
 		KeyHealthLastSeen,
 		KeyAutoSnapshotBeforeDestructive,
 		KeyDebugLogging,
-		KeyTelemetryDecided,
 		KeyUpdateDismissedVersion,
 		KeyUpdateLastAvailable,
+		KeyLanDefault,
+		KeyLanDomain,
+		KeyLanIPOverride,
 	}
 }
 
@@ -194,25 +195,12 @@ func (c *Config) UpdateCheckChannel() string {
 	return DefaultUpdateChannel
 }
 
-// TelemetryClientID returns the persisted hashed client identifier,
-// generated lazily by the telemetry subsystem when opt-in is granted.
-// Empty until first set.
-func (c *Config) TelemetryClientID() string {
-	return c.raw(KeyTelemetryClient)
-}
-
 // ── Bool accessors ──────────────────────────────────────────────────
 
 // PublishDBPortDefault returns whether the new-site modal should
 // pre-tick the "publish DB host port" switch. Default false.
 func (c *Config) PublishDBPortDefault() bool {
 	return parseBool(c.raw(KeyDefaultPublishDBPort), false)
-}
-
-// TelemetryOptIn reports whether the user has opted in to telemetry.
-// Default false (off). Telemetry must check this before sending.
-func (c *Config) TelemetryOptIn() bool {
-	return parseBool(c.raw(KeyTelemetryOptIn), false)
 }
 
 // UpdateCheckEnabled reports whether to perform background update
@@ -332,19 +320,6 @@ func (c *Config) SetRouterHTTPSPort(port int) error {
 	return c.Set(KeyRouterHTTPSPort, strconv.Itoa(port))
 }
 
-// SetTelemetryOptIn flips the opt-in. A change from false→true does
-// NOT generate a client ID; the telemetry subsystem owns that flow so
-// the unprivileged config package never produces an identifier.
-func (c *Config) SetTelemetryOptIn(v bool) error {
-	return c.Set(KeyTelemetryOptIn, formatBool(v))
-}
-
-// SetTelemetryClientID is called once by the telemetry subsystem when
-// it generates the hashed device ID.
-func (c *Config) SetTelemetryClientID(v string) error {
-	return c.Set(KeyTelemetryClient, v)
-}
-
 // SetUpdateCheckEnabled toggles the background update check.
 func (c *Config) SetUpdateCheckEnabled(v bool) error {
 	return c.Set(KeyUpdateCheckEnabled, formatBool(v))
@@ -455,21 +430,6 @@ func (c *Config) SetDebugLogging(on bool) error {
 	return c.Set(KeyDebugLogging, formatBool(on))
 }
 
-// ── Telemetry decision tri-state ────────────────────────────────────
-
-// TelemetryDecided reports whether the user has answered the first-launch
-// telemetry prompt. The first-launch modal flips this to true on any
-// answer; afterwards it never shows again. Independent of TelemetryOptIn
-// so we can distinguish "user said no" from "user hasn't been asked."
-func (c *Config) TelemetryDecided() bool {
-	return parseBool(c.raw(KeyTelemetryDecided), false)
-}
-
-// SetTelemetryDecided records that the modal has been dismissed.
-func (c *Config) SetTelemetryDecided(v bool) error {
-	return c.Set(KeyTelemetryDecided, formatBool(v))
-}
-
 // ── Update-check banner state ───────────────────────────────────────
 
 // UpdateDismissedVersion returns the version string the user last clicked
@@ -493,6 +453,88 @@ func (c *Config) UpdateLastAvailable() string {
 // SetUpdateLastAvailable persists the snapshot.
 func (c *Config) SetUpdateLastAvailable(v string) error {
 	return c.Set(KeyUpdateLastAvailable, v)
+}
+
+// ── LAN access ──────────────────────────────────────────────────────
+
+// LanDefault reports whether new sites should have LAN access
+// pre-enabled. Default false. Reserved for a future bulk-opt-in
+// workflow; the per-site toggle is the current source of truth.
+func (c *Config) LanDefault() bool {
+	return parseBool(c.raw(KeyLanDefault), false)
+}
+
+// SetLanDefault persists the bulk default.
+func (c *Config) SetLanDefault(on bool) error {
+	return c.Set(KeyLanDefault, formatBool(on))
+}
+
+// LanDomain returns the wildcard-DNS suffix to use for LAN hostnames.
+// Default "sslip.io". Any drop-in replacement (nip.io, a self-hosted
+// service) works as long as it follows the same
+// `<anything>.<ipv4>.<domain>` convention.
+func (c *Config) LanDomain() string {
+	if v := strings.TrimSpace(c.raw(KeyLanDomain)); v != "" {
+		return v
+	}
+	return DefaultLanDomain
+}
+
+// SetLanDomain validates and persists the LAN suffix. Empty string
+// clears the override (back to the documented default). The value is
+// not URL-escaped or otherwise sanitised here — Set* assumes a sane
+// DNS-suffix string and refuses obvious mistakes.
+func (c *Config) SetLanDomain(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return c.Set(KeyLanDomain, "")
+	}
+	// A LAN suffix must look like a domain — letters, digits, dots,
+	// and hyphens only. Reject scheme prefixes, slashes, and spaces
+	// that would otherwise produce nonsense hostnames.
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-':
+		default:
+			return fmt.Errorf("config: invalid lan domain %q", v)
+		}
+	}
+	return c.Set(KeyLanDomain, v)
+}
+
+// LanIPOverride returns the user-pinned LAN IPv4, or nil if unset (or
+// the stored value is not a valid IPv4). Detection should consult this
+// before falling back to the auto-detection path.
+func (c *Config) LanIPOverride() net.IP {
+	v := strings.TrimSpace(c.raw(KeyLanIPOverride))
+	if v == "" {
+		return nil
+	}
+	ip := net.ParseIP(v)
+	if ip == nil {
+		return nil
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return nil
+}
+
+// SetLanIPOverride validates and persists a manual IPv4 override.
+// Empty string clears the override.
+func (c *Config) SetLanIPOverride(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return c.Set(KeyLanIPOverride, "")
+	}
+	ip := net.ParseIP(v)
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("config: invalid IPv4 %q", v)
+	}
+	return c.Set(KeyLanIPOverride, ip.To4().String())
 }
 
 // HealthLastSeen returns the persisted last-seen-finding-keys JSON blob.

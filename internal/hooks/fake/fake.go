@@ -33,6 +33,15 @@ type Call struct {
 
 func New() *Runner { return &Runner{} }
 
+// Reset clears the recorded call list so a single test fixture can be
+// reused across phases (e.g. enable then disable in one test). RunErr
+// / RunOneErr are intentionally preserved — set them explicitly.
+func (r *Runner) Reset() {
+	r.mu.Lock()
+	r.calls = nil
+	r.mu.Unlock()
+}
+
 // Calls returns a copy of every recorded call.
 func (r *Runner) Calls() []Call {
 	r.mu.Lock()

@@ -120,7 +120,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("config.New: %v", err)
 	}
 
-	sm := sites.NewSiteManager(st, cli, d, rtr, fake.New(), emptyFS, home, cfg)
+	sm := sites.NewSiteManager(st, cli, d, rtr, tlsfake.New(), fake.New(), emptyFS, home, cfg)
 
 	h := &harness{
 		t:         t,

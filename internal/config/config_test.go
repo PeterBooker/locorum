@@ -81,9 +81,6 @@ func TestDefaultsWhenStorageEmpty(t *testing.T) {
 	if c.RouterHTTPSPort() != DefaultRouterHTTPS {
 		t.Errorf("RouterHTTPSPort default: got %d", c.RouterHTTPSPort())
 	}
-	if c.TelemetryOptIn() != false {
-		t.Errorf("TelemetryOptIn default: got true")
-	}
 	if c.UpdateCheckEnabled() != true {
 		t.Errorf("UpdateCheckEnabled default: got false (should be opt-out)")
 	}
@@ -148,14 +145,6 @@ func TestSettersAndGetters(t *testing.T) {
 	must("perf", c.SetPerformanceMode("mutagen"))
 	if got := c.PerformanceMode(); got != "mutagen" {
 		t.Errorf("perf: got %q", got)
-	}
-	must("telemetry", c.SetTelemetryOptIn(true))
-	if !c.TelemetryOptIn() {
-		t.Errorf("telemetry: false")
-	}
-	must("client", c.SetTelemetryClientID("hash-abc"))
-	if got := c.TelemetryClientID(); got != "hash-abc" {
-		t.Errorf("client: got %q", got)
 	}
 	must("ucenable", c.SetUpdateCheckEnabled(false))
 	if c.UpdateCheckEnabled() {
@@ -262,6 +251,84 @@ func TestReloadPicksUpExternalWrites(t *testing.T) {
 	if got := c.PHPVersionDefault(); got != "8.5" {
 		t.Fatalf("after Reload: got %q", got)
 	}
+}
+
+func TestLanAccessors(t *testing.T) {
+	c, err := New(newFake())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("defaults", func(t *testing.T) {
+		if c.LanDefault() {
+			t.Errorf("LanDefault should be false by default")
+		}
+		if got := c.LanDomain(); got != DefaultLanDomain {
+			t.Errorf("LanDomain default: got %q want %q", got, DefaultLanDomain)
+		}
+		if c.LanIPOverride() != nil {
+			t.Errorf("LanIPOverride should be nil by default")
+		}
+	})
+
+	t.Run("default toggle", func(t *testing.T) {
+		if err := c.SetLanDefault(true); err != nil {
+			t.Fatal(err)
+		}
+		if !c.LanDefault() {
+			t.Errorf("LanDefault should be true after Set")
+		}
+	})
+
+	t.Run("domain override", func(t *testing.T) {
+		if err := c.SetLanDomain("nip.io"); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.LanDomain(); got != "nip.io" {
+			t.Errorf("LanDomain: got %q", got)
+		}
+		// Empty clears back to default.
+		if err := c.SetLanDomain(""); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.LanDomain(); got != DefaultLanDomain {
+			t.Errorf("LanDomain after clear: got %q", got)
+		}
+	})
+
+	t.Run("domain rejects invalid", func(t *testing.T) {
+		for _, v := range []string{"https://sslip.io", "sslip.io/foo", "has space", "a..b"} {
+			// "a..b" is technically dot/letter only; this asserts the
+			// charset filter, not full DNS validation.
+			if err := c.SetLanDomain(v); err == nil && (v == "https://sslip.io" || v == "sslip.io/foo" || v == "has space") {
+				t.Errorf("expected error for %q", v)
+			}
+		}
+	})
+
+	t.Run("ip override round-trip", func(t *testing.T) {
+		if err := c.SetLanIPOverride("192.168.1.42"); err != nil {
+			t.Fatal(err)
+		}
+		ip := c.LanIPOverride()
+		if ip == nil || ip.String() != "192.168.1.42" {
+			t.Errorf("LanIPOverride: got %v", ip)
+		}
+		if err := c.SetLanIPOverride(""); err != nil {
+			t.Fatal(err)
+		}
+		if c.LanIPOverride() != nil {
+			t.Errorf("LanIPOverride should be nil after clear")
+		}
+	})
+
+	t.Run("ip override rejects bad", func(t *testing.T) {
+		for _, v := range []string{"not-an-ip", "::1", "256.0.0.1", "192.168"} {
+			if err := c.SetLanIPOverride(v); err == nil {
+				t.Errorf("expected error for %q", v)
+			}
+		}
+	})
 }
 
 func TestParseBoolCases(t *testing.T) {

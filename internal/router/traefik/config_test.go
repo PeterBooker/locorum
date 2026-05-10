@@ -78,12 +78,98 @@ func TestBuildSiteRule(t *testing.T) {
 			},
 			want: "Host(`my-slug.localhost`) || HostRegexp(`^[^.]+\\.my-slug\\.localhost$`)",
 		},
+		{
+			name: "lan extra wildcard host",
+			route: router.SiteRoute{
+				PrimaryHost:        "myslug.localhost",
+				ExtraHosts:         []string{"myslug.192-168-1-42.sslip.io"},
+				ExtraWildcardHosts: []string{"*.myslug.192-168-1-42.sslip.io"},
+			},
+			want: "Host(`myslug.localhost`) || Host(`myslug.192-168-1-42.sslip.io`) || HostRegexp(`^[^.]+\\.myslug\\.192-168-1-42\\.sslip\\.io$`)",
+		},
+		{
+			name: "primary wildcard plus lan wildcard",
+			route: router.SiteRoute{
+				PrimaryHost:        "msite.localhost",
+				WildcardHost:       "*.msite.localhost",
+				ExtraHosts:         []string{"msite.192-168-1-42.sslip.io"},
+				ExtraWildcardHosts: []string{"*.msite.192-168-1-42.sslip.io"},
+			},
+			want: "Host(`msite.localhost`) || Host(`msite.192-168-1-42.sslip.io`) || HostRegexp(`^[^.]+\\.msite\\.localhost$`) || HostRegexp(`^[^.]+\\.msite\\.192-168-1-42\\.sslip\\.io$`)",
+		},
+		{
+			name: "empty extra wildcard skipped",
+			route: router.SiteRoute{
+				PrimaryHost:        "myslug.localhost",
+				ExtraWildcardHosts: []string{"", "*.myslug.10-0-0-1.sslip.io"},
+			},
+			want: "Host(`myslug.localhost`) || HostRegexp(`^[^.]+\\.myslug\\.10-0-0-1\\.sslip\\.io$`)",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := BuildSiteRule(tt.route); got != tt.want {
 				t.Errorf("got\n  %s\nwant\n  %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHostnamesFor(t *testing.T) {
+	cases := []struct {
+		name  string
+		route router.SiteRoute
+		want  []string
+	}{
+		{
+			name:  "primary only",
+			route: router.SiteRoute{PrimaryHost: "myslug.localhost"},
+			want:  []string{"myslug.localhost"},
+		},
+		{
+			name: "primary + extras + wildcard",
+			route: router.SiteRoute{
+				PrimaryHost:  "myslug.localhost",
+				ExtraHosts:   []string{"alias.localhost"},
+				WildcardHost: "*.myslug.localhost",
+			},
+			want: []string{"myslug.localhost", "alias.localhost", "*.myslug.localhost"},
+		},
+		{
+			name: "lan extras land in SAN list",
+			route: router.SiteRoute{
+				PrimaryHost:        "myslug.localhost",
+				ExtraHosts:         []string{"myslug.192-168-1-42.sslip.io"},
+				WildcardHost:       "*.myslug.localhost",
+				ExtraWildcardHosts: []string{"*.myslug.192-168-1-42.sslip.io"},
+			},
+			want: []string{
+				"myslug.localhost",
+				"myslug.192-168-1-42.sslip.io",
+				"*.myslug.localhost",
+				"*.myslug.192-168-1-42.sslip.io",
+			},
+		},
+		{
+			name: "empty extra wildcards filtered",
+			route: router.SiteRoute{
+				PrimaryHost:        "myslug.localhost",
+				ExtraWildcardHosts: []string{"", "*.myslug.10-0-0-1.sslip.io", ""},
+			},
+			want: []string{"myslug.localhost", "*.myslug.10-0-0-1.sslip.io"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hostnamesFor(tc.route)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("position %d: got %q want %q", i, got[i], tc.want[i])
+				}
 			}
 		})
 	}

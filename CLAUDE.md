@@ -49,7 +49,7 @@ internal/router/traefik      Traefik v3 implementation (file provider + admin AP
 internal/router/fake         in-memory Router for tests
 internal/tls                 TLS Provider interface + mkcert implementation
 internal/storage             SQLite CRUD + embedded migrations (sites, site_hooks, settings)
-internal/config              typed read/write of global settings; pre-fills new-site defaults, router ports, mkcert path, telemetry/update-check switches
+internal/config              typed read/write of global settings; pre-fills new-site defaults, router ports, mkcert path, update-check switches
 internal/genmark             "locorum-generated" marker convention + atomic + manage-aware writes (used by every writer that emits a managed file)
 internal/assets              hash-based reconcile of bundled config files against disk (~/.locorum/state/asset_hashes.json); surfaces "merge needed" when both sides moved
 internal/sites               SiteManager — core business logic, builds Plans for lifecycle methods

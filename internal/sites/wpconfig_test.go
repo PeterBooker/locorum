@@ -161,12 +161,15 @@ func TestEmbeddedWPConfigTemplatesParseAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := wpConfigData{
-		Salts:      salts,
-		DBPassword: "p4ss'wd\\test",
-		Domain:     "example.localhost",
-		Multisite:  "subdomain",
-		WPHome:     "https://example.localhost",
-		WPSiteURL:  "https://example.localhost",
+		Salts:         salts,
+		DBPassword:    "p4ss'wd\\test",
+		Domain:        "example.localhost",
+		Multisite:     "subdomain",
+		WPHome:        "https://example.localhost",
+		WPSiteURL:     "https://example.localhost",
+		PrimaryHost:   "example.localhost",
+		LANHostRegex:  "",
+		DocrootSuffix: "",
 	}
 
 	mainOut, err := renderTemplate(efs, "config/wordpress/wp-config.tmpl.php", data)
@@ -200,8 +203,12 @@ func TestEmbeddedWPConfigTemplatesParseAndRender(t *testing.T) {
 			need: []string{
 				"#locorum-generated",
 				"HTTP_X_FORWARDED_PROTO",
-				"WP_HOME',    'https://example.localhost'",
-				"WP_SITEURL', 'https://example.localhost'",
+				// Dynamic WP_HOME resolver pieces.
+				"$locorum_primary_host = 'example.localhost'",
+				"$locorum_lan_regex    = ''",
+				"$locorum_home = 'https://example.localhost'",
+				"define( 'WP_HOME',    $locorum_home )",
+				"define( 'WP_SITEURL', $locorum_home . '' )",
 				"WP_DEBUG",
 				"WP_ALLOW_MULTISITE",
 				"SUBDOMAIN_INSTALL',     true",
@@ -216,6 +223,140 @@ func TestEmbeddedWPConfigTemplatesParseAndRender(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBuildLANHostRegex(t *testing.T) {
+	cases := []struct {
+		name      string
+		site      *types.Site
+		lanDomain string
+		want      string
+	}{
+		{
+			name:      "lan disabled",
+			site:      &types.Site{Slug: "myblog", LanEnabled: false},
+			lanDomain: "sslip.io",
+			want:      "",
+		},
+		{
+			name:      "subdomain multisite skips lan",
+			site:      &types.Site{Slug: "myblog", LanEnabled: true, Multisite: "subdomain"},
+			lanDomain: "sslip.io",
+			want:      "",
+		},
+		{
+			name:      "single site enabled",
+			site:      &types.Site{Slug: "myblog", LanEnabled: true},
+			lanDomain: "sslip.io",
+			want:      `/^myblog\.\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.sslip\.io$/`,
+		},
+		{
+			name:      "subdirectory multisite enabled",
+			site:      &types.Site{Slug: "my-store", LanEnabled: true, Multisite: "subdirectory"},
+			lanDomain: "sslip.io",
+			want:      `/^my-store\.\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.sslip\.io$/`,
+		},
+		{
+			name:      "alt lan domain",
+			site:      &types.Site{Slug: "shop", LanEnabled: true},
+			lanDomain: "nip.io",
+			want:      `/^shop\.\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.nip\.io$/`,
+		},
+		{
+			name:      "empty domain",
+			site:      &types.Site{Slug: "shop", LanEnabled: true},
+			lanDomain: "",
+			want:      "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildLANHostRegex(c.site, c.lanDomain); got != c.want {
+				t.Errorf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestDocrootSuffix(t *testing.T) {
+	cases := []struct {
+		publicDir string
+		want      string
+	}{
+		{"", ""},
+		{"/", ""},
+		{".", ""},
+		{"web", "/web"},
+		{"/web", "/web"},
+		{"public/wp", "/public/wp"},
+	}
+	for _, c := range cases {
+		if got := docrootSuffix(&types.Site{PublicDir: c.publicDir}); got != c.want {
+			t.Errorf("docrootSuffix(%q) = %q, want %q", c.publicDir, got, c.want)
+		}
+	}
+}
+
+// TestEmbeddedWPConfigLANResolver asserts the LAN-host pattern is baked
+// into the rendered file when the site has LAN access enabled. Combined
+// with TestBuildLANHostRegex (which exercises Go-side construction),
+// this gives end-to-end coverage of the resolver.
+func TestEmbeddedWPConfigLANResolver(t *testing.T) {
+	wd, _ := os.Getwd()
+	efs := fileFS{root: filepath.Clean(filepath.Join(wd, "..", ".."))}
+	salts, _ := generateSalts()
+
+	t.Run("primary + lan regex", func(t *testing.T) {
+		data := wpConfigData{
+			Salts:         salts,
+			DBPassword:    "x",
+			Domain:        "myblog.localhost",
+			PrimaryHost:   "myblog.localhost",
+			LANHostRegex:  `/^myblog\.\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.sslip\.io$/`,
+			WPHome:        "https://myblog.localhost",
+			WPSiteURL:     "https://myblog.localhost",
+			DocrootSuffix: "",
+		}
+		out, err := renderTemplate(efs, "config/wordpress/wp-config-locorum.tmpl.php", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(out)
+		mustContain := []string{
+			`$locorum_primary_host = 'myblog.localhost'`,
+			// phpEscape doubles every backslash so the rendered file
+			// has `\\.` where the Go-side regex used `\.`. PHP parses
+			// that back to `\.` before PCRE compiles it.
+			`$locorum_lan_regex    = '/^myblog\\.\\d{1,3}-\\d{1,3}-\\d{1,3}-\\d{1,3}\\.sslip\\.io$/'`,
+			`preg_match( $locorum_lan_regex, $locorum_request_host )`,
+			`$locorum_home = 'https://myblog.localhost'`, // fallback path
+			`define( 'WP_HOME',    $locorum_home )`,
+		}
+		for _, m := range mustContain {
+			if !strings.Contains(body, m) {
+				t.Errorf("missing %q\n--- output ---\n%s", m, body)
+			}
+		}
+	})
+
+	t.Run("docroot suffix flows through", func(t *testing.T) {
+		data := wpConfigData{
+			Salts:         salts,
+			DBPassword:    "x",
+			Domain:        "bedrock.localhost",
+			PrimaryHost:   "bedrock.localhost",
+			DocrootSuffix: "/web",
+			WPHome:        "https://bedrock.localhost",
+			WPSiteURL:     "https://bedrock.localhost/web",
+		}
+		out, err := renderTemplate(efs, "config/wordpress/wp-config-locorum.tmpl.php", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), `define( 'WP_SITEURL', $locorum_home . '/web' )`) {
+			t.Errorf("docroot suffix not baked into WP_SITEURL\n%s", out)
+		}
+	})
 }
 
 func TestEmbeddedWPConfigOmitsMultisiteWhenDisabled(t *testing.T) {

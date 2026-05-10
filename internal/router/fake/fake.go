@@ -17,6 +17,10 @@ type Router struct {
 	sites    map[string]router.SiteRoute
 	services map[string]router.ServiceRoute
 	calls    []string
+
+	// UpsertSiteErr forces UpsertSite to error. Tests use this to drive
+	// the rollback paths in EnableLAN / StartSite.
+	UpsertSiteErr error
 }
 
 func New() *Router {
@@ -45,8 +49,11 @@ func (r *Router) Stop(_ context.Context) error {
 func (r *Router) UpsertSite(_ context.Context, route router.SiteRoute) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sites[route.Slug] = route
 	r.calls = append(r.calls, "UpsertSite:"+route.Slug)
+	if r.UpsertSiteErr != nil {
+		return r.UpsertSiteErr
+	}
+	r.sites[route.Slug] = route
 	return nil
 }
 

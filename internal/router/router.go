@@ -46,12 +46,13 @@ type Router interface {
 // SiteRoute describes one site's routing requirements. Slug is the
 // canonical identifier; PrimaryHost is what users type into a browser.
 type SiteRoute struct {
-	Slug         string
-	PrimaryHost  string   // e.g. "myslug.localhost"
-	ExtraHosts   []string // additional hostnames (no wildcards)
-	WildcardHost string   // "" or "*.myslug.localhost" for multisite subdomain
-	Backend      string   // e.g. "http://locorum-myslug-web:80"
-	Cert         tls.CertPath
+	Slug               string
+	PrimaryHost        string   // e.g. "myslug.localhost"
+	ExtraHosts         []string // additional hostnames (no wildcards)
+	WildcardHost       string   // "" or "*.myslug.localhost" for multisite subdomain
+	ExtraWildcardHosts []string // additional wildcard hosts (e.g. "*.myslug.<lan>.sslip.io")
+	Backend            string   // e.g. "http://locorum-myslug-web:80"
+	Cert               tls.CertPath
 }
 
 // ServiceRoute describes a global service exposed under a fixed hostname.

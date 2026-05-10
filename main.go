@@ -27,7 +27,6 @@ import (
 	"github.com/PeterBooker/locorum/internal/router/traefik"
 	"github.com/PeterBooker/locorum/internal/sites"
 	"github.com/PeterBooker/locorum/internal/storage"
-	"github.com/PeterBooker/locorum/internal/telemetry"
 	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/ui"
 	"github.com/PeterBooker/locorum/internal/updatecheck"
@@ -110,17 +109,6 @@ func main() {
 	// safe to call before or after applog.Init.
 	applog.SetDebug(cfg.DebugLogging())
 
-	// Telemetry: noop sink today (UX.md §5.1, Phase A). The real
-	// transport lands once the privacy doc + vendor decision do — Phase
-	// B swaps SetDefault here for a PostHog (or self-rolled) sink, all
-	// without touching the call sites.
-	telemetry.SetDefault(telemetry.Noop{})
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = telemetry.Flush(ctx)
-	}()
-
 	mkcert := tlspkg.NewMkcert(
 		filepath.Join(homeDir, ".locorum", "certs"),
 		filepath.Join(homeDir, ".locorum", "bin"),
@@ -160,7 +148,7 @@ func main() {
 		log.Fatalln("Error initializing hooks runner:", err)
 	}
 
-	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir, cfg)
+	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, mkcert, hookRunner, config, homeDir, cfg)
 
 	if daemonMode {
 		runDaemonMode(homeDir, sm, a, d)
