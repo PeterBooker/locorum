@@ -201,7 +201,7 @@ func main() {
 	mkcertInstaller := func(ctx context.Context) error {
 		return mkcert.InstallCA(ctx)
 	}
-	runner := newHealthRunner(plat, d, mkcert, mkcertInstaller, sm, cfg, homeDir)
+	runner := newHealthRunner(plat, d, mkcert, mkcertInstaller, sm, cfg, homeDir, userInterface.State)
 	defer func() { _ = runner.Close() }()
 
 	if cfg.HealthEnabled() {
@@ -378,12 +378,22 @@ func main() {
 // newHealthRunner builds the production runner with the bundled checks.
 // Cadence and thresholds come from the user's config; missing keys fall
 // back to documented defaults.
-func newHealthRunner(plat *platform.Info, d *docker.Docker, mkcert *tlspkg.Mkcert, mkInstaller func(context.Context) error, sm *sites.SiteManager, cfg *settings.Config, homeDir string) *health.Runner {
+func newHealthRunner(plat *platform.Info, d *docker.Docker, mkcert *tlspkg.Mkcert, mkInstaller func(context.Context) error, sm *sites.SiteManager, cfg *settings.Config, homeDir string, state *ui.UIState) *health.Runner {
 	cadence := time.Duration(cfg.HealthCadenceMinutes()) * time.Minute
 	if cadence <= 0 {
 		cadence = 5 * time.Minute
 	}
 	const gb = int64(1024 * 1024 * 1024)
+	// Port-holder action sink: fires from the health runner's action
+	// goroutine; pushes the lookup result into the modal-state slot
+	// the UI reads on every frame. Captures the *UIState pointer so
+	// the closure stays callable across the runner's lifetime.
+	portHolderSink := func(port int, text string) {
+		if state == nil {
+			return
+		}
+		state.ShowPortHoldersModal(port, text)
+	}
 	checks := health.Bundled(health.BundledOpts{
 		Platform:            plat,
 		Engine:              d,
@@ -392,6 +402,7 @@ func newHealthRunner(plat *platform.Info, d *docker.Docker, mkcert *tlspkg.Mkcer
 		Sites:               sm,
 		HostStatfsPath:      homeDir,
 		RouterContainerName: traefik.ContainerName,
+		PortHolderSink:      portHolderSink,
 		DiskWarnBytes:       int64(cfg.HealthDiskWarnGB()) * gb,
 		DiskBlockerBytes:    int64(cfg.HealthDiskBlockerGB()) * gb,
 	})

@@ -72,6 +72,14 @@ type Info struct {
 
 	// Hostname is best-effort; "" if os.Hostname errored.
 	Hostname string
+
+	// LongPathsEnabled is true when the host is Windows AND the
+	// HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled
+	// registry value is 1. False on every other host (including
+	// Windows without the value, which is the legacy MAX_PATH regime).
+	// Consumers branch on this to decide whether a path that would
+	// breach MAX_PATH is a hard error or a tolerable one.
+	LongPathsEnabled bool
 }
 
 // WSLInfo carries the Windows-Subsystem-for-Linux specifics. Active is the
@@ -166,14 +174,15 @@ func detect(ctx context.Context) *Info {
 	host, _ := os.Hostname()
 
 	info := &Info{
-		OS:           runtime.GOOS,
-		Arch:         runtime.GOARCH,
-		Username:     username,
-		UID:          uid,
-		GID:          gid,
-		HomeDir:      homeDir,
-		Hostname:     host,
-		UnderRosetta: isUnderRosetta(),
+		OS:               runtime.GOOS,
+		Arch:             runtime.GOARCH,
+		Username:         username,
+		UID:              uid,
+		GID:              gid,
+		HomeDir:          homeDir,
+		Hostname:         host,
+		UnderRosetta:     isUnderRosetta(),
+		LongPathsEnabled: readLongPathsEnabled(),
 	}
 
 	info.WSL = detectWSL(ctx)

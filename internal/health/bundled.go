@@ -43,6 +43,14 @@ type BundledOpts struct {
 	// traefik.ContainerName.
 	RouterContainerName string
 
+	// PortHolderSink, if non-nil, receives the formatted output of the
+	// port-holder lookup (lsof / Get-NetTCPConnection) when the user
+	// clicks the "Show port holders" action on a port-conflict finding.
+	// Implementations are expected to surface the text to the user
+	// (typically by pushing into a UIState modal). Called from the
+	// runner's action goroutine — must not block.
+	PortHolderSink func(port int, text string)
+
 	// DiskWarnBytes / DiskBlockerBytes override the disk thresholds.
 	// Zero values fall back to DefaultDiskWarnBytes /
 	// DefaultDiskBlockerBytes.
@@ -92,8 +100,8 @@ func Bundled(opts BundledOpts) []Check {
 		}))
 		if opts.RouterContainerName != "" {
 			out = append(out,
-				NewPortConflictCheck(opts.Engine, 80, opts.RouterContainerName),
-				NewPortConflictCheck(opts.Engine, 443, opts.RouterContainerName),
+				NewPortConflictCheck(opts.Engine, 80, opts.RouterContainerName, opts.PortHolderSink),
+				NewPortConflictCheck(opts.Engine, 443, opts.RouterContainerName, opts.PortHolderSink),
 			)
 		}
 	}

@@ -195,11 +195,22 @@ func (m *NewSiteModal) HandleUserInteractions(gtx layout.Context) {
 		multisiteMap := []string{"", "subdirectory", "subdomain"}
 		multisite := multisiteMap[m.multisiteDropdown.Selected]
 
-		if name == "" {
+		// Refuse submit when the path picked up a hard-blocking
+		// note (today: Windows MAX_PATH without LongPathsEnabled).
+		// AddSite enforces the same rule for scripted callers; the
+		// in-form check is a UX aid so the user gets immediate
+		// feedback instead of an error toast after the goroutine
+		// fires.
+		notes := m.pathNotesSnapshot()
+
+		switch {
+		case name == "":
 			m.state.ShowError("Site name is required")
-		} else if filesDir == "" {
+		case filesDir == "":
 			m.state.ShowError("Files directory is required")
-		} else {
+		case sites.HasBlockingNote(notes):
+			m.state.ShowError("Choose a shorter path; this one exceeds Windows' 260-character limit.")
+		default:
 			go func() {
 				site := types.Site{
 					Name:         name,
@@ -417,8 +428,10 @@ func (m *NewSiteModal) layoutForm(gtx layout.Context, th *Theme) layout.Dimensio
 	)
 }
 
-// layoutPathNotes renders the inline yellow validation notes beneath the
-// directory picker. Empty when there's nothing to warn about.
+// layoutPathNotes renders the inline validation notes beneath the
+// directory picker. Empty when there's nothing to warn about. Blocker
+// notes render with the error palette and an extra remediation line so
+// the user knows the form's Create button won't fire.
 func (m *NewSiteModal) layoutPathNotes(gtx layout.Context, th *Theme) layout.Dimensions {
 	notes := m.pathNotesSnapshot()
 	if len(notes) == 0 {
@@ -427,13 +440,17 @@ func (m *NewSiteModal) layoutPathNotes(gtx layout.Context, th *Theme) layout.Dim
 	children := make([]layout.FlexChild, 0, len(notes))
 	for _, n := range notes {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			bg, fg := th.Color.WarnSoft, th.Color.Warn
+			if n.Severity == sites.PathSeverityBlock {
+				bg, fg = th.Color.ErrSoft, th.Color.Err
+			}
 			return layout.Inset{Top: th.Spacing.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return RoundedFill(gtx, th.Color.WarnSoft, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
+				return RoundedFill(gtx, bg, th.Radii.R2, func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Body2(th.Theme, n.Title)
-								lbl.Color = th.Color.Warn
+								lbl.Color = fg
 								lbl.TextSize = th.Sizes.Body
 								lbl.Font.Weight = font.SemiBold
 								return lbl.Layout(gtx)
@@ -446,6 +463,15 @@ func (m *NewSiteModal) layoutPathNotes(gtx layout.Context, th *Theme) layout.Dim
 								lbl.Color = th.Color.Fg2
 								lbl.TextSize = th.Sizes.Body
 								return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if n.Remediation == "" {
+									return layout.Dimensions{}
+								}
+								lbl := material.Body2(th.Theme, "→ "+n.Remediation)
+								lbl.Color = th.Color.Fg2
+								lbl.TextSize = th.Sizes.Mono
+								return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 							}),
 						)
 					})

@@ -41,8 +41,8 @@ func TestSurfaceErrorPortInUse(t *testing.T) {
 	wrapped := fmt.Errorf("router: %w", router.ErrPortInUse)
 	SurfaceError(s, "ignored", wrapped, nil)
 	got := s.ErrorBannerSnapshot()
-	if got.ActionID != "open-network-settings" {
-		t.Fatalf("ActionID = %q, want open-network-settings", got.ActionID)
+	if got.ActionID != "open-system-health" {
+		t.Fatalf("ActionID = %q, want open-system-health", got.ActionID)
 	}
 }
 

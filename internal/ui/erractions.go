@@ -68,11 +68,17 @@ func SurfaceError(state *UIState, prefix string, err error, starter func()) {
 			},
 		)
 	case errors.Is(err, router.ErrPortInUse):
+		// We deliberately do NOT fall back to ephemeral ports — the
+		// stable https://<slug>.localhost URL is load-bearing for
+		// browser cookies, mkcert SANs, hard-coded WP siteurl, and
+		// user-facing docs. The user must free the conflicting port.
+		// The System Health panel surfaces a one-click "Show port
+		// holders" action that runs lsof / Get-NetTCPConnection.
 		state.ShowErrorWithAction(
-			"A required network port is already in use. Choose a different port in Settings.",
+			"Port 80 or 443 is in use. Stop the conflicting process — System Health can list candidates.",
 			NotifyAction{
-				ID:    "open-network-settings",
-				Label: "Open Settings",
+				ID:    "open-system-health",
+				Label: "Open System Health",
 				Run: func() {
 					state.SetNavView(NavViewSettings)
 					state.ClearErrorBanner()

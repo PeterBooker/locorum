@@ -5,8 +5,11 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path"
+	"strconv"
+	"time"
 
 	"github.com/PeterBooker/locorum/internal/assets"
 	"github.com/PeterBooker/locorum/internal/docker"
@@ -16,6 +19,18 @@ import (
 
 	"github.com/docker/docker/client"
 )
+
+// preLaunchProbeTimeout caps each TCP probe of host ports 80/443 issued
+// before we attempt the router create. A listener-present case answers
+// in microseconds; the timeout exists only to avoid an indefinite hang
+// against a misbehaving local proxy that accepts the SYN but never
+// replies.
+const preLaunchProbeTimeout = 200 * time.Millisecond
+
+// preLaunchProbePorts is the canonical pair of host-bound ports the
+// router needs. Centralised here so a future port change (extremely
+// unlikely — see F14 design note) is one constant edit, not a sweep.
+var preLaunchProbePorts = []int{80, 443}
 
 // App owns process-wide initialisation: filesystem layout, Docker readiness,
 // global containers, and router lifecycle.
@@ -121,6 +136,25 @@ func (a *App) WipeLabelled(ctx context.Context) error {
 // Each step propagates the underlying error verbatim. The router itself
 // returns sentinels (router.ErrPortInUse) the UI can branch on.
 func (a *App) BringUpGlobals(ctx context.Context) error {
+	// Pre-launch probe: if a foreign process already owns 80 or 443,
+	// short-circuit with router.ErrPortInUse rather than letting the
+	// Docker SDK surface a deeper, less-actionable "port is already
+	// allocated" error after pulling the router image. F14 design
+	// note: we deliberately do NOT fall back to ephemeral ports —
+	// URL stability of https://<slug>.localhost is load-bearing for
+	// browser cookie scope, mkcert SANs, hard-coded WP siteurl, and
+	// the user's documentation. The user must free the port instead.
+	//
+	// At this moment in the lifecycle the router container is *not*
+	// running (BringUpGlobals creates it below), so any existing
+	// listener on the host port cannot be ours.
+	if held := probeHeldRouterPort(ctx); held > 0 {
+		err := fmt.Errorf("%w: port %d is held by another process", router.ErrPortInUse, held)
+		slog.Warn("pre-launch port probe: foreign listener detected; refusing to create router",
+			"port", held)
+		return err
+	}
+
 	if _, err := a.d.EnsureNetwork(ctx, docker.GlobalNetworkSpec()); err != nil {
 		return fmt.Errorf("create global network: %w", err)
 	}
@@ -164,6 +198,41 @@ func (a *App) ensureGlobalContainer(ctx context.Context, spec docker.ContainerSp
 		return fmt.Errorf("start %s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+// probeHeldRouterPort dials each port in [preLaunchProbePorts] and
+// returns the first one that already has a listener. Returns 0 when all
+// ports look free. Used by [BringUpGlobals] to short-circuit before
+// pulling the router image when a foreign process holds 80 or 443.
+//
+// Pure read-only TCP probe — never binds. A successful dial means a
+// listener accepted the SYN; we close immediately. The probe is bounded
+// by [preLaunchProbeTimeout] per port, which is several orders of
+// magnitude faster than the BringUpGlobals image pull, so the cost is
+// negligible.
+func probeHeldRouterPort(ctx context.Context) int {
+	for _, port := range preLaunchProbePorts {
+		if isPortHeld(ctx, port) {
+			return port
+		}
+	}
+	return 0
+}
+
+// isPortHeld is the per-port half of [probeHeldRouterPort]. Factored
+// out so a future caller (status bar, CLI sub-command) can reuse the
+// dial without picking up the router-port iteration.
+func isPortHeld(ctx context.Context, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	d := net.Dialer{Timeout: preLaunchProbeTimeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func (a *App) Shutdown(ctx context.Context) error {

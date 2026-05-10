@@ -72,6 +72,45 @@ func TestIsMntDrvFsPath(t *testing.T) {
 	}
 }
 
+// TestLongPathBlocking covers the registry-aware severity decision used
+// by sites.ValidateSitePath: a path that breaches MAX_PATH only blocks
+// when the OS does *not* have LongPathsEnabled set.
+func TestLongPathBlocking(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		// IsLongPath is short-circuited to false on non-Windows; assert
+		// LongPathBlocking inherits that behaviour and never blocks on
+		// Linux/macOS regardless of the registry shape.
+		long := strings.Repeat("a", 500)
+		off := &Info{OS: "linux", LongPathsEnabled: false}
+		if LongPathBlocking(long, off) {
+			t.Errorf("LongPathBlocking must return false on non-Windows hosts")
+		}
+		return
+	}
+	threshold := WindowsMaxPath - 1 - WPMaxPluginPathSuffix
+	long := strings.Repeat("a", threshold+1)
+	short := strings.Repeat("a", threshold)
+
+	off := &Info{OS: "windows", LongPathsEnabled: false}
+	on := &Info{OS: "windows", LongPathsEnabled: true}
+
+	if !LongPathBlocking(long, off) {
+		t.Error("long path on Windows with LongPathsEnabled=false MUST block")
+	}
+	if LongPathBlocking(long, on) {
+		t.Error("long path on Windows with LongPathsEnabled=true must not block (OS handles it)")
+	}
+	if LongPathBlocking(short, off) {
+		t.Error("short path must not block regardless of registry state")
+	}
+	if LongPathBlocking("", off) {
+		t.Error("empty path must not block")
+	}
+	if LongPathBlocking(long, nil) {
+		t.Error("nil info must not block")
+	}
+}
+
 // TestIsMntCRespectsWSLActive confirms the public IsMntC short-circuits on
 // non-WSL hosts even when the path *would* match. Test installs a fake
 // platform.Info via NewForTest so we don't depend on the build host.
