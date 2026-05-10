@@ -147,8 +147,10 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 		return CertPath{}, errors.New("mkcert binary unresolved")
 	}
 
+	// 0o700: per-site cert dirs hold the TLS private key. Don't trust mkcert's
+	// own file mode (varies across forks/versions).
 	targetDir := filepath.Join(m.certDir, spec.Name)
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
 		return CertPath{}, fmt.Errorf("create cert dir: %w", err)
 	}
 
@@ -159,7 +161,7 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 		return CertPath{CertFile: certFile, KeyFile: keyFile}, nil
 	}
 
-	if err := os.MkdirAll(m.certDir, 0o755); err != nil {
+	if err := os.MkdirAll(m.certDir, 0o700); err != nil {
 		return CertPath{}, fmt.Errorf("create certs root: %w", err)
 	}
 	tmpDir, err := os.MkdirTemp(m.certDir, ".issue-"+spec.Name+"-")
@@ -184,6 +186,11 @@ func (m *Mkcert) Issue(ctx context.Context, spec CertSpec) (CertPath, error) {
 	}
 	if err := os.Rename(tmpKey, keyFile); err != nil {
 		return CertPath{}, fmt.Errorf("install key: %w", err)
+	}
+	// Re-chmod after rename: mkcert builds vary in the mode they use.
+	// 0o644 cert is fine (it's public); 0o600 key is mandatory.
+	if err := os.Chmod(keyFile, 0o600); err != nil {
+		slog.Warn("chmod key.pem", "err", err.Error())
 	}
 
 	slog.Info("issued cert", "name", spec.Name, "hosts", spec.Hostnames)

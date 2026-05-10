@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -33,6 +34,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/hooks"
 	"github.com/PeterBooker/locorum/internal/orch"
 	"github.com/PeterBooker/locorum/internal/router"
+	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/sites/configyaml"
 	"github.com/PeterBooker/locorum/internal/sites/sitesteps"
 	"github.com/PeterBooker/locorum/internal/storage"
@@ -409,13 +411,15 @@ func (sm *SiteManager) GetSite(id string) (*types.Site, error) {
 }
 
 // generatePassword returns a cryptographically random hex string of n bytes.
-func generatePassword(n int) string {
+// crypto/rand.Read failure is rare but never silently substituted — a degraded
+// secret would be a critical security regression for everything that depends on
+// it (DB passwords, auto-login tokens). Callers must propagate the error.
+func generatePassword(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		// Should never happen — crypto/rand reads from OS.
-		return "password"
+		return "", fmt.Errorf("crypto/rand read failed: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func (sm *SiteManager) AddSite(site types.Site) error {
@@ -423,7 +427,11 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	site.Slug = slug.Make(site.Name)
 	site.Domain = slug.Make(site.Name) + ".localhost"
 	site.Started = false
-	site.DBPassword = generatePassword(16)
+	pw, err := generatePassword(16)
+	if err != nil {
+		return fmt.Errorf("generating db password: %w", err)
+	}
+	site.DBPassword = pw
 	if site.WebServer == "" {
 		site.WebServer = "nginx"
 	}
@@ -454,6 +462,11 @@ func (sm *SiteManager) AddSite(site types.Site) error {
 	if err := sm.st.AddSite(&site); err != nil {
 		return err
 	}
+
+	// Register every newly-generated secret so any error string the
+	// backend later surfaces (audit log, activity event, daemon RPC
+	// reply, MCP error body) is automatically scrubbed.
+	secrets.Add(site.DBPassword)
 
 	sm.writeConfigYAML(&site)
 	sm.emitSitesUpdate()
@@ -488,13 +501,6 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	plan := orch.Plan{
 		Name: "start-site:" + site.Slug,
 		Steps: []orch.Step{
-			&sitesteps.FuncStep{
-				Label: "ensure-files-writable",
-				Do: func(_ context.Context) error {
-					ensureWritable(site.FilesDir)
-					return nil
-				},
-			},
 			&sitesteps.EnsureSPXStep{Site: site, HomeDir: sm.homeDir},
 			&sitesteps.FuncStep{
 				Label: "ensure-wordpress",
@@ -907,6 +913,11 @@ func (sm *SiteManager) DeleteSiteWithOptions(ctx context.Context, id string, opt
 		return err
 	}
 
+	// Drop secret values from the redaction registry: the row is gone,
+	// nothing should still emit them, and keeping stale entries grows
+	// the redaction pass without bound.
+	secrets.Remove(site.DBPassword)
+
 	sm.emitSitesUpdate()
 	return nil
 }
@@ -940,17 +951,22 @@ func (sm *SiteManager) emitSitesUpdate() {
 }
 
 // ReconcileState marks all sites as stopped in the database. Called on
-// startup after Initialize() has cleaned up all containers.
+// startup after Initialize() has cleaned up all containers. Also seeds
+// the secret-redaction registry with every persisted DB password so any
+// error string surfaced before the first Add/Clone is still scrubbed.
 func (sm *SiteManager) ReconcileState() error {
-	sites, err := sm.st.GetSites()
+	rows, err := sm.st.GetSites()
 	if err != nil {
 		return err
 	}
 
-	for i := range sites {
-		if sites[i].Started {
-			sites[i].Started = false
-			if _, err := sm.st.UpdateSite(&sites[i]); err != nil {
+	for i := range rows {
+		if rows[i].DBPassword != "" {
+			secrets.Add(rows[i].DBPassword)
+		}
+		if rows[i].Started {
+			rows[i].Started = false
+			if _, err := sm.st.UpdateSite(&rows[i]); err != nil {
 				slog.Error("Failed to reconcile site state: " + err.Error())
 			}
 		}
@@ -1095,7 +1111,10 @@ func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 		return ErrSiteNotRunning
 	}
 
-	token := generatePassword(32)
+	token, err := generatePassword(32)
+	if err != nil {
+		return fmt.Errorf("generating auto-login token: %w", err)
+	}
 
 	targetDir := site.FilesDir
 	if site.PublicDir != "" && site.PublicDir != "/" {
@@ -1127,7 +1146,10 @@ if (isset($_GET['locorum_token']) && $_GET['locorum_token'] === '%s') {
 `, token)
 
 	pluginPath := filepath.Join(muPluginsDir, "locorum-autologin.php")
-	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0o666); err != nil {
+	// 0o600: plugin contains a single-use auto-login token. The PHP container
+	// runs as the host UID (PHPUserGroup) so owner-only is sufficient. The
+	// file self-deletes via @unlink after use.
+	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0o600); err != nil {
 		return fmt.Errorf("writing auto-login plugin: %w", err)
 	}
 
@@ -1369,17 +1391,22 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 
 	var dbDump string
 	if site.Started {
-		containerName := docker.SiteContainerName(site.Slug, "database")
-		dump, err := sm.d.ExecInContainer(ctx, containerName, []string{
-			"mysqldump", "-u", "wordpress", "-p" + site.DBPassword, "wordpress",
-		})
-		if err != nil {
+		// Use the engine's hardened Snapshot path: it injects MYSQL_PWD via
+		// the container env so the password never reaches the process arg
+		// list (where docker top / /proc/<pid>/cmdline would expose it).
+		var dumpBuf bytes.Buffer
+		eng := dbengine.Resolve(site)
+		if _, err := eng.Snapshot(ctx, sm.d, site, &dumpBuf); err != nil {
 			slog.Warn("Could not dump database during clone: " + err.Error())
 		} else {
-			dbDump = dump
+			dbDump = dumpBuf.String()
 		}
 	}
 
+	newPassword, err := generatePassword(16)
+	if err != nil {
+		return fmt.Errorf("generating db password for clone: %w", err)
+	}
 	newSite := types.Site{
 		ID:            uuid.NewString(),
 		Name:          newName,
@@ -1396,12 +1423,13 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		WebServer:     site.WebServer,
 		Multisite:     site.Multisite,
 		PublishDBPort: site.PublishDBPort,
-		DBPassword:    generatePassword(16),
+		DBPassword:    newPassword,
 	}
 
 	if err := sm.st.AddSite(&newSite); err != nil {
 		return fmt.Errorf("adding cloned site to database: %w", err)
 	}
+	secrets.Add(newSite.DBPassword)
 
 	// StartSite acquires its own per-site mutex (newSite.ID).
 	if err := sm.StartSite(ctx, newSite.ID); err != nil {
@@ -1413,7 +1441,9 @@ func (sm *SiteManager) CloneSite(ctx context.Context, siteID, newName string) er
 		time.Sleep(5 * time.Second)
 
 		dumpPath := filepath.Join(newFilesDir, "locorum-clone-dump.sql")
-		if err := os.WriteFile(dumpPath, []byte(dbDump), 0o666); err != nil {
+		// 0o600: dump contains every WP row including user password hashes
+		// and salts. PHP container reads it as host UID; owner-only suffices.
+		if err := os.WriteFile(dumpPath, []byte(dbDump), 0o600); err != nil {
 			slog.Warn("Failed to write clone dump file: " + err.Error())
 		} else {
 			if _, err := sm.wpDBImport(ctx, &newSite, "/var/www/html/locorum-clone-dump.sql"); err != nil {

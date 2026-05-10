@@ -104,7 +104,9 @@ type SnapshotInfo struct {
 // return.
 func (sm *SiteManager) snapshotsDir() (string, error) {
 	dir := filepath.Join(sm.homeDir, ".locorum", snapshotsRoot)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0o700: snapshot dumps contain every WP row including user password
+	// hashes, session tokens, and stored API keys.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("ensure snapshots dir: %w", err)
 	}
 	return dir, nil
@@ -208,7 +210,8 @@ func (sm *SiteManager) snapshotLocked(ctx context.Context, site *types.Site, lab
 		cleanupTmp()
 		return "", fmt.Errorf("close tmp: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o640); err != nil {
+	// 0o600: snapshot dumps include WP password hashes + auth salts.
+	if err := os.Chmod(tmpName, 0o600); err != nil {
 		cleanupTmp()
 		return "", fmt.Errorf("chmod: %w", err)
 	}

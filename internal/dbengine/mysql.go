@@ -91,6 +91,10 @@ func (e mysqlEngine) ContainerSpec(site *types.Site, homeDir string) docker.Cont
 			LogMaxSize:  "10m",
 			LogMaxFiles: 3,
 			PidsLimit:   1024,
+			// 1 GiB: enough for typical WP databases + InnoDB buffer pool
+			// at default sizes, while bounding the blast radius of a
+			// runaway query that allocates per-row buffers.
+			MemoryLimit: 1024 << 20,
 		},
 		Init:    true,
 		Restart: docker.RestartNo,

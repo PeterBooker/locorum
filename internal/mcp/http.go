@@ -186,9 +186,19 @@ func (h *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+	// 1 MiB body cap: tool calls don't exceed a few KB in practice. The
+	// limit is +1 over the cap so we can detect "client sent exactly the
+	// limit" (allowed) vs. "client sent more, we truncated" (rejected).
+	const maxBodyBytes = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxBodyBytes {
+		http.Error(w,
+			fmt.Sprintf("request body exceeds %d bytes — chunk your tool call", maxBodyBytes),
+			http.StatusRequestEntityTooLarge)
 		return
 	}
 	r.Body.Close()

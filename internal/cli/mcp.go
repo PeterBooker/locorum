@@ -140,7 +140,12 @@ func runMCPServe(ctx context.Context, env *Env) ExitCode {
 		return ExitUsage
 	}
 	_, _ = fmt.Fprintf(env.Stderr, "locorum mcp http listening on %s\n", *httpBind)
-	_, _ = fmt.Fprintf(env.Stderr, "auth token: %s (also at %s)\n", token, mcp.TokenPath(env.HomeDir))
+	// Deliberately do NOT print the token value: stderr lands in shell
+	// scrollback, tmux logs, IDE terminal panes, and any wrapping `tee`
+	// — every one of those undoes the 0o600 restriction we apply to the
+	// token file. Print only the path so the user can `cat` it (and
+	// history-strip if they want).
+	_, _ = fmt.Fprintf(env.Stderr, "auth token at %s\n", mcp.TokenPath(env.HomeDir))
 	if err := httpSrv.Serve(ctx); err != nil {
 		_, _ = fmt.Fprintln(env.Stderr, "locorum mcp:", err)
 		return ExitError

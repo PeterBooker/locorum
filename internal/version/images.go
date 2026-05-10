@@ -18,7 +18,10 @@ const (
 	// renovate: image=mailhog/mailhog versioning=docker
 	MailhogImage = "mailhog/mailhog"
 	// renovate: image=adminer versioning=docker
-	AdminerImage = "adminer:latest"
+	// Pinned to a major+minor tag (not :latest) so a malicious upstream
+	// re-tag of `:latest` cannot land in our admin DB UI silently. Bump
+	// in lockstep with the renovate PR.
+	AdminerImage = "adminer:5.4.2-standalone"
 	// renovate: image=alpine versioning=docker
 	AlpineImage = "alpine:3"
 

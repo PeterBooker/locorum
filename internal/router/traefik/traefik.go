@@ -244,7 +244,7 @@ func (r *Router) UpsertSite(ctx context.Context, route router.SiteRoute) error {
 
 	target := filepath.Join(r.hostDynamicDir, "site-"+route.Slug+".yaml")
 	wasPresent := fileExists(target)
-	if err := genmark.WriteAtomic(target, payload, 0o644); err != nil {
+	if err := genmark.WriteAtomic(target, payload, 0o600); err != nil {
 		return fmt.Errorf("write site config: %w", err)
 	}
 
@@ -290,7 +290,7 @@ func (r *Router) UpsertService(ctx context.Context, route router.ServiceRoute) e
 
 	target := filepath.Join(r.hostDynamicDir, "svc-"+route.Name+".yaml")
 	wasPresent := fileExists(target)
-	if err := genmark.WriteAtomic(target, payload, 0o644); err != nil {
+	if err := genmark.WriteAtomic(target, payload, 0o600); err != nil {
 		return fmt.Errorf("write service config: %w", err)
 	}
 
@@ -365,7 +365,10 @@ func (r *Router) prepareDirs() error {
 		r.hostDynamicDir,
 		r.hostCertsDir,
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		// 0o700: router configs include the bcrypt-hashed admin API password
+		// and references to per-site TLS keys; cert dirs hold the keys
+		// themselves. None of this should be readable by other local users.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create %q: %w", dir, err)
 		}
 	}
@@ -377,7 +380,7 @@ func (r *Router) writeStaticConfig() error {
 	if err != nil {
 		return err
 	}
-	return genmark.WriteAtomic(r.hostStaticPath, payload, 0o644)
+	return genmark.WriteAtomic(r.hostStaticPath, payload, 0o600)
 }
 
 // writeAPIConfig writes the dynamic config that exposes Traefik's admin

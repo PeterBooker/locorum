@@ -220,6 +220,15 @@ var allTools = []toolDef{
   "required": ["hookId"]
 }`),
 		},
+		// SECURITY: run_hook only references existing hooks by ID — it does
+		// NOT accept arbitrary command text. wp-cli/exec/exec-host hooks are
+		// shell-evaluated (`sh -c` with token expansion) inside the
+		// container, so allowing creation/edit of hooks via MCP would be
+		// RCE-equivalent for any agent holding the bearer token. Hook
+		// authoring stays GUI-only by design. If an mcp/create_hook tool is
+		// ever added it MUST gate behind an interactive confirmation in
+		// the full profile and surface the command text to the user before
+		// execution. See SECURITY.md M7.
 		impl:        callRunHook,
 		requireFull: true,
 	},

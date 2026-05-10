@@ -387,7 +387,7 @@ func (r *runner) openRunLog(slug string, ev Event) (*os.File, string, error) {
 		slug = "_unknown"
 	}
 	dir := filepath.Join(r.cfg.LogsBaseDir, slug)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", err
 	}
 	// Replace ":" so Windows accepts the filename.
@@ -397,7 +397,10 @@ func (r *runner) openRunLog(slug string, ev Event) (*os.File, string, error) {
 		name = "ad-hoc"
 	}
 	path := filepath.Join(dir, name+"-"+ts+".log")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	// 0o600: hook runs verbatim-capture stdout/stderr from wp-cli/exec/
+	// exec-host. WP-CLI commands like `wp config get DB_PASSWORD` or
+	// exec-host scripts that echo bearer tokens will land here in plain text.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, "", err
 	}

@@ -311,7 +311,7 @@ func (lv *LogViewer) exportToFile() {
 		// Fall back to the user's home dir + .locorum/logs to maintain
 		// at least one canonical location even when applog.Init failed.
 		dir = filepath.Join(os.TempDir(), "locorum-logs")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			lv.state.ShowError("Export failed: " + err.Error())
 			return
 		}
@@ -319,7 +319,7 @@ func (lv *LogViewer) exportToFile() {
 	ts := time.Now().Format("20060102-150405")
 	name := fmt.Sprintf("%s-%s-%s.log", slug, service, ts)
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		lv.state.ShowError("Export failed: " + err.Error())
 		return
 	}

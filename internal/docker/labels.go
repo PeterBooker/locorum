@@ -18,21 +18,30 @@ const (
 	PlatformValue = "locorum"
 )
 
+// Role is the string identifier for a containerised component. Used both
+// as the value of LabelRole on live resources and to look up per-role
+// resource caps in roleResources.
+type Role = string
+
 // Container/network role names. Stable strings — written to live container
 // labels and used for filtering during cleanup, so changing a value is a
 // breaking change.
 const (
-	RoleRouter   = "router"
-	RoleWeb      = "web"
-	RolePHP      = "php"
-	RoleDatabase = "database"
-	RoleRedis    = "redis"
-	RoleMail     = "mail"
-	RoleAdminer  = "adminer"
+	RoleRouter   Role = "router"
+	RoleWeb      Role = "web"
+	RolePHP      Role = "php"
+	RoleDatabase Role = "database"
+	RoleRedis    Role = "redis"
+	RoleMail     Role = "mail"
+	RoleAdminer  Role = "adminer"
 
-	RoleGlobalNetwork = "global-network"
-	RoleSiteNetwork   = "site-network"
-	RoleDatabaseData  = "database-data"
+	RoleGlobalNetwork Role = "global-network"
+	RoleSiteNetwork   Role = "site-network"
+	RoleDatabaseData  Role = "database-data"
+
+	// RoleDefault is the sentinel passed to roleResources when no
+	// per-role override applies. resourceDefaults() uses it.
+	RoleDefault Role = ""
 )
 
 // PlatformLabels returns the label set applied to every Locorum-managed

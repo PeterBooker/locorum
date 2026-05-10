@@ -95,6 +95,9 @@ func (e mariadbEngine) ContainerSpec(site *types.Site, homeDir string) docker.Co
 			LogMaxSize:  "10m",
 			LogMaxFiles: 3,
 			PidsLimit:   1024,
+			// 1 GiB: matches MySQL — both engines share the same WP-shaped
+			// workload and the same default InnoDB buffer footprint.
+			MemoryLimit: 1024 << 20,
 		},
 		Init:    true,
 		Restart: docker.RestartNo,

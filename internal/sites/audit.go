@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PeterBooker/locorum/internal/orch"
+	"github.com/PeterBooker/locorum/internal/secrets"
 	"github.com/PeterBooker/locorum/internal/utils"
 )
 
@@ -56,7 +57,7 @@ func writeAuditLog(homeDir string, res orch.Result) {
 			DurationMS: s.Duration.Milliseconds(),
 		}
 		if s.Error != nil {
-			entry.Error = s.Error.Error()
+			entry.Error = secrets.RedactString(s.Error.Error())
 		}
 		steps[i] = entry
 	}
@@ -76,7 +77,7 @@ func writeAuditLog(homeDir string, res orch.Result) {
 		Steps:      steps,
 	}
 	if res.FinalError != nil {
-		r.Error = res.FinalError.Error()
+		r.Error = secrets.RedactString(res.FinalError.Error())
 	}
 
 	buf, err := json.Marshal(r)
@@ -85,11 +86,14 @@ func writeAuditLog(homeDir string, res orch.Result) {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		slog.Warn("audit log mkdir failed", "err", err.Error())
 		return
 	}
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// 0o600: lifecycle.log can capture redacted-but-best-effort error strings
+	// from container ops; mysqldump argv has historically leaked passwords on
+	// auth-failure paths. Keep readable only by the owner.
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		slog.Warn("audit log open failed", "err", err.Error())
 		return

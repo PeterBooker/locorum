@@ -31,8 +31,19 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 	appDataDir := filepath.Join(cwd, ".locorum")
 	dbPath := filepath.Join(appDataDir, "storage.db")
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	// 0o700: ~/.locorum holds DB passwords, WP salts, mkcert keys, and the
+	// MCP bearer token. Anyone with read access to this tree can pivot to
+	// every site's wp-admin and the local DB. Tighten regardless of umask.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil, err
+	}
+	// MkdirAll is a no-op if the dir already exists with looser bits, so
+	// re-chmod explicitly. Errors are non-fatal on platforms where chmod is
+	// a no-op (Windows) but logged for diagnostics.
+	if err := os.Chmod(appDataDir, 0o700); err != nil && !os.IsNotExist(err) {
+		// Soft-fail: continuing on chmod errors is safer than refusing to
+		// open the DB at all on filesystems that don't honour Unix bits.
+		_ = err
 	}
 
 	// _pragma=foreign_keys(1) enables FK enforcement on every new connection
@@ -42,9 +53,15 @@ func NewSQLiteStorage(ctx context.Context) (*Storage, error) {
 		return nil, err
 	}
 
+	// SQLite creates the file lazily on first write. Force the mode after
+	// migrations have created it so the file isn't world-readable for the
+	// (small) window between sql.Open and the first migration query.
 	if err := applyMigrations(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migration failed: %w", err)
+	}
+	if err := os.Chmod(dbPath, 0o600); err != nil && !os.IsNotExist(err) {
+		_ = err
 	}
 
 	return &Storage{db: db, ctx: ctx}, nil
