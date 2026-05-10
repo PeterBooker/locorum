@@ -54,7 +54,7 @@ func DialClient(ctx context.Context, socket string, hello HelloOptions) (*Client
 
 	// Even an empty hello succeeds against a Full daemon: it just
 	// stamps the conn with the defaults. We always send one so the
-	// daemon knows where to route activity events for telemetry.
+	// daemon knows how to attribute activity events back to the peer.
 	helloParams := struct {
 		PeerKind string `json:"peerKind,omitempty"`
 		Profile  string `json:"profile,omitempty"`
