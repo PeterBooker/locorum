@@ -515,6 +515,12 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 				},
 			},
 			&sitesteps.FuncStep{
+				Label: "ensure-autologin-plugin",
+				Do: func(_ context.Context) error {
+					return installAutoLoginPlugin(site)
+				},
+			},
+			&sitesteps.FuncStep{
 				Label: "generate-site-config",
 				Do: func(_ context.Context) error {
 					return sm.generateWebServerConfig(site)
@@ -555,6 +561,17 @@ func (sm *SiteManager) StartSite(ctx context.Context, id string) error {
 	if _, err := sm.st.UpdateSite(site); err != nil {
 		slog.Error("Failed to update site: " + err.Error())
 		return err
+	}
+
+	// Run `wp core install` so the user lands on a working WordPress
+	// dashboard, not the 5-minute install wizard. wpInstallDefault is
+	// idempotent (short-circuits when wp_options.siteurl is set), so
+	// repeated starts no-op. The same call lives inside
+	// ensureMultisiteWithHooks below for the multisite path; we hoist it
+	// here so single-site (the common case) gets the same treatment.
+	if err := sm.wpInstallDefault(ctx, site); err != nil {
+		slog.Error("Failed to run wp core install: " + err.Error())
+		return fmt.Errorf("wp core install: %w", err)
 	}
 
 	if site.Multisite != "" {
@@ -1098,7 +1115,27 @@ func (sm *SiteManager) GetContainerLogs(ctx context.Context, siteID, service str
 	return sm.d.ContainerLogs(ctx, containerName, lines)
 }
 
-// OpenAdminLogin generates a one-time auto-login URL and opens it in the browser.
+// OpenAdminLogin issues a one-time auto-login token and opens the
+// browser at the wp-admin URL with the token attached. The persistent
+// mu-plugin (installed at StartSite via installAutoLoginPlugin) reads
+// the token from disk, validates it, deletes it, and authenticates
+// the request.
+//
+// The redesign over the previous "write a self-deleting plugin per
+// click" approach closes three failure modes the old code had:
+//
+//  1. Browser prefetch / speculative request races: the old plugin
+//     deleted itself the first time it fired, so a second request
+//     arriving immediately after found no plugin and fell through to
+//     wp-login.php?reauth=1.
+//  2. File-permission edge cases: a 0600 plugin owned by the host UID
+//     was unreadable to FPM workers running as a different user.
+//  3. Silent failure: the old plugin redirected to admin_url() even
+//     when admin-user lookup returned nothing, producing a confusing
+//     login-screen bounce instead of a clean no-op.
+//
+// The new mu-plugin is permanent and idempotent; only the tiny token
+// file is per-click.
 func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 	site, err := sm.st.GetSite(siteID)
 	if err != nil {
@@ -1111,46 +1148,17 @@ func (sm *SiteManager) OpenAdminLogin(siteID string) error {
 		return ErrSiteNotRunning
 	}
 
-	token, err := generatePassword(32)
+	// Belt-and-braces: re-run the idempotent plugin install in case the
+	// site predates this change or the user removed the plugin. genmark
+	// short-circuits on byte-identical content, so the cost is one
+	// stat() in the steady state.
+	if err := installAutoLoginPlugin(site); err != nil {
+		return fmt.Errorf("installing auto-login plugin: %w", err)
+	}
+
+	token, err := writeAutoLoginToken(site)
 	if err != nil {
-		return fmt.Errorf("generating auto-login token: %w", err)
-	}
-
-	targetDir := site.FilesDir
-	if site.PublicDir != "" && site.PublicDir != "/" {
-		targetDir = filepath.Join(site.FilesDir, site.PublicDir)
-	}
-	muPluginsDir := filepath.Join(targetDir, "wp-content", "mu-plugins")
-	if err := utils.EnsureDir(muPluginsDir); err != nil {
-		return fmt.Errorf("creating mu-plugins dir: %w", err)
-	}
-
-	pluginContent := fmt.Sprintf(`<?php
-// Locorum auto-login — single-use, self-deleting.
-if (isset($_GET['locorum_token']) && $_GET['locorum_token'] === '%s') {
-    add_action('init', function() {
-        $user = get_user_by('login', 'admin');
-        if (!$user) {
-            $users = get_users(array('role' => 'administrator', 'number' => 1));
-            $user = !empty($users) ? $users[0] : null;
-        }
-        if ($user) {
-            wp_set_current_user($user->ID);
-            wp_set_auth_cookie($user->ID, true);
-        }
-        @unlink(__FILE__);
-        wp_redirect(admin_url());
-        exit;
-    });
-}
-`, token)
-
-	pluginPath := filepath.Join(muPluginsDir, "locorum-autologin.php")
-	// 0o600: plugin contains a single-use auto-login token. The PHP container
-	// runs as the host UID (PHPUserGroup) so owner-only is sufficient. The
-	// file self-deletes via @unlink after use.
-	if err := os.WriteFile(pluginPath, []byte(pluginContent), 0o600); err != nil {
-		return fmt.Errorf("writing auto-login plugin: %w", err)
+		return fmt.Errorf("writing auto-login token: %w", err)
 	}
 
 	loginURL := fmt.Sprintf("https://%s/wp-admin/?locorum_token=%s", site.Domain, token)

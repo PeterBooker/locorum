@@ -239,14 +239,33 @@ func PHPSpec(site *types.Site, homeDir string) ContainerSpec {
 		"LOCORUM_APPROOT=/var/www/html",
 		"LOCORUM_SITE_SLUG=" + site.Slug,
 		"LOCORUM_MULTISITE=" + site.Multisite,
+		// wodby/php's FPM pool defaults to user/group www-data (UID 82),
+		// but the container itself runs as the host user (UID 1000 →
+		// wodby). With the default, FPM workers can't read 0600 files
+		// owned by 1000:1000 — wp-config.php, wp-config-locorum.php,
+		// import dumps, the auto-login plugin — and PHP fails with
+		// "Permission denied" on require_once. Forcing the pool to
+		// wodby/wodby restores the invariant the rest of the codebase
+		// already assumes ("PHP runs as the host UID"); see the comments
+		// in wpconfig.go, sites.go, wordpress.go, import.go.
+		"PHP_FPM_USER=wodby",
+		"PHP_FPM_GROUP=wodby",
 	}
 	secrets := []EnvSecret{
 		{Key: "MYSQL_PASSWORD", Value: site.DBPassword},
 	}
+	// wodby/php does not ship wp-cli. The host-side phar is downloaded
+	// + verified once at app start (internal/wpcli.EnsurePhar) and
+	// bind-mounted read-only into every PHP container. Path must stay
+	// in lockstep with wpcli.PharPath; see WPCliMountAgreement_test
+	// for the assertion.
+	wpcliPharHost := filepath.Join(homeDir, ".locorum", "bin", "wp")
+
 	mounts := []Mount{
 		{Bind: &BindMount{Source: phpIniPath, Target: "/usr/local/etc/php/conf.d/zzz-php.ini"}},
 		{Bind: &BindMount{Source: spxIniPath, Target: "/usr/local/etc/php/conf.d/zzz-spx.ini"}},
 		{Bind: &BindMount{Source: site.FilesDir, Target: "/var/www/html"}},
+		{Bind: &BindMount{Source: wpcliPharHost, Target: "/usr/local/bin/wp", ReadOnly: true}},
 	}
 
 	if site.SPXEnabled {

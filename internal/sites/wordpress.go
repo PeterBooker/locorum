@@ -60,14 +60,18 @@ func (sm *SiteManager) ensureWordPress(site *types.Site) error {
 		return nil
 	}
 
-	empty, err := isDirEmpty(targetDir)
+	empty, err := isEmptyForWordPress(targetDir)
 	if err != nil {
 		return fmt.Errorf("checking target dir: %w", err)
 	}
 	if !empty {
-		// Directory has *something* but no wp-settings.php. Don't
-		// clobber the user's files; they may be in the middle of
-		// setting up Bedrock or restoring a partial backup.
+		// Directory has *user* content but no wp-settings.php. Don't
+		// clobber it; they may be in the middle of setting up Bedrock
+		// or restoring a partial backup. Locorum's own sentinel files
+		// (.locorum/) are skipped by isEmptyForWordPress — AddSite
+		// projects config.yaml there before StartSite runs, and a
+		// freshly-created site's docroot is empty *modulo* that
+		// sentinel.
 		return nil
 	}
 
@@ -148,13 +152,25 @@ func fetchWordPressSHA1() (string, error) {
 	return digest, nil
 }
 
-// isDirEmpty returns true if the directory exists and contains no entries.
-func isDirEmpty(dir string) (bool, error) {
+// isEmptyForWordPress returns true if the directory contains nothing the
+// WordPress download would clobber. Entries managed by Locorum itself
+// (currently the `.locorum/` sentinel directory, where AddSite projects
+// config.yaml) are not user data and must not gate the download — without
+// this exemption, a freshly-created site whose docroot already holds
+// `.locorum/config.yaml` would skip the WP install entirely and serve
+// 403/404.
+func isEmptyForWordPress(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false, err
 	}
-	return len(entries) == 0, nil
+	for _, e := range entries {
+		if e.Name() == ".locorum" {
+			continue
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // extractTarGz extracts a .tar.gz stream into destDir.
