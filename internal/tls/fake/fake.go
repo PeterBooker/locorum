@@ -33,6 +33,10 @@ type Provider struct {
 	// IssueErr forces the next Issue to error, then clears.
 	IssueErr error
 
+	// RootCAErr forces RootCAPath to error. Persistent — does not
+	// auto-clear, so a single test can assert repeated failure.
+	RootCAErr error
+
 	// Issued tracks live certs by name → hostnames.
 	Issued map[string][]string
 
@@ -112,6 +116,35 @@ func (p *Provider) Remove(_ context.Context, name string) error {
 		_ = os.RemoveAll(filepath.Join(p.Root, name))
 	}
 	return nil
+}
+
+// RootCAPath returns a fixture path under the temp Root, creating an
+// empty rootCA.pem so callers can exercise file-serving code paths
+// without a real mkcert install. RootCAErr forces an error path.
+func (p *Provider) RootCAPath(_ context.Context) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.RootCAErr != nil {
+		return "", p.RootCAErr
+	}
+	if p.Root == "" {
+		dir, err := os.MkdirTemp("", "locorum-fake-tls-*")
+		if err != nil {
+			return "", err
+		}
+		p.Root = dir
+	}
+	caDir := filepath.Join(p.Root, "ca")
+	if err := os.MkdirAll(caDir, 0o700); err != nil {
+		return "", err
+	}
+	rootCA := filepath.Join(caDir, "rootCA.pem")
+	if _, err := os.Stat(rootCA); os.IsNotExist(err) {
+		if err := os.WriteFile(rootCA, []byte("fake-root-ca"), 0o644); err != nil {
+			return "", err
+		}
+	}
+	return rootCA, nil
 }
 
 // Cleanup removes the on-disk temp tree; pair with t.Cleanup.

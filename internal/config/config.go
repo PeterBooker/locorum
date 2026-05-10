@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,6 +90,9 @@ func allKeys() []string {
 		KeyDebugLogging,
 		KeyUpdateDismissedVersion,
 		KeyUpdateLastAvailable,
+		KeyLanDefault,
+		KeyLanDomain,
+		KeyLanIPOverride,
 	}
 }
 
@@ -449,6 +453,88 @@ func (c *Config) UpdateLastAvailable() string {
 // SetUpdateLastAvailable persists the snapshot.
 func (c *Config) SetUpdateLastAvailable(v string) error {
 	return c.Set(KeyUpdateLastAvailable, v)
+}
+
+// ── LAN access ──────────────────────────────────────────────────────
+
+// LanDefault reports whether new sites should have LAN access
+// pre-enabled. Default false. Reserved for a future bulk-opt-in
+// workflow; the per-site toggle is the current source of truth.
+func (c *Config) LanDefault() bool {
+	return parseBool(c.raw(KeyLanDefault), false)
+}
+
+// SetLanDefault persists the bulk default.
+func (c *Config) SetLanDefault(on bool) error {
+	return c.Set(KeyLanDefault, formatBool(on))
+}
+
+// LanDomain returns the wildcard-DNS suffix to use for LAN hostnames.
+// Default "sslip.io". Any drop-in replacement (nip.io, a self-hosted
+// service) works as long as it follows the same
+// `<anything>.<ipv4>.<domain>` convention.
+func (c *Config) LanDomain() string {
+	if v := strings.TrimSpace(c.raw(KeyLanDomain)); v != "" {
+		return v
+	}
+	return DefaultLanDomain
+}
+
+// SetLanDomain validates and persists the LAN suffix. Empty string
+// clears the override (back to the documented default). The value is
+// not URL-escaped or otherwise sanitised here — Set* assumes a sane
+// DNS-suffix string and refuses obvious mistakes.
+func (c *Config) SetLanDomain(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return c.Set(KeyLanDomain, "")
+	}
+	// A LAN suffix must look like a domain — letters, digits, dots,
+	// and hyphens only. Reject scheme prefixes, slashes, and spaces
+	// that would otherwise produce nonsense hostnames.
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-':
+		default:
+			return fmt.Errorf("config: invalid lan domain %q", v)
+		}
+	}
+	return c.Set(KeyLanDomain, v)
+}
+
+// LanIPOverride returns the user-pinned LAN IPv4, or nil if unset (or
+// the stored value is not a valid IPv4). Detection should consult this
+// before falling back to the auto-detection path.
+func (c *Config) LanIPOverride() net.IP {
+	v := strings.TrimSpace(c.raw(KeyLanIPOverride))
+	if v == "" {
+		return nil
+	}
+	ip := net.ParseIP(v)
+	if ip == nil {
+		return nil
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return nil
+}
+
+// SetLanIPOverride validates and persists a manual IPv4 override.
+// Empty string clears the override.
+func (c *Config) SetLanIPOverride(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return c.Set(KeyLanIPOverride, "")
+	}
+	ip := net.ParseIP(v)
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("config: invalid IPv4 %q", v)
+	}
+	return c.Set(KeyLanIPOverride, ip.To4().String())
 }
 
 // HealthLastSeen returns the persisted last-seen-finding-keys JSON blob.

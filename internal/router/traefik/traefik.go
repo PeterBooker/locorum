@@ -495,6 +495,11 @@ func hostnamesFor(route router.SiteRoute) []string {
 	if route.WildcardHost != "" {
 		out = append(out, route.WildcardHost)
 	}
+	for _, w := range route.ExtraWildcardHosts {
+		if w != "" {
+			out = append(out, w)
+		}
+	}
 	return out
 }
 

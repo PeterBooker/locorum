@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -39,6 +40,7 @@ import (
 	"github.com/PeterBooker/locorum/internal/sites/configyaml"
 	"github.com/PeterBooker/locorum/internal/sites/sitesteps"
 	"github.com/PeterBooker/locorum/internal/storage"
+	tlspkg "github.com/PeterBooker/locorum/internal/tls"
 	"github.com/PeterBooker/locorum/internal/types"
 	"github.com/PeterBooker/locorum/internal/utils"
 )
@@ -53,14 +55,32 @@ type SiteManager struct {
 	sites   map[string]types.Site
 	d       *docker.Docker
 	rtr     router.Router
+	tls     tlspkg.Provider
 	hooks   hooks.Runner
 	homeDir string
 	config  embed.FS
 	cfg     *config.Config // typed read/write of global settings
 
+	// tplReader, when non-nil, overrides sm.config for wp-config
+	// template reads. Test seam — production wires nothing and
+	// templateReader() falls back to the embedded FS. Mirrors the
+	// SetLANDetector pattern.
+	tplReader templateReadFS
+
 	// siteLocks serialises lifecycle calls per site. Different sites run
 	// in parallel; two lifecycle calls on the same site queue.
 	siteLocks sync.Map // map[string]*sync.Mutex
+
+	// lanCache memoises the detected LAN IPv4 for ~5 minutes so
+	// routeFor (called on every UpsertSite) doesn't repeatedly hammer
+	// net.Interfaces. Cleared on InvalidateLanIP (called from the UI's
+	// "refresh LAN IP" button and from EnableLAN/DisableLAN).
+	lanMu       sync.Mutex
+	lanCachedIP net.IP
+	lanCachedAt time.Time
+	// lanDetect is the override hook that production wires to
+	// utils.DetectLANIPv4. Tests inject a stub via SetLANDetector.
+	lanDetect func() (net.IP, error)
 
 	// Callbacks invoked when sites data changes. The UI layer sets these
 	// in ui.New() to trigger redraws.
@@ -91,7 +111,7 @@ type SiteManager struct {
 	OnActivityAppended func(siteID string, ev storage.ActivityEvent)
 }
 
-func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, runner hooks.Runner, configFS embed.FS, homeDir string, cfg *config.Config) *SiteManager {
+func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, rtr router.Router, tls tlspkg.Provider, runner hooks.Runner, configFS embed.FS, homeDir string, cfg *config.Config) *SiteManager {
 	siteTpl = template.Must(
 		template.New("site.tmpl").
 			Funcs(funcMap).
@@ -109,12 +129,25 @@ func NewSiteManager(st *storage.Storage, cli *client.Client, d *docker.Docker, r
 		cli:     cli,
 		d:       d,
 		rtr:     rtr,
+		tls:     tls,
 		hooks:   runner,
 		config:  configFS,
 		homeDir: homeDir,
 		cfg:     cfg,
 		sites:   make(map[string]types.Site),
 	}
+}
+
+// RootCAPath returns the absolute path of the host's mkcert root CA so
+// the UI can serve it via the LAN-pairing endpoint without crossing the
+// "UI never imports tls" boundary. Returns an error when no TLS
+// provider is configured (test rigs that omit it) or when the
+// provider cannot find the file.
+func (sm *SiteManager) RootCAPath(ctx context.Context) (string, error) {
+	if sm == nil || sm.tls == nil {
+		return "", errors.New("no TLS provider configured")
+	}
+	return sm.tls.RootCAPath(ctx)
 }
 
 // Config returns the shared global-settings facade. Nil when the
@@ -637,7 +670,306 @@ func (sm *SiteManager) routeFor(site *types.Site) router.SiteRoute {
 	if site.Multisite == "subdomain" {
 		route.WildcardHost = "*." + site.Domain
 	}
+	if site.LanEnabled {
+		if ip := sm.lanIP(); ip != nil {
+			domain := effectiveLanDomain(sm.cfg)
+			if host := LANHost(site.Slug, ip, domain); host != "" {
+				route.ExtraHosts = append(route.ExtraHosts, host)
+				if site.Multisite == "subdomain" {
+					if w := LANWildcardHost(site.Slug, ip, domain, site.Multisite); w != "" {
+						route.ExtraWildcardHosts = append(route.ExtraWildcardHosts, w)
+					}
+				}
+			}
+		}
+	}
 	return route
+}
+
+// lanCacheTTL bounds the in-memory LAN-IP cache. Five minutes is a
+// pragmatic compromise: short enough that picking up a network change
+// after suspend/resume is automatic on the next user interaction, long
+// enough that routeFor (called on every UpsertSite) does not pay for
+// net.Interfaces on the hot path.
+const lanCacheTTL = 5 * time.Minute
+
+// lanIP returns the LAN IPv4 address to use for LAN-enabled sites,
+// honouring the user's configured override before falling back to
+// auto-detection. Returns nil when no usable address can be found —
+// callers must treat that as "skip LAN extras", never as "panic".
+//
+// The result is cached for lanCacheTTL so repeated routeFor calls do
+// not hammer the network stack. InvalidateLanIP clears the cache and
+// is called from the toggle methods + the UI "Refresh" action.
+func (sm *SiteManager) lanIP() net.IP {
+	if sm == nil {
+		return nil
+	}
+	if sm.cfg != nil {
+		if override := sm.cfg.LanIPOverride(); override != nil {
+			return override
+		}
+	}
+	sm.lanMu.Lock()
+	defer sm.lanMu.Unlock()
+	if sm.lanCachedIP != nil && time.Since(sm.lanCachedAt) < lanCacheTTL {
+		return sm.lanCachedIP
+	}
+	detect := sm.lanDetect
+	if detect == nil {
+		detect = utils.DetectLANIPv4
+	}
+	ip, err := detect()
+	if err != nil {
+		sm.lanCachedIP = nil
+		sm.lanCachedAt = time.Now()
+		return nil
+	}
+	sm.lanCachedIP = ip
+	sm.lanCachedAt = time.Now()
+	return ip
+}
+
+// SetLANDetector is a test seam: replace the production
+// utils.DetectLANIPv4 with a deterministic stub. Pass nil to revert
+// to the real network stack. Not safe to call concurrently with
+// lanIP() — call once during test setup.
+func (sm *SiteManager) SetLANDetector(fn func() (net.IP, error)) {
+	if sm == nil {
+		return
+	}
+	sm.lanMu.Lock()
+	sm.lanDetect = fn
+	sm.lanCachedIP = nil
+	sm.lanCachedAt = time.Time{}
+	sm.lanMu.Unlock()
+}
+
+// InvalidateLanIP drops the cached LAN IP so the next lanIP() call
+// re-detects. Called from EnableLAN / DisableLAN and from the UI's
+// "Refresh" action when the user moves networks.
+func (sm *SiteManager) InvalidateLanIP() {
+	if sm == nil {
+		return
+	}
+	sm.lanMu.Lock()
+	sm.lanCachedIP = nil
+	sm.lanCachedAt = time.Time{}
+	sm.lanMu.Unlock()
+}
+
+// LanIP exposes the cached/detected LAN IP for the UI's status row.
+// The UI surfaces this verbatim — nil renders as "no LAN address
+// detected; set lan.ip_override".
+func (sm *SiteManager) LanIP() net.IP { return sm.lanIP() }
+
+// LanHostFor renders the canonical LAN hostname for a site at the
+// current detected IP, or "" when LAN access is disabled, no IP is
+// available, or the site is missing. Used by the UI to display the
+// copy-and-QR-code URL without rebuilding the hostname formula.
+func (sm *SiteManager) LanHostFor(site *types.Site) string {
+	if site == nil || !site.LanEnabled {
+		return ""
+	}
+	ip := sm.lanIP()
+	if ip == nil {
+		return ""
+	}
+	return LANHost(site.Slug, ip, effectiveLanDomain(sm.cfg))
+}
+
+// ─── EnableLAN / DisableLAN ────────────────────────────────────────────────
+
+// EnableLAN flips LAN access on for a site. The site row is updated,
+// any cached LAN IP is invalidated so the fresh value lands on the next
+// router upsert, and the route is re-issued so the cert SAN list picks
+// up the new hostname. The flow is wrapped in pre/post hooks plus a
+// rollback step that puts the row back if the route upsert fails.
+//
+// Safe to call on a stopped site — UpsertSite is engine-agnostic and
+// simply renders the dynamic config; routing only kicks in once the
+// containers are up. The toggle is idempotent: calling EnableLAN on an
+// already-enabled site re-detects the IP and re-issues the cert,
+// which is the user-visible behaviour of the "Refresh LAN IP" action.
+func (sm *SiteManager) EnableLAN(ctx context.Context, siteID string) error {
+	return sm.toggleLAN(ctx, siteID, true)
+}
+
+// DisableLAN is the symmetric pair to EnableLAN — flips the row off
+// and re-issues the route without the LAN extras so the next cert
+// reissue drops the LAN hostname from the SAN list.
+func (sm *SiteManager) DisableLAN(ctx context.Context, siteID string) error {
+	return sm.toggleLAN(ctx, siteID, false)
+}
+
+// RefreshLAN re-detects the host's LAN IPv4, regenerates the on-disk
+// wp-config-locorum.php (so the host whitelist matches the new IP, if
+// it changed), and re-issues the site's router route. Used by the
+// "Refresh LAN IP" button after the laptop moves networks.
+//
+// Idempotent — calling it when nothing has changed re-runs the same
+// detection and regen and produces byte-identical files. Refusing
+// when LAN access is already disabled is deliberate: there's nothing
+// meaningful to refresh, and the caller should distinguish the two
+// cases ("not enabled" vs. "transiently failed").
+func (sm *SiteManager) RefreshLAN(ctx context.Context, siteID string) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetch site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+	if utils.IsWSL() {
+		return errors.New("LAN access is not supported on WSL2")
+	}
+	if !site.LanEnabled {
+		return errors.New("LAN access is not enabled for this site")
+	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sm.InvalidateLanIP()
+	ip := sm.lanIP()
+	if ip == nil {
+		return errors.New("no usable LAN IPv4 address found; set lan.ip_override in Settings if your network has a non-standard layout")
+	}
+
+	if err := sm.EnsureWPConfig(site); err != nil {
+		return fmt.Errorf("regenerate wp-config: %w", err)
+	}
+	if err := sm.rtr.UpsertSite(ctx, sm.routeFor(site)); err != nil {
+		return fmt.Errorf("upsert route: %w", err)
+	}
+
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+	return nil
+}
+
+func (sm *SiteManager) toggleLAN(ctx context.Context, siteID string, on bool) error {
+	site, err := sm.st.GetSite(siteID)
+	if err != nil {
+		return fmt.Errorf("fetch site: %w", err)
+	}
+	if site == nil {
+		return fmt.Errorf("site %q not found", siteID)
+	}
+
+	if utils.IsWSL() {
+		// LAN access on WSL2 needs Windows-side networking work that
+		// is out of scope for v1; refuse rather than silently produce
+		// a non-working URL. The UI gates the toggle button behind a
+		// notice, so this is also a defence-in-depth check.
+		return errors.New("LAN access is not supported on WSL2")
+	}
+
+	mu := sm.siteMutex(siteID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	preEvent, postEvent := hooks.PreLanEnable, hooks.PostLanEnable
+	if !on {
+		preEvent, postEvent = hooks.PreLanDisable, hooks.PostLanDisable
+	}
+	if err := sm.runHooks(ctx, preEvent, site); err != nil {
+		return err
+	}
+
+	previous := site.LanEnabled
+
+	planName := "enable-lan:" + site.Slug
+	if !on {
+		planName = "disable-lan:" + site.Slug
+	}
+
+	plan := orch.Plan{
+		Name: planName,
+		Steps: []orch.Step{
+			&sitesteps.FuncStep{
+				Label: "detect-lan-ip",
+				Do: func(_ context.Context) error {
+					sm.InvalidateLanIP()
+					if !on {
+						return nil
+					}
+					if ip := sm.lanIP(); ip == nil {
+						return errors.New("no usable LAN IPv4 address found; set lan.ip_override in Settings if your network has a non-standard layout")
+					}
+					return nil
+				},
+			},
+			// apply-lan-state is one atomic step because the on-disk
+			// wp-config-locorum.php whitelist must move in lockstep
+			// with the SQLite row's LanEnabled flag — a rollback
+			// chain that flipped them independently could leave the
+			// site briefly serving LAN URLs without a matching
+			// whitelist or vice versa. Both side-effects share an
+			// Undo that puts the world back the way it was.
+			&sitesteps.FuncStep{
+				Label: "apply-lan-state",
+				Do: func(_ context.Context) error {
+					site.LanEnabled = on
+					if _, err := sm.st.UpdateSite(site); err != nil {
+						site.LanEnabled = previous
+						return fmt.Errorf("update site row: %w", err)
+					}
+					if err := sm.EnsureWPConfig(site); err != nil {
+						// Best-effort revert: flip the flag back and
+						// rewrite wp-config so the on-disk and DB state
+						// are both restored before the orch runner
+						// kicks off its own rollback pass.
+						site.LanEnabled = previous
+						if _, rerr := sm.st.UpdateSite(site); rerr != nil {
+							slog.Warn("apply-lan-state: revert row after wp-config failure", "site", site.Slug, "err", rerr.Error())
+						}
+						_ = sm.EnsureWPConfig(site)
+						return fmt.Errorf("regenerate wp-config: %w", err)
+					}
+					return nil
+				},
+				Undo: func(_ context.Context) error {
+					site.LanEnabled = previous
+					if _, err := sm.st.UpdateSite(site); err != nil {
+						slog.Warn("rollback: revert lanEnabled", "site", site.Slug, "err", err.Error())
+						return err
+					}
+					if err := sm.EnsureWPConfig(site); err != nil {
+						slog.Warn("rollback: regen wp-config", "site", site.Slug, "err", err.Error())
+						return err
+					}
+					return nil
+				},
+			},
+			&sitesteps.FuncStep{
+				Label: "upsert-route",
+				Do: func(ctx context.Context) error {
+					return sm.rtr.UpsertSite(ctx, sm.routeFor(site))
+				},
+				Undo: func(ctx context.Context) error {
+					// Rollback re-runs UpsertSite with the previous
+					// LanEnabled value already restored by the prior
+					// step's Undo.
+					return sm.rtr.UpsertSite(ctx, sm.routeFor(site))
+				},
+			},
+		},
+	}
+
+	res := sm.runPlan(ctx, site, plan)
+	if res.FinalError != nil {
+		return res.FinalError
+	}
+
+	if sm.OnSiteUpdated != nil {
+		sm.OnSiteUpdated(site)
+	}
+	sm.writeConfigYAML(site)
+
+	return sm.runHooks(ctx, postEvent, site)
 }
 
 func (sm *SiteManager) generateWebServerConfig(site *types.Site) error {

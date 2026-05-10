@@ -240,6 +240,28 @@ func isExecutableFile(path string) bool {
 	return info.Mode()&0o111 != 0
 }
 
+// RootCAPath returns the absolute path of the mkcert-generated root
+// CA file on the host. Backed by the cached Available() result so
+// repeated calls are cheap. Errors when the binary is missing or the
+// CA has not been bootstrapped.
+func (m *Mkcert) RootCAPath(ctx context.Context) (string, error) {
+	status, err := m.Available(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !status.Installed {
+		return "", fmt.Errorf("%w: %s", ErrMkcertMissing, status.Message)
+	}
+	if status.CARoot == "" {
+		return "", errors.New("mkcert reported empty CAROOT")
+	}
+	rootCA := filepath.Join(status.CARoot, "rootCA.pem")
+	if _, err := os.Stat(rootCA); err != nil {
+		return "", fmt.Errorf("rootCA.pem not found at %s: run `mkcert -install`", rootCA)
+	}
+	return rootCA, nil
+}
+
 func (m *Mkcert) Remove(_ context.Context, name string) error {
 	if !validCertName(name) {
 		return fmt.Errorf("invalid cert name %q", name)

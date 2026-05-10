@@ -35,6 +35,15 @@ const (
 
 	PreSnapshot  Event = "pre-snapshot"
 	PostSnapshot Event = "post-snapshot"
+
+	// LAN access toggles (ACCESS.md). Fire around the EnableLAN /
+	// DisableLAN lifecycle methods. The site's containers are
+	// untouched, so AllowsContainerTasks returns true (containers may
+	// be running while LAN is toggled).
+	PreLanEnable   Event = "pre-lan-enable"
+	PostLanEnable  Event = "post-lan-enable"
+	PreLanDisable  Event = "pre-lan-disable"
+	PostLanDisable Event = "post-lan-disable"
 )
 
 // Reserved events — declared but not yet fired by any lifecycle method.
@@ -67,6 +76,8 @@ var allEvents = []Event{
 	PreSnapshot, PostSnapshot,
 	PreRestoreSnapshot, PostRestoreSnapshot,
 	PreImportSite, PostImportSite,
+	PreLanEnable, PostLanEnable,
+	PreLanDisable, PostLanDisable,
 }
 
 // activeEvents lists the events that the SiteManager fires today. Used by
@@ -82,6 +93,8 @@ var activeEvents = []Event{
 	PreExport, PostExport,
 	PreImportDB, PostImportDB,
 	PreSnapshot, PostSnapshot,
+	PreLanEnable, PostLanEnable,
+	PreLanDisable, PostLanDisable,
 }
 
 var eventSet = func() map[Event]struct{} {

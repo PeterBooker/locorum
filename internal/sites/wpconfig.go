@@ -10,12 +10,45 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
 	"github.com/PeterBooker/locorum/internal/genmark"
 	"github.com/PeterBooker/locorum/internal/types"
 )
+
+// templateReadFS is the minimal capability EnsureWPConfig needs from a
+// filesystem-shaped value. embed.FS satisfies it; tests inject a thin
+// adapter that reads from disk so the actual checked-in templates can
+// be exercised without an embed directive (which is package-relative
+// and can't see ../../config/).
+type templateReadFS interface {
+	ReadFile(string) ([]byte, error)
+}
+
+// templateReader resolves the right FS for wp-config rendering. Test
+// overrides win; production falls back to the embedded FS that
+// NewSiteManager captured.
+func (sm *SiteManager) templateReader() templateReadFS {
+	if sm == nil {
+		return nil
+	}
+	if sm.tplReader != nil {
+		return sm.tplReader
+	}
+	return sm.config
+}
+
+// SetTemplateReader is a test seam (mirroring SetLANDetector). Pass
+// nil to revert to the embedded FS. Not safe to call concurrently
+// with EnsureWPConfig.
+func (sm *SiteManager) SetTemplateReader(r templateReadFS) {
+	if sm == nil {
+		return
+	}
+	sm.tplReader = r
+}
 
 // wpSaltKeys are the eight WordPress secret-key/salt constant names, in
 // the canonical order used in the bundled wp-config-sample.php.
@@ -56,13 +89,26 @@ func phpSingleQuoteEscape(s string) string {
 // silently won and every site landed at https://localhost/wp-admin/ once
 // is_ssl() flipped the scheme. The file is regenerated on every site start
 // anyway, so baking the URL in costs nothing.
+//
+// PrimaryHost, LANHostRegex, and DocrootSuffix exist to support
+// multi-domain access (ACCESS.md): the rendered wp-config-locorum.php
+// dynamically maps `$_SERVER['HTTP_HOST']` onto WP_HOME/WP_SITEURL at
+// request time, instead of pinning a single canonical URL. Without
+// this, WordPress emits links pointing at site.Domain regardless of
+// which alias (primary vs. LAN sslip.io hostname) the visitor reached.
+// The whitelist is conservative — exact match for the primary, regex
+// match for the LAN suffix — so attacker-controlled Host headers can
+// never poison emails, redirects, or oEmbed URLs.
 type wpConfigData struct {
-	Salts      map[string]string
-	DBPassword string
-	Domain     string
-	Multisite  string
-	WPHome     string
-	WPSiteURL  string
+	Salts         map[string]string
+	DBPassword    string
+	Domain        string
+	Multisite     string
+	WPHome        string
+	WPSiteURL     string
+	PrimaryHost   string
+	LANHostRegex  string // PHP regex incl. delimiters, "" when LAN access disabled / unsupported
+	DocrootSuffix string // "" or "/web" — appended to WP_HOME to form WP_SITEURL
 }
 
 // computeWPURLs derives WP_HOME and WP_SITEURL from the site's domain and
@@ -74,12 +120,58 @@ type wpConfigData struct {
 // empty and WP_SITEURL == WP_HOME.
 func computeWPURLs(site *types.Site) (home, siteurl string) {
 	home = "https://" + site.Domain
-	siteurl = home
-	doc := strings.TrimLeft(site.PublicDir, "/")
-	if doc != "" && doc != "." {
-		siteurl = home + "/" + doc
-	}
+	siteurl = home + docrootSuffix(site)
 	return home, siteurl
+}
+
+// docrootSuffix returns the trailing path component WP_SITEURL needs
+// when the site uses a non-root document root (e.g. Bedrock's `web/`).
+// Returns "" for the conventional case (PublicDir = "/" or "" or ".").
+// The slash is included so callers can append unconditionally.
+func docrootSuffix(site *types.Site) string {
+	if site == nil {
+		return ""
+	}
+	doc := strings.TrimLeft(site.PublicDir, "/")
+	if doc == "" || doc == "." {
+		return ""
+	}
+	return "/" + doc
+}
+
+// buildLANHostRegex returns the PHP regex (with `/.../` delimiters) that
+// the rendered wp-config-locorum.php uses to whitelist incoming LAN
+// hostnames. Pattern: `^<slug>\.\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.<domain>$`.
+//
+// Returns "" — explicit "no LAN regex" — when:
+//   - LAN access is disabled for the site;
+//   - the site is multisite-subdomain (DOMAIN_CURRENT_SITE pins the
+//     canonical host; LAN can't be supported for subsites in v1);
+//   - the slug or LAN domain is empty.
+//
+// The slug and domain are regex-escaped using Go's regexp.QuoteMeta;
+// the resulting metacharacters are the same set PHP's PCRE engine
+// honours, so a Go-quoted literal renders correctly inside the PHP
+// preg_match call.
+func buildLANHostRegex(site *types.Site, lanDomain string) string {
+	if site == nil || !site.LanEnabled {
+		return ""
+	}
+	if site.Multisite == "subdomain" {
+		// LAN access for subdomain multisite would require rewriting
+		// wp_blogs.domain for every subsite — out of scope for v1.
+		// The UI surfaces this as a notice; this is the matching
+		// defence-in-depth check.
+		return ""
+	}
+	slug := strings.TrimSpace(site.Slug)
+	domain := strings.TrimSpace(lanDomain)
+	if slug == "" || domain == "" {
+		return ""
+	}
+	return "/^" + regexp.QuoteMeta(slug) +
+		"\\.\\d{1,3}-\\d{1,3}-\\d{1,3}-\\d{1,3}\\." +
+		regexp.QuoteMeta(domain) + "$/"
 }
 
 // wpDocrootDir resolves the on-disk directory that should contain
@@ -119,13 +211,20 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	}
 
 	wpHome, wpSiteURL := computeWPURLs(site)
+	lanDomain := ""
+	if sm.cfg != nil {
+		lanDomain = sm.cfg.LanDomain()
+	}
 	data := wpConfigData{
-		Salts:      salts,
-		DBPassword: site.DBPassword,
-		Domain:     site.Domain,
-		Multisite:  site.Multisite,
-		WPHome:     wpHome,
-		WPSiteURL:  wpSiteURL,
+		Salts:         salts,
+		DBPassword:    site.DBPassword,
+		Domain:        site.Domain,
+		Multisite:     site.Multisite,
+		WPHome:        wpHome,
+		WPSiteURL:     wpSiteURL,
+		PrimaryHost:   strings.ToLower(site.Domain),
+		LANHostRegex:  buildLANHostRegex(site, lanDomain),
+		DocrootSuffix: docrootSuffix(site),
 	}
 
 	dir := wpDocrootDir(site)
@@ -140,7 +239,7 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	// host (other accounts, sandboxed apps, build agents) cannot recover
 	// the salts and forge logged-in session cookies.
 	mainPath := filepath.Join(dir, "wp-config.php")
-	mainBytes, err := renderTemplate(sm.config, "config/wordpress/wp-config.tmpl.php", data)
+	mainBytes, err := renderTemplate(sm.templateReader(), "config/wordpress/wp-config.tmpl.php", data)
 	if err != nil {
 		return fmt.Errorf("render wp-config.php: %w", err)
 	}
@@ -153,7 +252,7 @@ func (sm *SiteManager) EnsureWPConfig(site *types.Site) error {
 	// variant.  Preserves backward compatibility with sites whose users
 	// already opted out before this rewrite.
 	includePath := filepath.Join(dir, "wp-config-locorum.php")
-	includeBytes, err := renderTemplate(sm.config, "config/wordpress/wp-config-locorum.tmpl.php", data)
+	includeBytes, err := renderTemplate(sm.templateReader(), "config/wordpress/wp-config-locorum.tmpl.php", data)
 	if err != nil {
 		return fmt.Errorf("render wp-config-locorum.php: %w", err)
 	}

@@ -143,6 +143,35 @@ func TestAddSite_SPXFields(t *testing.T) {
 	}
 }
 
+func TestAddSite_LanEnabled(t *testing.T) {
+	st := newStorage(t)
+	site := &types.Site{
+		ID: "id-lan", Name: "LANSite", Slug: "lansite",
+		Domain: "lansite.localhost", FilesDir: "/tmp/lansite", PublicDir: "/",
+		DBEngine: "mysql", DBVersion: "8.0", DBPassword: "pw",
+		LanEnabled: true,
+	}
+	if err := st.AddSite(site); err != nil {
+		t.Fatalf("AddSite() = %v", err)
+	}
+	got, err := st.GetSite("id-lan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LanEnabled {
+		t.Error("LanEnabled lost on round-trip")
+	}
+
+	got.LanEnabled = false
+	if _, err := st.UpdateSite(got); err != nil {
+		t.Fatalf("UpdateSite() = %v", err)
+	}
+	got2, _ := st.GetSite("id-lan")
+	if got2.LanEnabled {
+		t.Error("LanEnabled persisted as true after disable")
+	}
+}
+
 func TestGetSites(t *testing.T) {
 	st := newStorage(t)
 

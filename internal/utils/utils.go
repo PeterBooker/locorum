@@ -136,6 +136,11 @@ func OpenDirectory(path string) error {
 	}
 }
 
+// IsWSL is the exported counterpart of isWSL, for callers outside this
+// package (e.g. UI panels that need to gate functionality not yet
+// supported on WSL2).
+func IsWSL() bool { return isWSL() }
+
 // isWSL returns true if running inside WSL2.
 func isWSL() bool {
 	if _, ok := os.LookupEnv("WSL_DISTRO_NAME"); ok {

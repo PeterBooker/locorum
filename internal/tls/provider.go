@@ -30,6 +30,17 @@ type Provider interface {
 	// Remove deletes a previously-issued cert (used when a site is removed).
 	// Returns nil if the cert does not exist.
 	Remove(ctx context.Context, name string) error
+
+	// RootCAPath returns the absolute path on the host filesystem to
+	// the root CA certificate file (PEM-encoded). Used by the LAN
+	// access UI to surface the file behind a one-shot HTTP server +
+	// QR code so phones can install it.
+	//
+	// Returns "" with a non-nil error when the provider is unable to
+	// locate the file (mkcert not installed, CA never bootstrapped).
+	// Implementations must NOT shell out on every call — the path is
+	// cheap to discover (mkcert -CAROOT) and should be cached.
+	RootCAPath(ctx context.Context) (string, error)
 }
 
 // CertSpec is the desired-state input to Issue.

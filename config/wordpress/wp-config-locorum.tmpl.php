@@ -29,8 +29,39 @@ if ( ! defined( 'DB_HOST' ) )     define( 'DB_HOST',     'database' );
 // return false and any fallback would replace the real domain. Locorum
 // regenerates this file on every start anyway; baking the resolved URL in
 // is robust regardless of php-fpm pool config.
-if ( ! defined( 'WP_HOME' ) )    define( 'WP_HOME',    '{{ phpEscape .WPHome }}' );
-if ( ! defined( 'WP_SITEURL' ) ) define( 'WP_SITEURL', '{{ phpEscape .WPSiteURL }}' );
+//
+// LAN access (ACCESS.md): Locorum supports reaching the site via two
+// hostnames simultaneously — the primary `*.localhost` form on the host
+// machine, and a `<slug>.<dashed-ipv4>.<lan-domain>` form (default
+// sslip.io) on phones and tablets on the same Wi-Fi. The constants
+// below adapt WP_HOME / WP_SITEURL to whichever hostname served the
+// request so generated links, emails, and redirects point back to the
+// hostname the visitor is using.
+//
+// The host is matched against a strict whitelist BEFORE it becomes
+// part of any URL — without this check, an attacker on the LAN could
+// craft a request with a forged `Host:` header and have WordPress
+// embed their hostname in a password-reset email. The whitelist is:
+//   1. exact match against the primary domain (case-insensitive);
+//   2. regex match against the per-slug LAN suffix (empty when LAN
+//      access is disabled for this site, or unsupported for the site
+//      type — currently subdomain multisite).
+// Anything else falls back to the baked primary URL — a malformed
+// `Host:` cannot redirect users off-platform.
+$locorum_primary_host = '{{ phpEscape .PrimaryHost }}';
+$locorum_lan_regex    = '{{ phpEscape .LANHostRegex }}';
+$locorum_request_host = isset( $_SERVER['HTTP_HOST'] ) ? strtolower( (string) $_SERVER['HTTP_HOST'] ) : '';
+$locorum_proto        = ( ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ) ? 'https' : 'http';
+$locorum_host_allowed = ( $locorum_request_host === $locorum_primary_host )
+	|| ( '' !== $locorum_lan_regex && 1 === preg_match( $locorum_lan_regex, $locorum_request_host ) );
+if ( $locorum_host_allowed ) {
+	$locorum_home = $locorum_proto . '://' . $locorum_request_host;
+} else {
+	$locorum_home = '{{ phpEscape .WPHome }}';
+}
+if ( ! defined( 'WP_HOME' ) )    define( 'WP_HOME',    $locorum_home );
+if ( ! defined( 'WP_SITEURL' ) ) define( 'WP_SITEURL', $locorum_home . '{{ phpEscape .DocrootSuffix }}' );
+unset( $locorum_primary_host, $locorum_lan_regex, $locorum_request_host, $locorum_proto, $locorum_host_allowed, $locorum_home );
 
 // ── Debug ───────────────────────────────────────────────────────────────
 if ( ! defined( 'WP_DEBUG' ) )         define( 'WP_DEBUG',         true );

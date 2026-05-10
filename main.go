@@ -148,7 +148,7 @@ func main() {
 		log.Fatalln("Error initializing hooks runner:", err)
 	}
 
-	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, hookRunner, config, homeDir, cfg)
+	sm := sites.NewSiteManager(st, a.GetClient(), d, rtr, mkcert, hookRunner, config, homeDir, cfg)
 
 	if daemonMode {
 		runDaemonMode(homeDir, sm, a, d)

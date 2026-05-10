@@ -86,6 +86,15 @@ const (
 	// version surfaced by the update check, so the Settings card has
 	// something to render on a fresh launch before the next fetch.
 	KeyUpdateLastAvailable = "update_check.last_available"
+
+	// LAN access (ACCESS.md). KeyLanDefault is reserved for a future
+	// "auto-enable on every new site" workflow; the per-site toggle in
+	// the Site row is the source of truth today. KeyLanDomain is an
+	// escape hatch for self-hosted nip.io drop-ins. KeyLanIPOverride
+	// pins the LAN IP when auto-detection picks the wrong interface.
+	KeyLanDefault    = "lan.default_enabled" // bool, default false
+	KeyLanDomain     = "lan.domain"          // default "sslip.io"
+	KeyLanIPOverride = "lan.ip_override"     // optional manual IPv4
 )
 
 // Documented default values for every accessor. Centralising these
@@ -106,6 +115,11 @@ const (
 	DefaultHealthDiskCadenceMinutes = 15
 	DefaultHealthDiskWarnGB         = 5
 	DefaultHealthDiskBlockerGB      = 1
+
+	// DefaultLanDomain is the public wildcard-DNS service used to map
+	// `<anything>.<ipv4>.<domain>` back to the host's LAN IP. sslip.io
+	// is free, requires no setup, and is widely cached by ISP resolvers.
+	DefaultLanDomain = "sslip.io"
 )
 
 // Allowed enum values. Used by Set* validation.

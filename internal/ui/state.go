@@ -58,7 +58,8 @@ type UIState struct {
 	showNewSiteModal bool
 
 	// Loading state
-	siteToggling map[string]bool // site ID -> whether start/stop is in progress
+	siteToggling    map[string]bool // site ID -> whether start/stop is in progress
+	siteLanToggling map[string]bool // site ID -> whether enable/disable LAN is in progress
 
 	// Error banner state
 	errorMessage     string
@@ -237,6 +238,7 @@ func NewUIState() *UIState {
 	s := &UIState{
 		navView:         NavViewSites,
 		siteToggling:    make(map[string]bool),
+		siteLanToggling: make(map[string]bool),
 		hookState:       make(map[string]*hookSiteState),
 		lifecycleState:  make(map[string]*lifecycleSiteState),
 		activityState:   make(map[string]*activitySiteCache),
@@ -580,6 +582,23 @@ func (s *UIState) IsSiteToggling(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.siteToggling[id]
+}
+
+// SetSiteLanToggling marks an in-progress EnableLAN / DisableLAN call
+// for a site. The Access tab consults this to disable buttons and
+// show a loader while the lifecycle plan runs.
+func (s *UIState) SetSiteLanToggling(id string, toggling bool) {
+	s.mu.Lock()
+	s.siteLanToggling[id] = toggling
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// IsSiteLanToggling reports whether a site has an in-flight LAN toggle.
+func (s *UIState) IsSiteLanToggling(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.siteLanToggling[id]
 }
 
 // ─── Error Banner ───────────────────────────────────────────────────────────
