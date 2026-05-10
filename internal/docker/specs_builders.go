@@ -105,13 +105,10 @@ func permissiveSecurity() SecurityOptions {
 //
 // Defaults can be lifted on big-memory boxes via a future global setting
 // (see internal/config); the current values are the safe-by-default cap.
-func resourceDefaults() Resources {
-	return roleResources(RoleDefault)
-}
-
+//
 // roleResources returns per-role resource caps. New container builders
-// should call this with their RoleX constant rather than resourceDefaults
-// to pick up the right memory ceiling.
+// should call this with their RoleX constant to pick up the right
+// memory ceiling.
 func roleResources(role Role) Resources {
 	r := Resources{
 		LogMaxSize:  "10m",

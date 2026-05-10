@@ -24,7 +24,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -152,9 +151,8 @@ func download(url string) ([]byte, error) {
 
 // hexSHA512 returns the lowercase-hex SHA-512 of body.
 func hexSHA512(body []byte) string {
-	var h hash.Hash = sha512.New()
-	_, _ = h.Write(body)
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha512.Sum512(body)
+	return hex.EncodeToString(sum[:])
 }
 
 // writeAtomic writes data to path via a temp file in the same

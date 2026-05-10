@@ -21,6 +21,8 @@ const autoLoginPluginRelPath = "wp-content/mu-plugins/locorum-autologin.php"
 // mu-plugin reads it, validates against the URL's locorum_token query
 // param, and deletes the file before authenticating so a duplicate
 // request (browser prefetch, retry) cannot reuse it.
+//
+//nolint:gosec // G101: filename of a token file, not the token itself.
 const autoLoginTokenRelPath = "wp-content/.locorum/login-token"
 
 // autoLoginPluginBody is the persistent mu-plugin source. It carries

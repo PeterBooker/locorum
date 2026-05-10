@@ -58,11 +58,11 @@ func (a *App) Initialize(ctx context.Context) error {
 	// (see internal/wpcli). Failure here is non-fatal so the user
 	// can still inspect existing sites — but lifecycle methods that
 	// invoke wp-cli will surface the missing-file error clearly.
-	if path, err := wpcli.EnsurePhar(a.homeDir); err != nil {
+	if pharPath, err := wpcli.EnsurePhar(a.homeDir); err != nil {
 		slog.Warn("wp-cli phar unavailable; site lifecycle steps that invoke wp will fail",
 			"err", err.Error())
 	} else {
-		slog.Info("wp-cli phar ready", "path", path)
+		slog.Info("wp-cli phar ready", "path", pharPath)
 	}
 
 	// Identify the daemon up front so health checks can read a cached

@@ -145,7 +145,7 @@ func fetchWordPressSHA1() (string, error) {
 		return "", fmt.Errorf("malformed sha1 sidecar (len=%d)", len(digest))
 	}
 	for _, c := range digest {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return "", errors.New("malformed sha1 sidecar (non-hex byte)")
 		}
 	}
@@ -230,7 +230,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("mkdir %q: %w", target, err)
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("mkdir parent %q: %w", target, err)
 			}

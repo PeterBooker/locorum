@@ -32,7 +32,7 @@ func TestRedactErrPassthrough(t *testing.T) {
 	r.Add("hidden-token-xxxxxxx")
 	err := errors.New("boom: hidden-token-xxxxxxx in argv")
 	out := r.Redact(err)
-	if out == err {
+	if out == err { //nolint:errorlint // pointer-identity check: assert Redact returned a *new* instance, not the same value
 		t.Fatal("expected new error instance after redaction")
 	}
 	if strings.Contains(out.Error(), "hidden-token-xxxxxxx") {

@@ -66,6 +66,7 @@ func TestConcurrentWritesDoNotReturnBusy(t *testing.T) {
 		t.Fatalf("seed AddSite: %v", err)
 	}
 
+	siteID := site.ID
 	const goroutines = 16
 	const opsPerG = 32
 
@@ -79,15 +80,18 @@ func TestConcurrentWritesDoNotReturnBusy(t *testing.T) {
 			for i := 0; i < opsPerG; i++ {
 				// Mix of writes and reads — the same pattern StartSite
 				// produces (UpdateSite + AppendActivity + ListHooks).
+				// Each goroutine builds its own structs so the
+				// concurrency we're stressing is at the DB layer, not
+				// in shared in-memory state.
 				switch i % 3 {
 				case 0:
-					site.Name = "x" // touch a column so UPDATE has work
-					if _, err := st.UpdateSite(site); err != nil {
+					localSite := *site
+					if _, err := st.UpdateSite(&localSite); err != nil {
 						errs <- err
 					}
 				case 1:
 					ev := &ActivityEvent{
-						SiteID: site.ID,
+						SiteID: siteID,
 						Time:   time.Now().UTC(),
 						Plan:   "concurrency-test",
 						Kind:   ActivityKindStart,
@@ -97,7 +101,7 @@ func TestConcurrentWritesDoNotReturnBusy(t *testing.T) {
 						errs <- err
 					}
 				case 2:
-					if _, err := st.ListHooksByEvent(site.ID, hooks.PostStart); err != nil {
+					if _, err := st.ListHooksByEvent(siteID, hooks.PostStart); err != nil {
 						errs <- err
 					}
 				}

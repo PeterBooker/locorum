@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func TestInstallAutoLoginPlugin_WritesIdempotentlyAndCarriesMarker(t *testing.T)
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
-	if string(body) != string(body2) {
+	if !bytes.Equal(body, body2) {
 		t.Errorf("plugin body changed across idempotent install calls")
 	}
 }

@@ -1,6 +1,28 @@
 package version
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestWPCliDownloadURL guards the URL construction: GitHub Releases
+// asset paths are reproducible per tag, so the integrity check pinned
+// in WPCliSHA512 only holds if we hit the canonical asset URL.
+// Trailing/leading whitespace in the version constant or a missing
+// `v` prefix would silently break verification.
+func TestWPCliDownloadURL(t *testing.T) {
+	got := WPCliDownloadURL()
+	if !strings.HasPrefix(got, "https://github.com/wp-cli/wp-cli/releases/download/") {
+		t.Errorf("URL must hit GitHub Releases (immutable per tag): got %q", got)
+	}
+	if !strings.Contains(got, WPCliVersion+"/") {
+		t.Errorf("URL must include the tag %q: got %q", WPCliVersion, got)
+	}
+	num := strings.TrimPrefix(WPCliVersion, "v")
+	if !strings.HasSuffix(got, "wp-cli-"+num+".phar") {
+		t.Errorf("URL must end with wp-cli-%s.phar: got %q", num, got)
+	}
+}
 
 func TestParseDockerServer(t *testing.T) {
 	cases := []struct {

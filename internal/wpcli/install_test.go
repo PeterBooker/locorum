@@ -144,7 +144,7 @@ func TestEnsurePhar_IdempotentWhenPresent(t *testing.T) {
 // internal/docker/specs_builders.go.
 func TestPharPath_StableAcrossPlatforms(t *testing.T) {
 	got := PharPath("/home/x")
-	want := filepath.Join("/home/x", ".locorum", "bin", "wp")
+	want := filepath.Join(string(filepath.Separator), "home", "x", ".locorum", "bin", "wp")
 	if got != want {
 		t.Errorf("PharPath = %q, want %q (PHPSpec mirrors this — update both)", got, want)
 	}
