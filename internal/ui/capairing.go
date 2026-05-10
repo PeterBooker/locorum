@@ -68,8 +68,12 @@ func newCAPairingServer(ctx context.Context, sm *sites.SiteManager, ip net.IP) (
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
 
-	port := ln.Addr().(*net.TCPAddr).Port
-	url := "http://" + ip.String() + ":" + strconv.Itoa(port) + "/rootCA.pem"
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = ln.Close()
+		return nil, fmt.Errorf("listener address is not TCP: %T", ln.Addr())
+	}
+	url := "http://" + ip.String() + ":" + strconv.Itoa(tcpAddr.Port) + "/rootCA.pem"
 
 	srv := &caPairingServer{
 		url:  url,
@@ -92,8 +96,10 @@ func newCAPairingServer(ctx context.Context, sm *sites.SiteManager, ip net.IP) (
 		close(srv.done)
 	}()
 
-	// Lifetime watchdog. Stop is idempotent.
-	go func() {
+	// Lifetime watchdog. Stop is idempotent. The shutdown context Stop
+	// builds is intentionally detached: a panel close or site switch
+	// must not cancel the 2-second grace mid-flush.
+	go func() { //nolint:contextcheck // detached shutdown grace by design
 		t := time.NewTimer(caServerLifetime)
 		defer t.Stop()
 		select {
@@ -158,8 +164,10 @@ func (s *caPairingServer) serveCA(path string) http.HandlerFunc {
 		// Auto-shutdown after the first successful download. Run async
 		// so the response writer flushes cleanly first; HTTP/1.1
 		// keep-alive does not delay this since the underlying conn is
-		// closed during Shutdown.
-		go s.Stop()
+		// closed during Shutdown. The shutdown context is intentionally
+		// detached — using r.Context() would cancel the grace as soon
+		// as the response is written, defeating Shutdown's purpose.
+		go s.Stop() //nolint:contextcheck // detached shutdown grace by design
 	}
 }
 

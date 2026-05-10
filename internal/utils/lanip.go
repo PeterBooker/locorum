@@ -134,7 +134,7 @@ func outboundIPv4() (net.IP, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	addr, ok := conn.LocalAddr().(*net.UDPAddr)
 	if !ok || addr == nil || addr.IP == nil {
 		return nil, errors.New("local addr was not UDP")
